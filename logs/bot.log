@@ -1,0 +1,152 @@
+2025-04-03 01:36:49,915 - INFO - modules.exchange - Initialized in SANDBOX (TESTNET) mode
+2025-04-03 01:36:50,137 - INFO - modules.exchange - Connected to Bybit. Server time: 1743637009819
+2025-04-03 01:36:55,413 - INFO - modules.exchange - Initialized in SANDBOX (TESTNET) mode
+2025-04-03 01:36:55,634 - INFO - modules.exchange - Connected to Bybit. Server time: 1743637015315
+2025-04-03 01:37:03,723 - ERROR - ErrorHandler - System Error [0]: Symbol BTCUSDT not found in market info
+Type: ValueError
+Module: unknown
+Context: {}
+Extra: {}
+Traceback: Traceback (most recent call last):
+  File "d:\TradingBot\self_test\full_system_test.py", line 147, in test_order_execution
+    min_order = max(0.002, self.exchange.get_min_order_size(clean_symbol))
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "d:\TradingBot\modules\exchange.py", line 193, in get_min_order_size
+    market_info = self.fetch_market_info(symbol)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "d:\TradingBot\modules\exchange.py", line 145, in fetch_market_info
+    raise ValueError(f"Symbol {symbol} not found in market info")
+ValueError: Symbol BTCUSDT not found in market info
+2025-04-03 01:37:03,917 - WARNING - root - Buy order failed: Symbol BTCUSDT not found in market info
+2025-04-03 01:37:03,917 - INFO - root - Timestamp: 2025-04-01 22:37:03.724000 | Price: 50000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:03,919 - INFO - root - Timestamp: 2025-04-01 22:52:03.724000 | Price: 51000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:03,919 - INFO - root - Timestamp: 2025-04-01 23:07:03.724000 | Price: 52000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:03,919 - INFO - root - Timestamp: 2025-04-01 23:22:03.724000 | Price: 53000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:03,919 - INFO - root - Timestamp: 2025-04-01 23:37:03.724000 | Price: 54000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:03,919 - INFO - root - Timestamp: 2025-04-01 23:52:03.724000 | Price: 55000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:03,919 - INFO - root - Timestamp: 2025-04-02 00:07:03.724000 | Price: 56000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:03,919 - INFO - root - Timestamp: 2025-04-02 00:22:03.724000 | Price: 57000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:03,919 - INFO - root - Timestamp: 2025-04-02 00:37:03.724000 | Price: 58000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:03,919 - INFO - root - Timestamp: 2025-04-02 00:52:03.724000 | Price: 59000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:04,439 - WARNING - root - Buy order failed: Symbol BTCUSDT not found in market info
+2025-04-03 01:37:04,439 - INFO - root - Timestamp: 2025-04-02 01:07:03.724000 | Price: 50000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:04,439 - INFO - root - Timestamp: 2025-04-02 01:22:03.724000 | Price: 51000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:04,439 - INFO - root - Timestamp: 2025-04-02 01:37:03.724000 | Price: 52000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:04,439 - INFO - root - Timestamp: 2025-04-02 01:52:03.724000 | Price: 53000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:04,439 - INFO - root - Timestamp: 2025-04-02 02:07:03.724000 | Price: 54000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:04,439 - INFO - root - Timestamp: 2025-04-02 02:22:03.724000 | Price: 55000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:04,439 - INFO - root - Timestamp: 2025-04-02 02:37:03.724000 | Price: 56000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:04,440 - INFO - root - Timestamp: 2025-04-02 02:52:03.724000 | Price: 57000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:04,440 - INFO - root - Timestamp: 2025-04-02 03:07:03.724000 | Price: 58000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:04,440 - INFO - root - Timestamp: 2025-04-02 03:22:03.724000 | Price: 59000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:04,629 - WARNING - root - Buy order failed: Symbol BTCUSDT not found in market info
+2025-04-03 01:37:04,629 - INFO - root - Timestamp: 2025-04-02 03:37:03.724000 | Price: 50000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:04,629 - INFO - root - Timestamp: 2025-04-02 03:52:03.724000 | Price: 51000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:04,629 - INFO - root - Timestamp: 2025-04-02 04:07:03.724000 | Price: 52000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:04,629 - INFO - root - Timestamp: 2025-04-02 04:22:03.724000 | Price: 53000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:04,629 - INFO - root - Timestamp: 2025-04-02 04:37:03.724000 | Price: 54000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:04,629 - INFO - root - Timestamp: 2025-04-02 04:52:03.724000 | Price: 55000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:04,629 - INFO - root - Timestamp: 2025-04-02 05:07:03.724000 | Price: 56000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:04,629 - INFO - root - Timestamp: 2025-04-02 05:22:03.724000 | Price: 57000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:04,629 - INFO - root - Timestamp: 2025-04-02 05:37:03.724000 | Price: 58000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:04,629 - INFO - root - Timestamp: 2025-04-02 05:52:03.724000 | Price: 59000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:04,822 - WARNING - root - Buy order failed: Symbol BTCUSDT not found in market info
+2025-04-03 01:37:04,822 - INFO - root - Timestamp: 2025-04-02 06:07:03.724000 | Price: 50000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:04,822 - INFO - root - Timestamp: 2025-04-02 06:22:03.724000 | Price: 51000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:04,822 - INFO - root - Timestamp: 2025-04-02 06:37:03.724000 | Price: 52000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:04,822 - INFO - root - Timestamp: 2025-04-02 06:52:03.724000 | Price: 53000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:04,822 - INFO - root - Timestamp: 2025-04-02 07:07:03.724000 | Price: 54000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:04,822 - INFO - root - Timestamp: 2025-04-02 07:22:03.724000 | Price: 55000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:04,824 - INFO - root - Timestamp: 2025-04-02 07:37:03.724000 | Price: 56000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:04,824 - INFO - root - Timestamp: 2025-04-02 07:52:03.724000 | Price: 57000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:04,824 - INFO - root - Timestamp: 2025-04-02 08:07:03.724000 | Price: 58000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:04,824 - INFO - root - Timestamp: 2025-04-02 08:22:03.724000 | Price: 59000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:05,012 - WARNING - root - Buy order failed: Symbol BTCUSDT not found in market info
+2025-04-03 01:37:05,012 - INFO - root - Timestamp: 2025-04-02 08:37:03.724000 | Price: 50000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:05,012 - INFO - root - Timestamp: 2025-04-02 08:52:03.724000 | Price: 51000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:05,012 - INFO - root - Timestamp: 2025-04-02 09:07:03.724000 | Price: 52000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:05,012 - INFO - root - Timestamp: 2025-04-02 09:22:03.724000 | Price: 53000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:05,012 - INFO - root - Timestamp: 2025-04-02 09:37:03.724000 | Price: 54000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:05,012 - INFO - root - Timestamp: 2025-04-02 09:52:03.724000 | Price: 55000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:05,012 - INFO - root - Timestamp: 2025-04-02 10:07:03.724000 | Price: 56000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:05,012 - INFO - root - Timestamp: 2025-04-02 10:22:03.724000 | Price: 57000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:05,012 - INFO - root - Timestamp: 2025-04-02 10:37:03.724000 | Price: 58000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:05,012 - INFO - root - Timestamp: 2025-04-02 10:52:03.724000 | Price: 59000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:05,200 - WARNING - root - Buy order failed: Symbol BTCUSDT not found in market info
+2025-04-03 01:37:05,201 - INFO - root - Timestamp: 2025-04-02 11:07:03.724000 | Price: 50000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:05,201 - INFO - root - Timestamp: 2025-04-02 11:22:03.724000 | Price: 51000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:05,201 - INFO - root - Timestamp: 2025-04-02 11:37:03.724000 | Price: 52000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:05,201 - INFO - root - Timestamp: 2025-04-02 11:52:03.724000 | Price: 53000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:05,201 - INFO - root - Timestamp: 2025-04-02 12:07:03.724000 | Price: 54000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:05,201 - INFO - root - Timestamp: 2025-04-02 12:22:03.724000 | Price: 55000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:05,201 - INFO - root - Timestamp: 2025-04-02 12:37:03.724000 | Price: 56000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:05,201 - INFO - root - Timestamp: 2025-04-02 12:52:03.724000 | Price: 57000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:05,201 - INFO - root - Timestamp: 2025-04-02 13:07:03.724000 | Price: 58000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:05,201 - INFO - root - Timestamp: 2025-04-02 13:22:03.724000 | Price: 59000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:05,724 - WARNING - root - Buy order failed: Symbol BTCUSDT not found in market info
+2025-04-03 01:37:05,724 - INFO - root - Timestamp: 2025-04-02 13:37:03.724000 | Price: 50000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:05,725 - INFO - root - Timestamp: 2025-04-02 13:52:03.724000 | Price: 51000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:05,725 - INFO - root - Timestamp: 2025-04-02 14:07:03.724000 | Price: 52000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:05,725 - INFO - root - Timestamp: 2025-04-02 14:22:03.724000 | Price: 53000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:05,725 - INFO - root - Timestamp: 2025-04-02 14:37:03.724000 | Price: 54000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:05,725 - INFO - root - Timestamp: 2025-04-02 14:52:03.724000 | Price: 55000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:05,725 - INFO - root - Timestamp: 2025-04-02 15:07:03.724000 | Price: 56000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:05,725 - INFO - root - Timestamp: 2025-04-02 15:22:03.724000 | Price: 57000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:05,725 - INFO - root - Timestamp: 2025-04-02 15:37:03.724000 | Price: 58000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:05,725 - INFO - root - Timestamp: 2025-04-02 15:52:03.724000 | Price: 59000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:05,917 - WARNING - root - Buy order failed: Symbol BTCUSDT not found in market info
+2025-04-03 01:37:05,917 - INFO - root - Timestamp: 2025-04-02 16:07:03.724000 | Price: 50000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:05,917 - INFO - root - Timestamp: 2025-04-02 16:22:03.724000 | Price: 51000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:05,917 - INFO - root - Timestamp: 2025-04-02 16:37:03.724000 | Price: 52000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:05,917 - INFO - root - Timestamp: 2025-04-02 16:52:03.724000 | Price: 53000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:05,917 - INFO - root - Timestamp: 2025-04-02 17:07:03.724000 | Price: 54000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:05,917 - INFO - root - Timestamp: 2025-04-02 17:22:03.724000 | Price: 55000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:05,917 - INFO - root - Timestamp: 2025-04-02 17:37:03.724000 | Price: 56000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:05,918 - INFO - root - Timestamp: 2025-04-02 17:52:03.724000 | Price: 57000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:05,918 - INFO - root - Timestamp: 2025-04-02 18:07:03.724000 | Price: 58000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:05,918 - INFO - root - Timestamp: 2025-04-02 18:22:03.724000 | Price: 59000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:06,441 - WARNING - root - Buy order failed: Symbol BTCUSDT not found in market info
+2025-04-03 01:37:06,442 - INFO - root - Timestamp: 2025-04-02 18:37:03.724000 | Price: 50000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:06,442 - INFO - root - Timestamp: 2025-04-02 18:52:03.724000 | Price: 51000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:06,442 - INFO - root - Timestamp: 2025-04-02 19:07:03.724000 | Price: 52000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:06,442 - INFO - root - Timestamp: 2025-04-02 19:22:03.724000 | Price: 53000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:06,442 - INFO - root - Timestamp: 2025-04-02 19:37:03.724000 | Price: 54000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:06,442 - INFO - root - Timestamp: 2025-04-02 19:52:03.724000 | Price: 55000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:06,442 - INFO - root - Timestamp: 2025-04-02 20:07:03.724000 | Price: 56000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:06,442 - INFO - root - Timestamp: 2025-04-02 20:22:03.724000 | Price: 57000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:06,442 - INFO - root - Timestamp: 2025-04-02 20:37:03.724000 | Price: 58000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:06,442 - INFO - root - Timestamp: 2025-04-02 20:52:03.724000 | Price: 59000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:06,634 - WARNING - root - Buy order failed: Symbol BTCUSDT not found in market info
+2025-04-03 01:37:06,635 - INFO - root - Timestamp: 2025-04-02 21:07:03.724000 | Price: 50000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:06,635 - INFO - root - Timestamp: 2025-04-02 21:22:03.724000 | Price: 51000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:06,635 - INFO - root - Timestamp: 2025-04-02 21:37:03.724000 | Price: 52000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:06,635 - INFO - root - Timestamp: 2025-04-02 21:52:03.724000 | Price: 53000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:06,635 - INFO - root - Timestamp: 2025-04-02 22:07:03.724000 | Price: 54000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:06,635 - INFO - root - Timestamp: 2025-04-02 22:22:03.724000 | Price: 55000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:06,635 - INFO - root - Timestamp: 2025-04-02 22:37:03.724000 | Price: 56000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:06,635 - INFO - root - Timestamp: 2025-04-02 22:52:03.724000 | Price: 57000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:06,635 - INFO - root - Timestamp: 2025-04-02 23:07:03.724000 | Price: 58000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:06,635 - INFO - root - Timestamp: 2025-04-02 23:22:03.724000 | Price: 59000.00 | Balance: 1000.00 | Position: 0.0000 | Total Value: 1000.00
+2025-04-03 01:37:06,642 - INFO - modules.parameter_optimization - Best parameters: {'ma_fast': 11.80481253396658, 'ma_slow': 26.064865936867854} with score 97.72
+2025-04-03 01:37:09,659 - ERROR - ErrorHandler - System Error [0]: Failed to load sufficient data after 3 attempts
+Type: ValueError
+Module: unknown
+Context: {'test_stage': 'ai_prediction', 'data_length': 700}
+Extra: {}
+Traceback: Traceback (most recent call last):
+  File "d:\TradingBot\self_test\full_system_test.py", line 265, in test_ai_predictions
+    raise ValueError("Failed to load sufficient data after 3 attempts")
+ValueError: Failed to load sufficient data after 3 attempts
+2025-04-03 01:37:09,660 - ERROR - ErrorHandler - System Error [0]: Test error
+Type: ValueError
+Module: unknown
+Context: {}
+Extra: {}
+Traceback: Traceback (most recent call last):
+  File "d:\TradingBot\self_test\full_system_test.py", line 303, in test_error_handling
+    raise ValueError("Test error")
+ValueError: Test error
+2025-04-03 01:37:09,932 - WARNING - modules.telegram_bot - Telegram Notifier destroyed without graceful shutdown!
+2025-04-03 01:37:09,932 - WARNING - modules.telegram_bot - Telegram Notifier destroyed without graceful shutdown!
+2025-04-03 01:37:09,932 - WARNING - modules.telegram_bot - Telegram Notifier destroyed without graceful shutdown!
+2025-04-03 01:37:09,933 - WARNING - modules.telegram_bot - Telegram Notifier destroyed without graceful shutdown!
