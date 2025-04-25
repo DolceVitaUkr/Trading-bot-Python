@@ -1,199 +1,121 @@
-# modules/exchange.py
-import ccxt
-import time
-import logging
-from typing import Dict, List, Optional
-from decimal import Decimal
-import config
-from modules.error_handler import APIError, NetworkError, OrderExecutionError
-from utils.utilities import retry
+import requests
 
-class DataIntegrityError(Exception):
-    """Raised when market data fails validation checks"""
-    pass
+class Exchange:
+    def __init__(self, use_testnet: bool = False):
+        """
+        Initialize the Exchange with Bybit mainnet for market data.
+        use_testnet is ignored to enforce real market data usage.
+        """
+        # Always use real Bybit endpoint for data (ignore testnet)&#8203;:contentReference[oaicite:1]{index=1}
+        self.base_url = "https://api.bybit.com"
+        self.positions = {}  # track open positions by symbol (virtual trading)
 
-class ExchangeAPI:
-    """Institutional-grade exchange interface with advanced features"""
-    
-    def __init__(self):
-        # Initialize attributes first
-        self.max_retries = 3
-        self.rate_limit = 0.1  # 100ms between requests
-        self.orderbook_cache = {}
-        self.last_request = 0
-        self.market_info = {}
-        self.logger = logging.getLogger(__name__)
-
-        # Initialize exchange connection
-        self._validate_config()
-        self._init_exchange()
-        self._load_market_info()
-
-    def _validate_config(self):
-        """Secure configuration validation with testnet/live separation"""
-        if config.USE_SIMULATION:
-            # Validate testnet credentials
-            if not all([config.SIMULATION_BYBIT_API_KEY, 
-                       config.SIMULATION_BYBIT_API_SECRET]):
-                raise ValueError("Missing testnet API credentials in configuration")
-            
-            self.api_key = config.SIMULATION_BYBIT_API_KEY
-            self.api_secret = config.SIMULATION_BYBIT_API_SECRET
-            min_key_length = 16
-            min_secret_length = 32
-        else:
-            # Validate live credentials
-            if not all([config.BYBIT_API_KEY, config.BYBIT_API_SECRET]):
-                raise ValueError("Missing live API credentials in configuration")
-            
-            self.api_key = config.BYBIT_API_KEY
-            self.api_secret = config.BYBIT_API_SECRET
-            min_key_length = 32
-            min_secret_length = 48
-
-        # Validate credential lengths
-        if len(self.api_key) < min_key_length:
-            env_type = "Testnet" if config.USE_SIMULATION else "Live"
-            raise ValueError(
-                f"{env_type} API key too short: {len(self.api_key)} < {min_key_length}"
-            )
-            
-        if len(self.api_secret) < min_secret_length:
-            env_type = "Testnet" if config.USE_SIMULATION else "Live"
-            raise ValueError(
-                f"{env_type} API secret too short: {len(self.api_secret)} < {min_secret_length}"
-            )
-
-    def _init_exchange(self):
-        """Initialize CCXT instance with environment-specific settings"""
-        exchange_params = {
-            'apiKey': self.api_key,
-            'secret': self.api_secret,
-            'options': {
-                'defaultType': 'contract',
-                'accountsByType': {
-                    'unified': 'UNIFIED',
-                    'spot': 'SPOT'
-                }                    
-            },
-            'enableRateLimit': True,
-            'timeout': config.API_REQUEST_TIMEOUT * 1000
-        }
-
-        # Initialize proper client based on environment
-        self.exchange = ccxt.bybit(exchange_params)
-        
-        if config.USE_SIMULATION:
-            self.exchange.set_sandbox_mode(True)
-            self.logger.info("Initialized in SANDBOX (TESTNET) mode")
-        else:
-            self.logger.info("Initialized in LIVE TRADING mode")
-
-        self._test_connection()
-
-    def _test_connection(self):
-        """Perform connection health check"""
-        for _ in range(self.max_retries):
-            try:
-                server_time = self.exchange.fetch_time()
-                self.logger.info(f"Connected to Bybit. Server time: {server_time}")
-                return
-            except Exception as e:
-                self.logger.error(f"Connection test failed: {str(e)}")
-                time.sleep(1)
-        raise NetworkError("Failed to establish exchange connection")
-
-    def get_current_price(self, symbol: str) -> float:
-        """Get current market price for a symbol"""
+    def get_price(self, symbol: str) -> float:
+        """
+        Fetch the latest market price for the given symbol from Bybit.
+        """
+        endpoint = "/v5/market/tickers"
+        # Use linear (USDT perpetual) category by default for futures; adjust if needed per symbol.
+        params = {"category": "linear", "symbol": symbol}
+        response = requests.get(self.base_url + endpoint, params=params)
+        data = response.json()
         try:
-            self._rate_limit()
-            ticker = self.exchange.fetch_ticker(symbol)
-            return float(ticker['last'])
-        except ccxt.NetworkError as e:
-            self.logger.error(f"Network error fetching price: {str(e)}")
-            raise NetworkError("Price fetch network error") from e
-        except ccxt.ExchangeError as e:
-            self.logger.error(f"Exchange error fetching price: {str(e)}")
-            raise APIError("Price fetch API error") from e
-        except Exception as e:
-            self.logger.error(f"Unexpected error in price fetch: {str(e)}")
-            raise
+            last_price = data["result"]["list"][0]["lastPrice"]
+        except (KeyError, IndexError) as e:
+            raise RuntimeError(f"Failed to get price for {symbol}: {data}")
+        return float(last_price)
 
-    def _rate_limit(self):
-        """Professional rate limiting with dynamic adjustment"""
-        elapsed = time.time() - self.last_request
-        if elapsed < self.rate_limit:
-            time.sleep(self.rate_limit - elapsed)
-        self.last_request = time.time()
+    def create_order(self, symbol: str, side: str, quantity: float = 1.0, price: float = None):
+        """
+        Simulate creating an order (market order by default) on the exchange.
+        This will open or modify a virtual position instead of executing a real trade.
+        """
+        side = side.lower()
+        # Determine execution price: use provided price or fetch current market price
+        exec_price = price if price is not None else self.get_price(symbol)
+        position = self.positions.get(symbol)
 
-    def _load_market_info(self):
-        """Preload market specifications for validation"""
-        markets = self.exchange.load_markets()
-        for symbol, info in markets.items():
-            self.market_info[symbol] = {
-                'precision': {
-                    'price': info['precision']['price'],
-                    'amount': info['precision']['amount']
-                },
-                'limits': info['limits'],
-                'contractSize': info['contractSize']
+        if position:
+            # If a position already exists on this symbol, adjust or close it based on the new order
+            current_side = position['side']
+            # Determine if this order is same direction or opposite
+            if (current_side == 'long' and side in ('sell', 'short')) or (current_side == 'short' and side in ('buy', 'long')):
+                # Opposite side order -> treat as closing or reducing position
+                if quantity >= position['quantity']:
+                    # Close the existing position fully (and reverse if extra quantity remains)
+                    closed_qty = position['quantity']
+                    self.positions[symbol] = None  # position closed
+                    # If order quantity is larger, open a new position in opposite direction with remaining qty
+                    remaining_qty = quantity - closed_qty
+                    if remaining_qty > 0:
+                        new_side = 'long' if side in ('buy', 'long') else 'short'
+                        self.positions[symbol] = {
+                            'symbol': symbol,
+                            'side': new_side,
+                            'quantity': remaining_qty,
+                            'entry_price': exec_price
+                        }
+                    else:
+                        # Fully closed, no new position
+                        del self.positions[symbol]
+                else:
+                    # Partial close: reduce the existing position's quantity
+                    position['quantity'] -= quantity
+                    self.positions[symbol] = position
+                return self.positions.get(symbol)
+            else:
+                # Same direction order -> increase position (average the entry price)
+                new_total_qty = position['quantity'] + quantity
+                # Calculate volume-weighted average price for the new total position
+                avg_price = ((position['entry_price'] * position['quantity']) + (exec_price * quantity)) / new_total_qty
+                position['entry_price'] = avg_price
+                position['quantity'] = new_total_qty
+                self.positions[symbol] = position
+                return position
+        else:
+            # No open position for this symbol, so open a new one
+            new_side = 'long' if side in ('buy', 'long') else 'short'
+            self.positions[symbol] = {
+                'symbol': symbol,
+                'side': new_side,
+                'quantity': quantity,
+                'entry_price': exec_price
             }
-            
-    def fetch_market_info(self, symbol: str) -> dict:
-        """Get market info for a specific symbol from preloaded data"""
-        if symbol not in self.market_info:
-            raise ValueError(f"Symbol {symbol} not found in market info")
-        return self.market_info[symbol]
+            return self.positions[symbol]
 
+    def get_position(self, symbol: str):
+        """
+        Get the current open position for a symbol, or None if no position is open.
+        """
+        return self.positions.get(symbol)
 
-    @retry(max_attempts=3, initial_delay=1, backoff_factor=2)
-    def fetch_market_data(self, symbol: str, timeframe: str = '15m', limit: int = 900, **kwargs) -> List[list]:
-        """Add kwargs to handle unexpected parameters"""
-        self._rate_limit()
-        
-        for attempt in range(self.max_retries):
-            try:
-                ohlcv = self.exchange.fetch_ohlcv(
-                    symbol=symbol,
-                    timeframe=timeframe,
-                    limit=limit,
-                    params={'price': 'index'}  # Get mark price for derivatives
-                )
-                
-                if len(ohlcv) < 1:
-                    raise DataIntegrityError(f"No data returned for {symbol}")
-                
-                last_timestamp = ohlcv[-1][0]
-                if not self._is_valid_timestamp(last_timestamp):
-                    raise DataIntegrityError(f"Invalid timestamp in {symbol} data")
-                
-                logging.debug(f"Fetched {len(ohlcv)} clean bars for {symbol}")
-                return ohlcv
-
-            except ccxt.NetworkError as e:
-                logging.warning(f"Network issue fetching {symbol}: {str(e)}")
-                if attempt == self.max_retries - 1:
-                    raise NetworkError(f"Failed to fetch {symbol} data") from e
-                time.sleep(2 ** attempt)
-
-            except ccxt.ExchangeError as e:
-                logging.error(f"Exchange error fetching {symbol}: {str(e)}")
-                raise APIError(f"Exchange rejected {symbol} request") from e
-
-        return []
-
-    def _is_valid_timestamp(self, timestamp: int) -> bool:
-        """Relaxed validation for backtesting"""
-        return timestamp > 0  # Basic check instead of 1-hour window
-
-    # Other methods (create_order, etc.) would follow here...
-
-    def get_min_order_size(self, symbol: str) -> float:
-        """Get minimum order size for a symbol"""
-        market_info = self.fetch_market_info(symbol)
-        return market_info['limits']['amount']['min']  # Correct key
-
-
-if __name__ == "__main__":
-    api = ExchangeAPI()
-    print(api.fetch_market_data("BTC/USDT"))
+    def close_position(self, symbol: str):
+        """
+        Simulate closing the position on the given symbol at current market price.
+        Returns the details of the closed position (including P&L).
+        """
+        position = self.positions.get(symbol)
+        if not position:
+            return None  # no position to close
+        # Use current market price as exit
+        exit_price = self.get_price(symbol)
+        entry_price = position['entry_price']
+        side = position['side']
+        qty = position['quantity']
+        # Calculate profit/loss
+        if side == 'long':
+            pnl = (exit_price - entry_price) * qty
+        else:  # short
+            pnl = (entry_price - exit_price) * qty
+        # Prepare closed position report
+        closed_position = {
+            'symbol': symbol,
+            'side': side,
+            'entry_price': entry_price,
+            'exit_price': exit_price,
+            'quantity': qty,
+            'pnl': pnl
+        }
+        # Remove the position from open positions
+        del self.positions[symbol]
+        return closed_position

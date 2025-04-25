@@ -1,198 +1,131 @@
-# modules/technical_indicators.py
-import pandas as pd
-import numpy as np
-import logging
-from scipy.stats import linregress
-from typing import Tuple, Optional
+def moving_average(data, period: int):
+    """
+    Calculate the Simple Moving Average (SMA) of the data over the given period.
+    Returns the average of the last 'period' values.
+    """
+    if data is None or period <= 0 or len(data) < period:
+        return None
+    return sum(data[-period:]) / period
 
-logger = logging.getLogger(__name__)
+def exponential_moving_average(data, period: int):
+    """
+    Calculate the Exponential Moving Average (EMA) of the data over the given period.
+    Returns the EMA of the data series.
+    """
+    if data is None or period <= 0 or len(data) < period:
+        return None
+    # Start with a simple moving average for the first 'period' points
+    ema = sum(data[:period]) / period
+    multiplier = 2 / (period + 1)
+    for price in data[period:]:
+        ema = (price - ema) * multiplier + ema
+    return ema
 
-class TechnicalIndicators:
-    @staticmethod
-    def moving_average(data: pd.Series, window: int) -> pd.Series:
-        return data.rolling(window=window).mean()
+def adx(high, low, close, period: int = 14):
+    """
+    Calculate the Average Directional Index (ADX) over the given period.
+    ADX reflects trend strength by combining +DI and -DI.
+    Returns the latest ADX value.
+    """
+    n = period
+    if high is None or low is None or close is None or len(high) < n+1 or len(low) < n+1 or len(close) < n+1:
+        return None
+    length = len(close)
+    # Initialize arrays for True Range (TR), +DM, -DM
+    tr = [0.0] * length
+    pdm = [0.0] * length  # positive directional movement
+    ndm = [0.0] * length  # negative directional movement
+    for i in range(1, length):
+        # Calculate True Range
+        tr[i] = max(high[i] - low[i], abs(high[i] - close[i-1]), abs(low[i] - close[i-1]))
+        # Calculate directional movement
+        up_move = high[i] - high[i-1]
+        down_move = low[i-1] - low[i]
+        pdm[i] = up_move if up_move > down_move and up_move > 0 else 0.0
+        ndm[i] = down_move if down_move > up_move and down_move > 0 else 0.0
+    # Smooth the sums of TR, +DM, -DM over 'n' periods using Wilder's smoothing
+    tr_sum = sum(tr[1:n+1])
+    pdm_sum = sum(pdm[1:n+1])
+    ndm_sum = sum(ndm[1:n+1])
+    # Calculate initial Directional Indices (DI)
+    if tr_sum == 0:
+        plus_di = 0.0
+        minus_di = 0.0
+    else:
+        plus_di = (pdm_sum / tr_sum) * 100
+        minus_di = (ndm_sum / tr_sum) * 100
+    # Calculate initial DX value at period index
+    if plus_di + minus_di == 0:
+        dx = 0.0
+    else:
+        dx = abs(plus_di - minus_di) / (plus_di + minus_di) * 100
+    # Initialize ADX list (only necessary from 2n-1 onward)
+    adx_list = [None] * length
+    dx_list = [None] * length
+    dx_list[n] = dx
+    # Compute DX for each subsequent time step
+    for i in range(n+1, length):
+        # Update smoothed TR and DM sums (Wilder's smoothing)
+        tr_sum = tr_sum - (tr_sum / n) + tr[i]
+        pdm_sum = pdm_sum - (pdm_sum / n) + pdm[i]
+        ndm_sum = ndm_sum - (ndm_sum / n) + ndm[i]
+        # Recalculate DI and DX for this index
+        if tr_sum == 0:
+            plus_di = 0.0
+            minus_di = 0.0
+        else:
+            plus_di = (pdm_sum / tr_sum) * 100
+            minus_di = (ndm_sum / tr_sum) * 100
+        if plus_di + minus_di == 0:
+            dx_list[i] = 0.0
+        else:
+            dx_list[i] = abs(plus_di - minus_di) / (plus_di + minus_di) * 100
+    # Compute initial ADX as the average of the first 'n' DX values (from index n to 2n-1)
+    if length < 2 * n:
+        # Not enough data to compute full ADX
+        return dx_list[n]
+    initial_adx = sum([dx_val for dx_val in dx_list[n:2*n] if dx_val is not None]) / n
+    adx_list[2*n - 1] = initial_adx
+    # Compute ADX for subsequent points using Wilder's smoothing on DX
+    for j in range(2*n, length):
+        prev_adx = adx_list[j-1] if adx_list[j-1] is not None else initial_adx
+        adx_list[j] = ((prev_adx * (n - 1)) + (dx_list[j] if dx_list[j] is not None else 0.0)) / n
+    # Return the latest ADX value
+    return adx_list[-1]
 
+def cci(high, low, close, period: int = 20):
+    """
+    Calculate the Commodity Channel Index (CCI) for the given period.
+    CCI measures how far the price is from its statistical mean.
+    Returns the latest CCI value.
+    """
+    if high is None or low is None or close is None or len(close) < period:
+        return None
+    # Typical Price (TP) for each period = (High + Low + Close) / 3
+    tp_series = [(high[i] + low[i] + close[i]) / 3.0 for i in range(len(close))]
+    # Calculate SMA of TP over the last 'period' values
+    tp_window = tp_series[-period:]
+    sma_tp = sum(tp_window) / period
+    # Calculate mean deviation of TP over the period
+    mean_dev = sum(abs(tp - sma_tp) for tp in tp_window) / period
+    if mean_dev == 0:
+        return 0.0  # avoid division by zero; CCI is zero if prices haven't moved
+    # CCI formula: (TP_latest - SMA_TP) / (0.015 * mean_dev)
+    cci_value = (tp_series[-1] - sma_tp) / (0.015 * mean_dev)
+    return cci_value
 
-    @staticmethod
-    def ema(data: pd.DataFrame, window: int = 20, 
-           price_col: str = 'close') -> pd.Series:
-        """Exponential Moving Average with proper error handling"""
-        try:
-            return data[price_col].ewm(span=window, adjust=False, min_periods=window).mean()
-        except Exception as e:
-            logger.error(f"EMA error: {str(e)}", exc_info=True)
-            return pd.Series()
-
-    
-    @staticmethod
-    def rsi(data: pd.Series, window: int = 14) -> pd.Series:
-        delta = data.diff()
-        gain = delta.where(delta > 0, 0)
-        loss = -delta.where(delta < 0, 0)
-        
-        avg_gain = gain.rolling(window).mean()
-        avg_loss = loss.rolling(window).mean()
-        
-        rs = avg_gain / avg_loss
-        return 100 - (100 / (1 + rs)).fillna(50)
-    
-    @staticmethod
-    def macd(data: pd.DataFrame, fast: int = 12, slow: int = 26, 
-            signal: int = 9, price_col: str = 'close') -> Tuple[pd.Series, pd.Series, pd.Series]:
-        """MACD with histogram output"""
-        try:
-            fast_ema = data[price_col].ewm(span=fast, adjust=False).mean()
-            slow_ema = data[price_col].ewm(span=slow, adjust=False).mean()
-            macd_line = fast_ema - slow_ema
-            signal_line = macd_line.ewm(span=signal, adjust=False).mean()
-            histogram = macd_line - signal_line
-            return macd_line, signal_line, histogram
-        except Exception as e:
-            logger.error(f"MACD error: {str(e)}", exc_info=True)
-            return (pd.Series(), pd.Series(), pd.Series())
-
-    @staticmethod
-    def bollinger_bands(data: pd.DataFrame, window: int = 20, 
-                       std_dev: float = 2.0, price_col: str = 'close') -> Tuple[pd.Series, pd.Series, pd.Series]:
-        """Bollinger Bands with dynamic standard deviation"""
-        try:
-            sma = data[price_col].rolling(window).mean()
-            rolling_std = data[price_col].rolling(window).std()
-            upper = sma + (rolling_std * std_dev)
-            lower = sma - (rolling_std * std_dev)
-            return sma, upper, lower
-        except Exception as e:
-            logger.error(f"Bollinger Bands error: {str(e)}", exc_info=True)
-            return (pd.Series(), pd.Series(), pd.Series())
-
-    @staticmethod
-    def atr(data: pd.DataFrame, window: int = 14) -> pd.Series:
-        """Average True Range for volatility measurement"""
-        try:
-            high_low = data['high'] - data['low']
-            high_close = (data['high'] - data['close'].shift()).abs()
-            low_close = (data['low'] - data['close'].shift()).abs()
-            tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-            return tr.ewm(alpha=1/window, min_periods=window).mean()
-        except Exception as e:
-            logger.error(f"ATR error: {str(e)}", exc_info=True)
-            return pd.Series()
-
-    @staticmethod
-    def obv(data: pd.DataFrame, price_col: str = 'close', 
-           volume_col: str = 'volume') -> pd.Series:
-        """On-Balance Volume indicator"""
-        try:
-            obv = (np.sign(data[price_col].diff()) * data[volume_col])
-            return obv.cumsum()
-        except Exception as e:
-            logger.error(f"OBV error: {str(e)}", exc_info=True)
-            return pd.Series()
-        except Exception as e:
-            logger.error(f"OBV error: {str(e)}", exc_info=True)
-            return pd.Series()
-
-    @staticmethod
-    def ichimoku_cloud(data: pd.DataFrame, conversion: int = 9, 
-                      base: int = 26, leading: int = 52, 
-                      displacement: int = 26) -> Tuple[pd.Series, pd.Series, pd.Series, pd.Series, pd.Series]:
-        """Ichimoku Cloud with all components"""
-        try:
-            conversion_line = (data['high'].rolling(conversion).max() + 
-                              data['low'].rolling(conversion).min()) / 2
-            base_line = (data['high'].rolling(base).max() + 
-                        data['low'].rolling(base).min()) / 2
-            leading_span_a = ((conversion_line + base_line) / 2).shift(displacement)
-            leading_span_b = ((data['high'].rolling(leading).max() + 
-                             data['low'].rolling(leading).min()) / 2).shift(displacement)
-            lagging_span = data['close'].shift(-displacement)
-            return conversion_line, base_line, leading_span_a, leading_span_b, lagging_span
-        except Exception as e:
-            logger.error(f"Ichimoku error: {str(e)}", exc_info=True)
-            return (pd.Series(), pd.Series(), pd.Series(), pd.Series(), pd.Series())
-
-    @staticmethod
-    def stochastic_oscillator(data: pd.DataFrame, k_window: int = 14, 
-                             d_window: int = 3) -> Tuple[pd.Series, pd.Series]:
-        """Stochastic Oscillator %K and %D"""
-        try:
-            low_min = data['low'].rolling(k_window).min()
-            high_max = data['high'].rolling(k_window).max()
-            k_line = 100 * ((data['close'] - low_min) / (high_max - low_min))
-            d_line = k_line.rolling(d_window).mean()
-            return k_line, d_line
-        except Exception as e:
-            logger.error(f"Stochastic error: {str(e)}", exc_info=True)
-            return (pd.Series(), pd.Series())
-
-    @staticmethod
-    def fibonacci_retracement(data: pd.DataFrame, lookback: int = 30) -> dict:
-        """Fibonacci Retracement Levels"""
-        try:
-            max_price = data['high'].rolling(lookback).max().iloc[-1]
-            min_price = data['low'].rolling(lookback).min().iloc[-1]
-            diff = max_price - min_price
-            
-            return {
-                '0.0': max_price,
-                '0.236': max_price - diff * 0.236,
-                '0.382': max_price - diff * 0.382,
-                '0.5': max_price - diff * 0.5,
-                '0.618': max_price - diff * 0.618,
-                '1.0': min_price
-            }
-        except Exception as e:
-            logger.error(f"Fibonacci error: {str(e)}", exc_info=True)
-            return {}
-
-    @staticmethod
-    def adv_volume_indicators(data: pd.DataFrame, window: int = 20) -> Tuple[pd.Series, pd.Series]:
-        """Advanced volume indicators (Volume SMA and Volume ROC)"""
-        try:
-            vol_sma = data['volume'].rolling(window).mean()
-            vol_roc = (data['volume'] / data['volume'].shift(window) - 1) * 100
-            return vol_sma, vol_roc
-        except Exception as e:
-            logger.error(f"Volume indicators error: {str(e)}", exc_info=True)
-            return (pd.Series(), pd.Series())
-
-    @staticmethod
-    def market_regime(data: pd.DataFrame, short_window: int = 50, 
-                     long_window: int = 200) -> pd.Series:
-        """Market Regime Detection using EMA crossovers"""
-        try:
-            short_ema = data['close'].ewm(span=short_window).mean()
-            long_ema = data['close'].ewm(span=long_window).mean()
-            return np.where(short_ema > long_ema, 1, -1)
-        except Exception as e:
-            logger.error(f"Market regime error: {str(e)}", exc_info=True)
-            return pd.Series()
-
-    @staticmethod
-    def entropy_volatility(data: pd.DataFrame, window: int = 14) -> pd.Series:
-        """Information-theoretic volatility measure"""
-        try:
-            returns = data['close'].pct_change().dropna()
-            rolling_entropy = returns.rolling(window).apply(
-                lambda x: -np.sum(x * np.log(np.abs(x) + 1e-12))
-            )
-            return rolling_entropy
-        except Exception as e:
-            logger.error(f"Entropy volatility error: {str(e)}", exc_info=True)
-            return pd.Series()
-        except Exception as e:
-            logger.error(f"Entropy volatility error: {str(e)}", exc_info=True)
-            return pd.Series()
-
-# Example usage:
-if __name__ == "__main__":
-    # Load sample data
-    data = pd.read_csv('sample_data.csv', parse_dates=['date'])
-    
-    # Calculate indicators
-    ti = TechnicalIndicators()
-    data['sma_20'] = ti.moving_average(data)
-    data['rsi_14'] = ti.rsi(data)
-    data['macd'], data['signal'], data['histogram'] = ti.macd(data)
-    data['atr_14'] = ti.atr(data)
-    print("Technical indicators calculated successfully.")
+def williams_r(high, low, close, period: int = 14):
+    """
+    Calculate the Williams %R indicator over the given period.
+    Williams %R shows the level of the close relative to the highest high and lowest low of the period.
+    Returns the latest %R value (between 0 and -100).
+    """
+    if high is None or low is None or close is None or len(close) < period:
+        return None
+    highest_high = max(high[-period:])
+    lowest_low = min(low[-period:])
+    if highest_high == lowest_low:
+        return 0.0  # avoid division by zero if all prices equal in the period
+    # %R formula: (HighestHigh - LastClose) / (HighestHigh - LowestLow) * -100
+    percent_r = (highest_high - close[-1]) / (highest_high - lowest_low) * -100
+    return percent_r
