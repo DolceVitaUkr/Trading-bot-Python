@@ -1,10 +1,15 @@
 # modules/trade_calculator.py
+
 import logging
 from decimal import Decimal, getcontext
 from typing import Dict, Union
 
+# Set precision high enough for financial calcs
+getcontext().prec = 28
+
 logger = logging.getLogger(__name__)
-getcontext().prec = 8  # High precision for financial calculations
+logger.addHandler(logging.NullHandler())
+
 
 def calculate_trade_result(
     entry_price: Union[float, Decimal],
@@ -12,37 +17,46 @@ def calculate_trade_result(
     quantity: Union[float, Decimal],
     fee_percentage: float = 0.002
 ) -> Dict[str, float]:
-    """Calculate basic trade P&L with fees for simulations"""
+    """
+    Basic trade P&L calculation with fees.
+    Returns profit, fees, and return percentage.
+    """
     try:
-        # Convert all inputs to Decimal for precise calculations
         entry = Decimal(str(entry_price))
-        exit = Decimal(str(exit_price))
+        exit_p = Decimal(str(exit_price))
         qty = Decimal(str(quantity))
         fee_rate = Decimal(str(fee_percentage))
 
-        gross_profit = (exit - entry) * qty
-        fees = (entry + exit) * qty * fee_rate
+        gross_profit = (exit_p - entry) * qty
+        fees = (entry + exit_p) * qty * fee_rate
         net_profit = gross_profit - fees
-        
+        return_pct = (net_profit / (entry * qty) * Decimal('100')) if entry * qty != 0 else Decimal('0')
+
         return {
             'profit': float(net_profit),
             'fees': float(fees),
-            'return_pct': float((net_profit / (entry * qty)) * 100 if entry * qty != 0 else 0.0)
+            'return_pct': float(return_pct)
         }
     except Exception as e:
-        logger.error(f"Basic trade calculation failed: {str(e)}")
-        return {'profit': 0.0, 'fees': 0.0, 'return_pct': 0.0}
-    except Exception as e:
-        logger.error(f"Basic trade calculation failed: {str(e)}")
+        logger.error(f"Basic trade calculation failed: {e}")
         return {'profit': 0.0, 'fees': 0.0, 'return_pct': 0.0}
 
+
 class AdvancedTradeCalculator:
-    """Institutional-grade trading calculations with advanced features"""
-    def __init__(self):
-        self.maker_fee = Decimal('0.0002')  # 0.02%
-        self.taker_fee = Decimal('0.0006')  # 0.06%
-        self.maintenance_margin = Decimal('0.005')  # 0.5%
-        self.daily_interest_rate = Decimal('0.00025')  # 0.025% daily
+    """
+    Institutional-grade calculations including leverage, fees, and interest.
+    """
+    def __init__(
+        self,
+        maker_fee: Decimal = Decimal('0.0002'),
+        taker_fee: Decimal = Decimal('0.0006'),
+        maintenance_margin: Decimal = Decimal('0.005'),
+        daily_interest_rate: Decimal = Decimal('0.00025')
+    ):
+        self.maker_fee = maker_fee
+        self.taker_fee = taker_fee
+        self.maintenance_margin = maintenance_margin
+        self.daily_interest_rate = daily_interest_rate
 
     def calculate_trade(
         self,
@@ -54,49 +68,47 @@ class AdvancedTradeCalculator:
         holding_days: int = 0,
         slippage: Decimal = Decimal('0.0005')
     ) -> Dict[str, Decimal]:
-        """Advanced trade calculation with margin and fees"""
-        self._validate_inputs(entry_price, exit_price, risk_capital, leverage)
-        
+        """
+        Calculates position_size, P&L, fees, interest, ROI, and liquidation price.
+        """
+        # Input validation
+        if entry_price <= 0 or exit_price <= 0 or risk_capital <= 0:
+            raise ValueError("Monetary values must be positive")
+        if leverage < 1:
+            raise ValueError("Leverage must be at least 1")
+
+        # Determine position size
         position_size = (risk_capital * leverage) / entry_price
-        effective_exit = exit_price * (1 - slippage) if position_size > 0 else exit_price
-        
+        # Apply slippage to exit price
+        effective_exit = exit_price * (Decimal('1') - slippage)
+        # Choose fee rate
         fee_rate = self.maker_fee if is_maker else self.taker_fee
+        # Calculate fees
         entry_fee = risk_capital * fee_rate
         exit_fee = position_size * effective_exit * fee_rate
-        
-        price_change = effective_exit - entry_price
-        gross_pnl = position_size * price_change
         total_fee = entry_fee + exit_fee
-        interest_cost = risk_capital * leverage * self.daily_interest_rate * holding_days
-        
+        # P&L calculations
+        price_diff = effective_exit - entry_price
+        gross_pnl = position_size * price_diff
+        interest_cost = risk_capital * Decimal(leverage) * self.daily_interest_rate * Decimal(holding_days)
         net_pnl = gross_pnl - total_fee - interest_cost
-        roi = (net_pnl / risk_capital) * 100
-        
+        # ROI in percent
+        effective_roi = (net_pnl / risk_capital) * Decimal('100') if risk_capital != 0 else Decimal('0')
+        # Liquidation price calculation
+        if leverage > 1:
+            liq_price = entry_price - (entry_price * (self.maintenance_margin / (Decimal(leverage) - self.maintenance_margin)))
+        else:
+            liq_price = Decimal('0')
+        # Risk-adjusted ROI
+        risk_adjusted_roi = effective_roi / Decimal(leverage)
+
         return {
-            "position_size": position_size,
-            "gross_pnl": gross_pnl,
-            "net_pnl": net_pnl,
-            "total_fee": total_fee,
-            "interest_cost": interest_cost,
-            "effective_roi": roi,
-            "liquidation_price": self._calculate_liquidation_price(entry_price, leverage),
-            "risk_adjusted_roi": roi / leverage,
+            'position_size': position_size,
+            'gross_pnl': gross_pnl,
+            'net_pnl': net_pnl,
+            'total_fee': total_fee,
+            'interest_cost': interest_cost,
+            'effective_roi': effective_roi,
+            'liquidation_price': liq_price,
+            'risk_adjusted_roi': risk_adjusted_roi
         }
-
-    def _validate_inputs(self, *args):
-        for value in args[:-1]:
-            if value <= Decimal('0'):
-                raise ValueError("All monetary values must be positive")
-        if not 1 <= args[-1] <= 100:
-            raise ValueError("Leverage must be between 1-100x")
-
-    def _calculate_liquidation_price(self, entry: Decimal, leverage: int) -> Decimal:
-        margin_call = entry * (self.maintenance_margin / (leverage - self.maintenance_margin))
-        return entry - margin_call if leverage > 1 else Decimal('0')
-
-if __name__ == "__main__":
-    # Example usage
-    print("Basic calculation:", calculate_trade_result(50000, 52000, 0.1))
-    adv = AdvancedTradeCalculator()
-    print("Advanced calculation:", 
-          adv.calculate_trade(Decimal('50000'), Decimal('52000'), Decimal('1000'), 5))

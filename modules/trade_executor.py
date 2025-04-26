@@ -1,11 +1,8 @@
 # modules/trade_executor.py
-import logging
-import config
-from modules.exchange import ExchangeAPI
+import logging, asyncio, time
+import modules.exchange as exchange_module
 from modules.telegram_bot import TelegramNotifier
-from utils.utilities import configure_logging
-import asyncio
-import time
+import config
 
 def send_telegram_sync(bot, message):
     try:
@@ -13,45 +10,44 @@ def send_telegram_sync(bot, message):
     except RuntimeError:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-    try:
-        if loop.is_running():
-            asyncio.create_task(bot.send_message(message))
-        else:
-            loop.run_until_complete(bot.send_message(message))
-    except Exception as e:
-        logging.error(f"Error sending telegram message: {e}", exc_info=True)
+    if loop.is_running():
+        asyncio.create_task(bot.send_message(message))
+    else:
+        loop.run_until_complete(bot.send_message(message))
 
 class TradeExecutor:
     def __init__(self, simulation_mode: bool = True):
         self.simulation_mode = simulation_mode
-        self.exchange = ExchangeAPI()
+        self.exchange = exchange_module.ExchangeAPI()
         self.telegram_bot = TelegramNotifier(disable_async=True)
 
-    def execute_order(self, symbol, side, amount, price, order_type="limit"):
-        clean_symbol = symbol.replace('/', '')
-        current_price = self.exchange.get_current_price(clean_symbol)
-        # Add validation for minimum order size
-        min_order = max(0.002, self.exchange.get_min_order_size(clean_symbol))
+    def execute_order(self,
+                      symbol: str,
+                      side: str,
+                      amount: float,
+                      price: float,
+                      order_type: str = "limit"):
+        clean = symbol.replace('/','')
+        current = self.exchange.get_current_price(clean)
+        min_order = max(0.002, self.exchange.get_min_order_size(clean))
         if amount < min_order:
             raise ValueError(f"Order amount {amount} below minimum {min_order}")
-                
-        # Format price according to exchange rules
-        price_precision = self.exchange.get_price_precision(clean_symbol)
-        price = round(price, price_precision)
+        prec = self.exchange.get_price_precision(clean)
+        price = round(price, prec)
 
-        side = side.lower()
-        message = f"{'Simulating' if self.simulation_mode else 'Executing'} order: {side.upper()} {symbol} {amount:.2f} USDT at {price:.8f}"
-        logging.info(message)
-        send_telegram_sync(self.telegram_bot, message)
-        
+        msg = f"{'Simulating' if self.simulation_mode else 'Executing'} " \
+              f"{side.upper()} {symbol} {amount:.2f} USDT at {price:.8f}"
+        logging.info(msg)
+        send_telegram_sync(self.telegram_bot, msg)
+
         if self.simulation_mode:
             time.sleep(config.SIMULATION_ORDER_DELAY)
-            return {"status": "simulated", "symbol": symbol, "side": side, "amount": amount, "price": price}
-        else:
-            try:
-                return self.exchange.create_order(clean_symbol, order_type, side, amount, price)
-            except Exception as e:
-                error_msg = f"Order failed: {e}"
-                logging.error(error_msg, exc_info=True)
-                send_telegram_sync(self.telegram_bot, error_msg)
-                raise
+            return {"status":"simulated","symbol":symbol,"side":side,"amount":amount,"price":price}
+
+        try:
+            return self.exchange.create_order(clean, order_type, side, amount, price)
+        except Exception as e:
+            err = f"Order failed: {e}"
+            logging.error(err, exc_info=True)
+            send_telegram_sync(self.telegram_bot, err)
+            raise
