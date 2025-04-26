@@ -1,91 +1,140 @@
-Self-Learning AI Crypto Trading Bot with ByBit Integration and Telegram Notifications
-Overview
-Python-based crypto trading bot with live and simulation modes.
-Uses AI/ML for self-learning and reinforcement learning to optimize trading strategies.
-Integrates with ByBit API for exchange connectivity.
-Provides a graphical UI for real-time market data and performance metrics.
-Sends trade alerts and updates via Telegram.
+Self-Learning Cryptocurrency Trading Bot
+A production-grade cryptocurrency trading bot that uses real-time market data and reinforcement learning to train itself in a virtual environment and eventually trade live on the market. This bot features an automatic transition from paper trading to live trading once performance is consistently profitable. It includes a rich graphical user interface (GUI) for monitoring, dynamic market analysis to focus on "hot" trading pairs, robust risk management, and an error handling system with automated recovery and Telegram alerts.
 Features
-Exchange Integration:
-Secure connection to ByBit API for live and paper trading.
-Self-Learning Mechanism:
-Uses AI and reinforcement learning to adjust trading strategies.
-Simulation Mode:
-Tests strategies using historical data without risking real funds.
-User Interface:
-Displays market data, trade signals, performance metrics, and parameter settings.
-Risk Management:
-Implements stop loss, take profit, and maximum drawdown limits.
-Telegram Notifications:
-Real-time alerts on trades, profits, and critical errors.
-Parameter Optimization:
-Supports grid search, random search, or evolutionary methods for fine-tuning.
-Modular Error Handling:
-Custom exceptions and logging for robust error management.
+Real-Time Self-Training (Paper Trading Mode): The bot learns trading strategies using live market data in a simulated environment. It starts with a virtual wallet (e.g. $1000 initial balance) and uses reinforcement learning (neural networks) to improve its strategy without risking real funds. Performance is tracked continuously, and no random price data is used – the training leverages actual market feeds for realism.
+Automated Transition to Live Trading: Once the bot demonstrates consistent profitability in simulation (based on predefined performance criteria such as steady profit growth or low drawdown), it can automatically switch to real trading mode. In live mode, the bot places real orders on the exchange using about 5% of the real account balance per trade, with a minimum trade size of $10 to ensure sufficient order value. This limits risk exposure while scaling up trading with the account size.
+Graphical User Interface (GUI): A full-featured GUI built with Tkinter provides real-time visibility and control. The interface displays current performance metrics (like total profit, win rate, etc.), a list of open positions and recently closed trades, and interactive balance/equity and P&L graphs so you can visualize the bot’s performance over time. Control buttons are provided to start or stop the bot in either training or live mode:
+Start Training – Begin the self-learning process in simulation mode.
+Stop Training – Pause/stop the training process.
+Start Trading – Deploy the bot to live trading with real funds (after training).
+Stop Trading – Halt live trading. When stopping, the UI will prompt whether to keep any open positions running or to close them immediately for safety.
+Dynamic Pair Rotation: Instead of sticking to a fixed set of symbols, the bot intelligently rotates through trading pairs based on market conditions. A dedicated module fetches a list of top trading pairs (for example, top-volume USDT pairs from Bybit) and analyzes metrics like volatility, momentum, and recent trends to identify “hot” pairs. The bot focuses its trading on these favorable pairs to capitalize on current market opportunities. (Optional: The system can be extended to incorporate market sentiment data – for instance, scraping sentiment indicators from investing.com – to further refine pair selection.)
+Neural Network Reinforcement Learning: At the core is a self-learning algorithm (using PyTorch) that treats trading as a reinforcement learning problem. The bot’s neural network takes in market state data (prices, technical indicators, etc.) and outputs actions (e.g. buy, sell, hold). It learns from experience by observing rewards – computed from trade outcomes via a custom reward function – to improve its policy over time. All training data and experience (state-action-reward transitions) can be saved to the historical_data/training/ directory, building a dataset of real market scenarios for offline analysis or further training. This ensures the learning is grounded in reality and can be audited or re-used later.
+Risk Management & Position Sizing: The bot adheres to strict risk management rules. It will typically risk only a small fraction of capital per trade (5% in live mode as noted, configurable) and can employ stop-loss orders or dynamic stop adjustments to protect against large losses. The risk_management module (and related logic in the trading engine) ensures that any trade that would exceed risk thresholds (e.g. position too large, too many open positions, or exceeding max drawdown limits) is not taken. This prevents reckless trading behavior and helps preserve capital.
+Robust Error Handling and Recovery: The system is designed to run continuously, handling exceptions gracefully. If a recoverable error occurs (such as a network glitch or transient API error), the bot logs the error, sends a Telegram alert to notify the user, and continues running without user intervention. For more serious issues (e.g. exchange API downtime or strategy logic errors), the bot’s error handler triggers a “circuit breaker”: it can safely stop trading, and in critical cases it will automatically restart the bot process. Upon restart, restart protection logic kicks in – the bot checks with the Bybit API for any open positions that were left from before the restart and reloads those positions into its state. This means the bot will resume managing any open trades (or close them if configured to) so nothing is lost or left unmanaged during a crash or restart. The strategy’s state (learned model parameters, etc.) is also persisted so that the bot doesn’t lose its learned knowledge on restart.
+Automated Notifications: Integrated Telegram bot support allows the system to push out important events and alerts. For example, every trade execution (buy/sell) can trigger a Telegram message summarizing the action (symbol, price, amount, mode simulated/real), and any critical error will immediately send an alert with details to a predefined Telegram chat. This keeps users informed of the bot’s actions and health in real time, even if the GUI is not actively being watched.
+Modular Design for Extensibility: The project is organized into clear modules separating concerns (data fetching, strategy logic, trade execution, UI, etc.), making it easy to maintain and extend. Additional features or strategies can be integrated by adding new modules or extending existing ones without overhauling the entire system. For instance, one could plug in a different trading strategy module or add new technical indicators, and leverage the provided parameter optimization module to fine-tune parameters of the strategy on historical data.
 Installation
-Prerequisites
-Python 3.8+
-pip package manager
-Steps
-Clone the repository:
+Prerequisites: Ensure you have Python 3.8+ installed on your system. It's recommended to set up a Python virtual environment for the project to manage dependencies.
+Clone the Repository: Download or clone the project source code to your local machine.
+Install Dependencies: Install the required Python packages. You can use pip to install the libraries used in this project. For example:
 bash
 Copy
-git clone <repository_url>
-Navigate to the project directory:
-bash
-Copy
-cd D:\TradingBot
-Install the required libraries:
-bash
-Copy
+Edit
 pip install -r requirements.txt
-Configure API Keys and Settings:
-Update config.py with your API keys, Telegram credentials, risk parameters, and other settings.
-Alternatively, use environment variables for sensitive information.
-File Structure
-main.py:
-Entry point; initializes logging, modules, and the UI.
-config.py:
-Contains configuration settings for API keys, risk management, UI, simulation, and logging.
-requirements.txt:
-Lists required Python libraries.
-MODULES_MANIFEST.md:
-Documents all module names and their functions for consistency.
-modules/
-exchange.py – Handles ByBit API integration.
-telegram_bot.py – Manages Telegram notifications.
-ui.py – Implements the graphical user interface.
-data_manager.py – Manages historical data downloading and storage.
-error_handler.py – Contains custom exceptions and logging for error handling.
-parameter_optimization.py – Implements dynamic parameter tuning.
-simulation.py – Provides simulation/training mode.
-self_learning.py – Contains AI/ML models for self-learning.
-technical_indicators.py – Implements technical analysis indicators.
-logs/
-Stores log files (e.g., bot.log).
-data/
-Contains historical and processed market data.
-utils/
-Contains helper functions for common operations.
-Usage
-Run the Bot:
+If a requirements.txt is not provided, manually install the major dependencies:
+pandas (for data handling)
+numpy (numerical computations)
+torch (PyTorch, for neural network and RL)
+matplotlib (for plotting in the GUI)
+tkinter (usually included with Python, for GUI elements)
+requests (for API calls)
+python-telegram-bot (for Telegram notifications)
+pyarrow (for saving data to Parquet format – used by pandas)
+deap (for the optional parameter optimization algorithms)
+plus any others as needed (e.g. pytest if you plan to run the test suite).
+Configuration: Locate the config.py file in the project (this contains various configuration settings and API credentials). Open this file in a text editor and update the following values:
+Bybit API Keys: Set BYBIT_API_KEY and BYBIT_API_SECRET with your Bybit API credentials for live trading. If you plan to use Bybit’s testnet for a trial, you can use testnet credentials and ensure any USE_TESTNET or similar flag is set accordingly (by default, the bot uses the real Bybit endpoint for market data and trades).
+Telegram Bot Token/Chat ID: If you want Telegram alerts, set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to your bot’s API token and your Telegram user/group chat ID. (You can obtain a bot token by using BotFather on Telegram, and get your chat ID by messaging the bot or using a tool to find your user ID.)
+Paths and Files: Ensure HISTORICAL_DATA_PATH is set (e.g. to historical_data/) where the bot will store market data and training datasets. The default should suffice, but you can change it if needed.
+Other Settings: Review other config options such as LOG_FILE (path for log output), LOG_LEVEL (logging verbosity), CRITICAL_ERROR_CODES (which error codes trigger a critical alert/restart), ERROR_RATE_THRESHOLD (errors count to trigger circuit breaker), SIMULATION_ORDER_DELAY (to simulate network latency on paper trades), etc. Default values are provided for most settings. Adjust if necessary.
+Verify Installation: It’s a good idea to run the test suite to verify everything is set up correctly. You can run the PyTest tests (if provided in a self_test/ directory) with:
 bash
 Copy
-python main.py
-UI Controls:
-Switch between live trading and simulation modes.
-Monitor market data and adjust strategy parameters.
-Simulation Mode:
-Test strategies using historical data before deploying live trades.
-Telegram Alerts:
-Receive trade alerts and performance summaries as configured.
-Contributing
-Follow the module naming conventions as documented in MODULES_MANIFEST.md.
-Ensure any new features are modular and well documented.
-Submit pull requests with clear descriptions of changes.
-License
-This project is licensed under the MIT License.
-
-Contact
-For questions or feedback, please contact [Your Name/Email].
-
+Edit
+pytest self_test/ -q
+This will execute a series of unit tests ensuring each module (data manager, technical indicators, trading logic, etc.) is functioning as expected. All tests should pass if the environment is prepared correctly.
+Usage
+You can interact with the trading bot either through the GUI application or by integrating it into your own scripts. The recommended way is to use the provided GUI for an easy interactive experience.
+1. Launch the Trading Bot Interface
+Start the bot by launching the GUI. In a terminal, run the following command from the project’s root directory:
+bash
+Copy
+Edit
+python ui.py
+This will open the AI Trading Terminal window. The GUI is organized into several sections:
+A status bar at the top (shows connection status, current time, and an initial balance display).
+A left control panel with buttons to start/stop the bot and select modes (Paper Trading or Live Trading).
+A center panel with tabbed charts (by default, it shows a price chart which will plot the price data of the selected trading pair in real-time; additional tabs can show performance metrics or other visualizations).
+A right panel for manual controls and position info (you can manually place a Buy/Sell order for a selected symbol if needed, and below that, a table lists current open positions and their P/L).
+A bottom panel showing a scrollable log output, where you’ll see informational logs, trade notifications, and any warnings/errors in real time.
+2. Starting in Training Mode (Paper Trading)
+By default, the mode selector on the left is set to Paper Trading. This mode uses the simulation environment – no real orders will be sent to the exchange. To begin training the bot:
+Click the “▶ Start Bot” button (labeled Start Bot in the control panel). This essentially Start Training in simulation mode.
+The connection status indicator will update (e.g., showing "Running"), and the bot’s background thread begins fetching market data and making decisions. Initially, the bot’s AI (neural network) is untrained, so it will mostly explore random actions. The bot will execute virtual trades with the simulated $1000 balance, learning from each trade.
+Observe the Performance Metrics: as the training progresses, you should see the Balance value (in the status bar and possibly on a balance chart if available) fluctuate according to wins/losses. The open positions will appear in the Positions table on the right panel, and closed trades may be logged in the log output with their profit/loss. Over time, if the strategy is effective, the balance should trend upwards.
+The GUI’s price chart (center panel) will update with live price data. The bot, via the DataManager, is constantly loading the latest historical data (e.g. recent OHLC candlesticks) for the active symbol and feeding it to the strategy. Technical indicators might be calculated internally to aid decisions (though not directly shown on the UI yet).
+You can let the training run for as long as needed. The bot’s reinforcement learning algorithm will gradually reduce exploration as it becomes confident – this is reflected by improved trading performance (you might notice more winning trades or stable profits). The experience replay memory and training dataset are stored under historical_data/training/ so the bot can always refer back or even be retrained from scratch if needed.
+If you wish to pause the training, you can click “⏹ Stop Bot” (Stop Training). This will halt the learning loop. You can later resume by clicking Start again. Stopping the training does not lose the learned model – the model parameters remain in memory (and should be saved to disk periodically, depending on implementation). It simply stops taking new actions until resumed.
+3. Evaluating Performance and Switching to Live Trading
+Once you are satisfied that the bot is performing well in paper mode (for example, the bot has been running for several days with positive returns and minimal errors), you can transition it to live trading with real funds:
+In the GUI’s left panel, change the mode selection to “Live Trading”. This signals the bot to use real trades. (If the bot was running, it’s recommended to Stop it first before switching modes, then Start again in live mode.)
+Click “▶ Start Bot” again (now effectively Start Trading in live mode). The bot will re-initialize in live trading mode. It will connect to the Bybit exchange using the API key/secret you provided, and start receiving live market data similarly to before. The difference is now any trade decisions will result in real orders being placed on your Bybit account.
+Position Sizing in Live Mode: The bot automatically calculates the order size such that it uses roughly 5% of your current account balance for each trade (with a minimum of $10 equivalent). For example, if your account equity is $2,000, the bot would risk about $100 per trade; if the account is $150, it would use $10 (since 5% of 150 is $7.5, below the minimum, it bumps to $10). This ensures that no single trade significantly jeopardizes your account. The trade execution module and risk manager enforce this sizing rule before sending any order.
+Monitoring Live Trades: As live trading commences, the UI will show the real-time updates just as in training mode. Open positions will be listed with their unrealized P&L updating as prices move. The Balance shown now reflects your real exchange account balance (updated via API). The P&L graph will indicate actual gains/losses. You should keep an eye on the logs panel for any error messages. In live mode, the bot’s behavior should be similar to how it was in simulation (assuming it learned well), but always remember that real markets can behave unexpectedly. The built-in risk management will attempt to cut losses via stop-loss or avoid trades if conditions deviate from what it was trained on (for instance, if volatility is extremely high, the bot might sit out or reduce position size).
+Telegram Notifications: If configured, you will receive Telegram messages for each trade the bot executes (e.g. “Executing order: BUY BTC/USDT 50 USDT at 30000.00” when it places an order) and any critical events. This is useful if you cannot constantly watch the UI; you’ll get notified on your phone about what the bot is doing.
+4. Stopping the Bot and Managing Positions
+If at any point you need to stop the live trading, click “⏹ Stop Bot” (Stop Trading). Because there might be open positions in the market when you stop, the bot will prompt you with options:
+Keep Positions Open: If you choose this, the bot will stop initiating new trades, but any positions already open on the exchange will remain open. You might choose this if you believe the positions are still good and perhaps you want to manage them manually or let them hit their targets. The bot’s state will note that these positions were left open.
+Close All Positions: If you choose this option, the bot will immediately send market orders (or the appropriate order type) to exit all open positions before fully stopping. This ensures you have no exposure left in the market once the bot is stopped.
+In either case, the bot will cease its main trading loop after handling the open positions per your choice. The GUI status will update to "Stopped". It is safe at this point to close the application or turn off the system if needed.
+5. Restarting and Restart Protection
+Thanks to the restart protection mechanism, if you shut down and restart the bot (or if it crashes and is automatically restarted by the system), it will reconcile with reality on startup:
+Upon a new launch, before starting trading, the bot (in live mode) calls the Bybit API to fetch any open positions on the account. If it finds open trades (perhaps left from a previous session where you chose to keep them open, or if a crash occurred mid-trade), it will load those into its internal tracking. These positions will then show up in the GUI’s positions list and the bot will manage them (e.g. it can place stop-loss or eventually close them according to strategy) as if it had never been interrupted.
+The bot also reloads its last saved strategy/model state. This means the AI doesn’t start from scratch after a restart – it remembers what it has learned (the neural network weights are loaded from a checkpoint). This is crucial for continuity; the bot can pick up learning or trading right where it left off.
+The cached data (recent price history) is also still available via the DataManager’s saved files, so the bot doesn’t need to refetch an excessive amount of historical data on every restart – it can quickly get up to speed with the latest market data.
+All these measures make the bot resilient to interruptions. You can essentially "set it and forget it," knowing that even if your system restarts or the bot process crashes unexpectedly, it will recover and continue managing trades appropriately when it comes back online (with notifications to inform you of such events).
+Architecture and Design Overview
+This trading bot is structured as a collection of specialized modules, each handling a distinct part of the overall functionality. The design follows a clear separation of concerns, which makes the system easier to understand, test, and extend. Below is an overview of the major components and how they interact:
+Data Management: The bot continuously fetches market data (price candlesticks and ticker information) via the exchange API. The DataManager module is responsible for retrieving and storing historical OHLCV data. It uses Bybit’s market data API to get recent candlestick data for the trading pairs of interest. All fetched data is saved in a local directory (in compressed Parquet files) for quick access and to avoid re-downloading. The data manager ensures that if it’s asked for data it already has (and up-to-date), it will use the local cache. This module abstracts away the details of data fetching and storage, providing the rest of the bot with easy functions to load historical price DataFrames or update them with the latest candles. This historical data is not only used for charting in the GUI, but also fed into the strategy’s technical indicators and learning algorithm.
+Exchange Integration (Simulation & Real Trading): To allow both simulated trading and real trading with minimal changes, the system uses an Exchange API wrapper (Exchange module). In simulation (training) mode, this wrapper behaves like a virtual exchange: it uses real market prices but does not execute real orders. Instead, it internally tracks virtual positions. For example, when the bot “buys” in simulation, the Exchange module records the position (symbol, entry price, quantity) in memory. When it “sells,” it calculates the profit/loss based on the current market price. In live mode, the same interface calls the actual Bybit API endpoints to execute orders. This Exchange abstraction provides functions like get_price(symbol) to fetch the latest price and create_order(symbol, side, amount, price) to place an order. The bot’s core logic doesn’t need to know whether it’s simulation or real – that’s determined by a flag, and the Exchange module handles the rest. This design makes it seamless to transition from paper trading to live trading.
+Trading Strategy & Self-Learning Engine: The heart of the bot is the SelfLearningBot (in the self_learning module), which implements a reinforcement learning agent. This component instantiates:
+A neural network (or networks) to evaluate states and actions (e.g., a Deep Q-Network architecture might be used, though the implementation can vary).
+Structures for experience replay (storing past experiences of state, action, reward, next state).
+An optimizer to adjust the network weights based on the collected experiences.
+On each time step (for example, each new price tick or candle), the self-learning agent observes the current state of the market. The state could include recent price movements, technical indicator values (moving averages, ADX, etc.), current open positions, and available balance. Based on this state, the agent decides on an action:
+Action 0: Do nothing / hold.
+Action 1: Go long (buy).
+Action 2: Go short (sell) – if short-selling is allowed, or close a long position.
+(The exact action space can be more complex, but typically it’s something like buy/sell/hold or adjust position.) The agent uses an epsilon-greedy strategy: if training, it sometimes picks a random action to explore new possibilities, otherwise it chooses the best-known action (the one the neural network deems most profitable). When an action is executed, the bot (via the Trade Executor) carries it out and then computes a reward for that action. The RewardSystem module defines how to calculate this reward: it could be as simple as the profit gained from the trade, or a more nuanced reward that also accounts for trade duration, risk (drawdown), whether a stop-loss was hit, etc. This reward feeds back into the learning algorithm. The experience (state, action, reward, next state) is stored and later used in training batches to update the neural network (using stochastic gradient descent via PyTorch). Over time, this learning loop allows the bot to improve its strategy – it learns which actions lead to positive rewards in various market conditions.
+Technical Indicators & Analytics: The bot leverages technical indicators as part of its decision-making. A technical_indicators module provides a suite of common indicators (SMA, EMA, ADX, CCI, Williams %R, etc.) that can be computed from price data. These are used to enrich the state fed to the neural network or to trigger rule-based signals in simpler strategies. For example, the bot might include the latest 14-period ADX value in its state to gauge trend strength, or use moving average crossovers as part of a heuristic. The indicators are calculated using efficient numpy/pandas operations. This module is standalone, meaning it can be used independently to get indicator values from raw lists of prices – useful for quick calculations or debugging. (In the code, a TechnicalIndicators class or similar can wrap these functions for easier use.) By keeping indicators separate, one can easily add new ones or modify calculations without touching the core strategy logic.
+Trade Execution & Management: Once the strategy decides to place a trade (whether in training or live mode), the TradeExecutor module comes into play. The Trade Executor is responsible for taking an intended order and actually executing it through the Exchange interface. It ensures that the order parameters are correct and respects exchange constraints:
+It checks the order amount against the minimum allowed size for that symbol (to avoid rejections due to too small orders).
+It rounds prices to the correct precision required by the exchange (Bybit might allow, say, 2 decimal places for price, so if the strategy says buy at 50000.9876, the executor will round to 50000.99).
+It logs every order in a structured way and sends a Telegram notification describing the trade.
+In simulation mode, the TradeExecutor will call the Exchange’s simulation methods (which instantly “fill” the order and return a simulated result). In live mode, it calls the real create_order and waits for a response. If an order fails (due to network issues or exchange errors), the executor catches the exception and triggers the error handling process (logging the failure and sending an alert). The design ensures atomicity of trades – either an order is successfully executed or it is reported as failed; there’s no silent ignoring of failed orders. This module also could include logic for closing positions when needed (for example, if Stop Trading with “close positions” is invoked, the TradeExecutor can be asked to close each open position via market orders).
+Dynamic Pair Selection (Pair Manager): To maximize opportunities, the bot doesn’t stick to one market. The top_pairs (PairManager) module handles discovering which trading pairs to focus on. Upon startup and at regular intervals (e.g. every hour), the PairManager fetches the list of active trading pairs from Bybit’s API. It filters them to find those quoted in USDT and currently trading (ignoring suspended or inactive pairs). It then can apply additional criteria to rank or filter these pairs:
+Volatility: It might compute recent volatility for each pair (e.g. average true range or standard deviation of returns) and prefer those above a certain threshold, as high volatility often means more trading opportunities.
+Momentum/Trend: It could measure which assets have strong recent trends (price momentum) to ride ongoing movements.
+Volume/Liquidity: It could prioritize pairs with high trading volume to ensure good liquidity and tight spreads.
+The top N “hot” pairs after this analysis become the bot’s trading universe. The bot will then rotate through or simultaneously monitor these pairs. (Depending on the strategy, the bot might trade multiple pairs at once or just focus on one at a time – the architecture supports either approach.) The PairManager caches the results of API calls so it doesn’t hit rate limits or depend on external fetch on every loop iteration. If the API cannot be reached, it can fall back to the last known good set of pairs (cache) or a predefined list of major pairs (so the bot always has something to trade).
+Sentiment data integration: The architecture allows plugging in external data to improve pair selection. For example, a sentiment analysis module could retrieve news sentiment or community sentiment for the top coins and feed a sentiment score. The PairManager could then boost or lower certain pairs in the ranking based on sentiment (e.g. if a certain coin has extremely positive sentiment and high volatility, it’s a prime candidate). Although this is an optional enhancement, the modular design means it could be added without affecting other parts of the system.
+Risk Management: Throughout the trading process, risk management rules are enforced by design. The risk_management module centralizes these rules. It defines what constitutes a risk violation and what to do in those cases. Some key risk management aspects include:
+Position Limits: Ensuring the bot doesn’t open more than a certain number of positions at once, or too large a position relative to account balance (this ties in with the 5% rule).
+Stop Losses: Functions to calculate appropriate stop-loss prices based on volatility or a fixed percentage. For instance, calculate_stop_loss might set a stop loss 2% below the entry price for a long trade (or above the entry for a short), or implement a trailing stop logic. The strategy or TradeExecutor can use this to place stop orders immediately after opening a position.
+Dynamic Adjustment: The risk module might provide a dynamic_adjustment function that tweaks strategy parameters in real-time if certain risk conditions are met. For example, if the market becomes extremely volatile, the bot could automatically reduce its trade size percentage or widen its stop-loss via this mechanism.
+Risk Violation Handling: If, for any reason, the bot is about to do something that violates risk rules (like entering a trade that would exceed the daily loss limit), the Risk Management module will raise a RiskViolationError. This exception propagates to the error handler, which will then stop further trading and alert the user. This way, catastrophic losses can be prevented.
+In summary, the risk management component acts as a guardian that monitors trades and intervenes or flags issues whenever predefined safe boundaries are crossed.
+Error Handling and Alerts: Even with careful design, things can go wrong – networks fail, APIs return unexpected results, or a bug slips through. The error_handler module provides a robust framework for catching and dealing with errors. It defines a custom hierarchy of exceptions (e.g. NetworkError, APIError, StrategyError, OrderExecutionError, etc.) so that when an exception is raised, the system knows what category it belongs to. The ErrorHandler class captures the full stack trace and context for any exception, logs it to a file and the console, and uses the TelegramNotifier to send an alert if needed. It keeps an internal count of errors to identify recurring issues – for example, if too many errors of the same type happen in a short period, it might activate a circuit breaker which stops the trading loop to prevent potential mishaps (perhaps the exchange API is behaving erratically – better to stop trading than to send orders blindly). For critical errors (like a logic error causing invalid orders), the error handler will mark them for immediate attention – sending a Telegram message labeled "🚨 CRITICAL ERROR 🚨" with details. Additionally, the system is configured such that a truly critical failure triggers an automatic restart. This could be orchestrated by an external supervisor process or a simple self-restart mechanism. Upon restart, as described earlier, the bot resumes seamlessly by reloading state and open positions. The error handling system thus ensures high reliability and maintainability – developers can diagnose issues with the detailed logs, and users are kept informed without needing to watch the system constantly.
+User Interface (Trading UI): The ui module (TradingUI class) ties everything together for the end-user. It runs in the main thread and starts the Tkinter event loop. The UI doesn’t directly contain trading logic; instead, it starts/stops threads that run the strategy. For example, when you click "Start Bot", the UI will spawn a background thread that creates or uses the SelfLearningBot/TradeSimulator to begin processing data and making trades. The UI periodically polls for updates (using Tkinter’s after method to call an update function every second or so). In each update, it:
+Fetches the latest data (e.g., asks DataManager for the newest portion of price history) and updates the chart.
+Updates the displayed time and maybe connection status.
+Refreshes the list of open positions (e.g., queries the Exchange or TradeExecutor for current positions and their P&L, then updates the Treeview in the positions panel).
+Appends any new log messages to the log text box.
+The UI also allows manual interaction: a user can select a symbol from a dropdown and click "Buy" or "Sell" to manually send an order via the Exchange. This is primarily for override or testing purposes; in normal operation, the bot is trading automatically. The manual order will also appear in the log and positions if executed. The UI is designed to be fail-safe – any exceptions in the UI loop are caught and logged so that the interface remains responsive. It’s also built to handle a bot restart gracefully: if the backend thread stops due to an error, the UI can display the error (in the log panel) and update the status, but remain open so the user can potentially restart the bot from the UI.
+Parameter Optimization (Advanced Feature): The project includes a parameter_optimization module which is a utility for offline tuning of the strategy parameters. This is not part of the live trading loop but can be used by developers to improve the bot. For example, you might want to find the optimal combination of neural network hyperparameters (learning rate, discount factor, etc.) or perhaps the best threshold for a technical indicator-based strategy. The ParameterOptimizer class in this module supports multiple strategies for searching the parameter space:
+Grid Search: Tries every combination of specified parameter values.
+Random Search: Tries random combinations up to a set number of iterations, which is useful when the parameter space is large.
+Evolutionary Algorithms: Using the DEAP library, it implements a genetic algorithm to evolve a population of parameter sets towards better performance. This can efficiently search very complex spaces by mimicking natural selection.
+The optimizer is designed to evaluate an objective function that you provide (for instance, a function that runs a backtest on historical data and returns the total profit). It will manage running many such evaluations (in parallel where possible) and track the best result. Checkpointing is implemented so that if the optimization is stopped or crashes, it can resume from where it left off. This tool is invaluable for refining the trading bot – for instance, one could use it on the reward_system parameters to ensure the reward function truly aligns with long-term profit, or tune the risk management thresholds for best trade-off between risk and reward. Documentation for using the optimizer would be separate, but in essence, it exemplifies the extensibility of the project: one can plug in modules like this without interfering with the live trading functionality.
+In summary, the system’s architecture is built around modularity, real-time data processing, and safety:
+The data pipeline brings in live market data and updates the local cache.
+The self-learning strategy processes data and decides trades, improving itself through reinforcement learning.
+The execution engine carries out trades (simulated or real) and enforces precision and order sizing rules.
+A dynamic market selector ensures the bot is trading the most promising assets at any given time.
+Comprehensive risk controls and error handling guard against losses and failures, with automatic notifications and recovery.
+The GUI provides a user-friendly window into the bot’s operation, allowing for control and oversight in real-time.
+Additional tools like optimization and testing suites support development and continuous improvement of the system.
+This clean separation means each part can be developed and tested in isolation. For example, you can unit test the technical indicators calculations, or run the trade simulation on historical data to see how the strategy performs, without launching the whole system. It also means contributors (human or AI) can work on adding a feature like sentiment analysis or a new indicator by focusing on the relevant module, plugging it into the existing interface.
+Conclusion
+The Self-Learning Crypto Trading Bot is a comprehensive solution blending automated trading with machine learning. Its ability to train on live data and transition to real trading when ready makes it a powerful tool for algorithmic trading. The combination of a user-friendly interface, adaptive strategy, and strict risk management aims to make it both accessible and safe for users to deploy. All aspects of the bot are fully documented and structured to ease future enhancements. Whether you want to run it as-is or extend it with new ideas, the project’s design will support your needs. Happy trading!
