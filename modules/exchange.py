@@ -1,69 +1,99 @@
 # modules/exchange.py
-import requests
 
-class Exchange:
-    def __init__(self, use_testnet: bool = False):
-        # Always use real Bybit endpoint for market data
-        self.base_url = "https://api.bybit.com"
-        self.positions = {}  # virtual positions
+import ccxt
+import config
+import logging
 
-    def get_price(self, symbol: str) -> float:
-        """Fetch latest market price from Bybit."""
-        endpoint = "/v5/market/tickers"
-        params = {"category": "linear", "symbol": symbol}
-        resp = requests.get(self.base_url + endpoint, params=params, timeout=5)
-        resp.raise_for_status()
-        data = resp.json()
-        try:
-            return float(data["result"]["list"][0]["lastPrice"])
-        except (KeyError, IndexError):
-            raise RuntimeError(f"Failed to get price for {symbol}: {data}")
+logger = logging.getLogger(__name__)
+logger.addHandler(logging.NullHandler())
+
+class ExchangeAPI:
+    """
+    Wrapper around ccxt.bybit for both market data and order execution.
+    Honors config.USE_SIMULATION to toggle sandbox mode.
+    """
+
+    def __init__(self):
+        # Select credentials based on simulation flag
+        if config.USE_SIMULATION:
+            api_key = config.SIMULATION_BYBIT_API_KEY
+            api_secret = config.SIMULATION_BYBIT_API_SECRET
+        else:
+            api_key = config.BYBIT_API_KEY
+            api_secret = config.BYBIT_API_SECRET
+
+        params = {
+            'apiKey': api_key,
+            'secret': api_secret,
+            'enableRateLimit': True,
+            'options': {
+                'defaultType': 'spot',        # use spot by default
+            },
+            'timeout': getattr(config, 'API_REQUEST_TIMEOUT', 30) * 1000
+        }
+
+        # Instantiate the ccxt client
+        self.client = ccxt.bybit(params)
+        # If in simulation, flip on sandbox mode
+        if config.USE_SIMULATION and hasattr(self.client, 'set_sandbox_mode'):
+            try:
+                self.client.set_sandbox_mode(True)
+            except Exception:
+                logger.warning("Sandbox mode not supported by this ccxt version.")
+        # Load markets metadata
+        self.client.load_markets()
+
+    def fetch_market_data(self, symbol: str, timeframe: str,
+                          since: int = None, limit: int = 1000) -> list:
+        """
+        Fetch OHLCV [timestamp, open, high, low, close, volume] from exchange.
+        """
+        return self.client.fetch_ohlcv(symbol, timeframe=timeframe, since=since, limit=limit)
 
     def get_current_price(self, symbol: str) -> float:
-        """Alias for get_price; used by TradeExecutor."""
-        return self.get_price(symbol)
+        """
+        Fetch the latest ticker price.
+        """
+        ticker = self.client.fetch_ticker(symbol)
+        # ccxt ticker may use 'last' or 'close'
+        price = ticker.get('last') or ticker.get('close')
+        return float(price)
 
     def get_min_order_size(self, symbol: str) -> float:
-        """Minimum tradable amount (override if needed)."""
-        return 0.0
+        """
+        Return the minimum order size for this market.
+        Falls back to 0 if market metadata is missing.
+        """
+        market = self.client.markets.get(symbol)
+        if not market:
+            return 0.0
+        return float(market.get('limits', {}).get('amount', {}).get('min', 0.0))
 
     def get_price_precision(self, symbol: str) -> int:
-        """Decimal places allowed for price (override if needed)."""
-        return 8
+        """
+        Return the number of decimal places allowed for prices on this market.
+        Falls back to 8.
+        """
+        market = self.client.markets.get(symbol)
+        if not market:
+            return 8
+        return int(market.get('precision', {}).get('price', 8))
 
     def create_order(self, symbol: str, order_type: str, side: str,
-                     amount: float, price: float = None):
+                     amount: float, price: float = None) -> dict:
         """
-        Simulate (or place) an order.
-        Signature matches TradeExecutor.create_order.
+        Place an order.
+        - order_type: 'limit' or 'market'
+        - side: 'buy' or 'sell'
         """
-        # Market or limit simulated as virtual position
+        order_type = order_type.lower()
         side = side.lower()
-        exec_price = price or self.get_price(symbol)
-        position = self.positions.get(symbol)
-        if position:
-            # Update or close existing; simplified for brevity
-            # ...
-            return position
-        else:
-            # Open new virtual position
-            self.positions[symbol] = {
-                "symbol": symbol,
-                "side": side,
-                "quantity": amount,
-                "entry_price": exec_price
-            }
-            return self.positions[symbol]
+        if order_type == 'market':
+            return self.client.create_order(symbol, 'market', side, amount)
+        # limit
+        return self.client.create_order(symbol, 'limit', side, amount, price)
 
-    def load_markets(self):
-        return True
+    # Backwards compatibility alias
+    # Some parts of code refer to ExchangeAPI via ExchangeAPI
+    # so no extra alias needed here.
 
-    def fetch_market_data(self, symbol, timeframe, limit, since=None):
-        """
-        For DataManager production paths; not used in test mode.
-        """
-        # Map to CCXT or HTTP; omitted for brevity
-        raise NotImplementedError
-
-# Backwards‐compatible alias
-ExchangeAPI = Exchange
