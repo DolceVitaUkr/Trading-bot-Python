@@ -1,12 +1,11 @@
 # modules/config.py
 import os
-from utils.utilities import configure_logging
 
 # ========================
 # Environment Configuration
 # ========================
 ENVIRONMENT = os.getenv("TRADING_ENV", "simulation")  # "production" or "simulation"
-USE_SIMULATION = True if ENVIRONMENT == "simulation" else False  # Added missing parameter
+USE_SIMULATION = False  # Added missing parameter
 
 
 SIMULATION_BYBIT_API_KEY = "ELdo9O5wuzDwyoVYDY"
@@ -20,73 +19,54 @@ BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET", "YmV6jkihwZDTFyIaiOarho1tzRr2QZ
 API_REQUEST_TIMEOUT = 10  # Seconds
 API_RETRY_ATTEMPTS = 3
 
-# ========================
-# Trading Parameters
-# ========================
-DEFAULT_TRADE_AMOUNT = 100.0  # USDT per trade
-MAX_OPEN_POSITIONS = 5         # Maximum concurrent trades
-FEE_PERCENTAGE = 0.002        # Exchange fee percentage
-SLIPPAGE_PERCENTAGE = 0.05    # Estimated price slippage
+# --- Simulation Settings ---
+SIMULATION_INITIAL_BALANCE = 1000.0  # Starting virtual balance in USD for paper trading simulation
 
-# ========================
-# Risk Management
-# ========================
-MAX_DAILY_DRAWDOWN = 5.0      # Max daily loss percentage
-STOP_LOSS_PERCENT = 10        # Initial stop loss percentage
-TAKE_PROFIT_PERCENT = 20      # Initial take profit percentage
-RISK_PER_TRADE = 2.0          # Percentage of capital per trade
+# --- Trading Parameters ---
+MIN_TRADE_SIZE_USD = 10.0  # Minimum order size in USD for live trades
+MIN_TRADE_SIZE_PERCENT = 0.05  # Minimum order size as a percentage of account balance for live trades (e.g., 0.05 = 5%)
+# (The actual minimum trade value can be determined as max(MIN_TRADE_SIZE_USD, account_balance * MIN_TRADE_SIZE_PERCENT).)
 
-# ========================
-# Simulation Parameters
-# ========================
-SIMULATION_ORDER_DELAY = 0.5  # Order execution delay in seconds
-SIMULATION_START_BALANCE = 1000.0  # Initial simulation balance
-MAX_SIMULATION_PAIRS = 50     # Max pairs to include in simulation
-HISTORICAL_DATA_PATH = "data/historical"  # Path to historical data
+# --- Risk Management ---
+DEFAULT_STOP_LOSS_PERCENT = 0.15  # Default stop-loss level as a fraction of entry price (15% loss)
+MAX_STOP_LOSS_PERCENT = 0.20  # Maximum allowable stop-loss as a fraction of entry price (20% loss)
 
-# ========================
-# Notification Settings
-# ========================
+# --- Reward System Settings ---
+REWARD_MULTIPLIER = 1.0  # Multiplier for reward (profit) points in the reward system
+PENALTY_MULTIPLIER = 3.0  # Multiplier for penalty (loss) points in the reward system (e.g., 3.0 means penalties are triple weighted relative to rewards)
+
+# --- Data and Storage ---
+HISTORICAL_DATA_PATH = "data"  # Directory for storing historical market data files (will be created if it doesn't exist)
+
+# --- Logging Configuration ---
+LOG_DIR = "logs"  # Directory for log files
+os.makedirs(LOG_DIR, exist_ok=True)  # Ensure the log directory exists
+LOG_FILE = os.path.join(LOG_DIR, "trading_bot.log")  # Log file path for recording runtime logs
+LOG_LEVEL = "INFO"  # Logging level for the application ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+
+# --- Trading Behavior Settings ---
+UI_REFRESH_INTERVAL = 1000  # UI update interval in milliseconds for refreshing data in the interface
+TOP_PAIRS_REFRESH_INTERVAL = 3600  # Interval in seconds to refresh the list of top trading pairs (e.g., 3600 = 1 hour)
+MARKET_SENTIMENT_ENABLED = True  # Whether to incorporate market sentiment analysis in trading decisions
+MARKET_SENTIMENT_THRESHOLD = 0.0  # Threshold for market sentiment indicator to influence trades (e.g., >0 for bullish sentiment, <0 for bearish)
+
+# --- Error Handling Defaults ---
+NETWORK_MAX_RETRIES = 3  # Maximum number of retry attempts for network/API calls on failure
+NETWORK_TIMEOUT_SECONDS = 10  # Timeout in seconds for network requests (e.g., API calls)
+# (If a network call fails or times out, it can be retried up to NETWORK_MAX_RETRIES times with appropriate delays.)
+
+# --- Optimization Settings ---
+OPTIMIZATION_METHOD = "grid_search"  # Default parameter optimization method ("grid_search", "random_search", "evolutionary")
+OPTIMIZATION_PARAMETERS = {
+    # Define parameter ranges or values for optimization if using parameter optimization module.
+    # e.g., "threshold": [0.1, 0.2, 0.3],
+    #       "window_size": [10, 20, 50]
+}
+
+# --- Notification Settings (Telegram) ---
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "7611295732:AAHazYz46ynfueYthvQXvQRA9bYlxihEf1c")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "380533508")
 NOTIFY_ON_SL_TP = True        # Send alerts for stop loss/take profit
 NOTIFY_EVERY_TRADE = True     # Send trade execution notifications
 
-# ========================
-# System Configuration
-# ========================
-LOG_LEVEL = "INFO"            # DEBUG, INFO, WARNING, ERROR
-LOG_FILE = "logs/bot.log"
-DATA_CACHE_TTL = 3600         # Seconds to keep market data cached
-MAX_LOG_SIZE = 50             # MB per log file
-LOG_BACKUP_COUNT = 3
-
-# ========================
-# Development Flags
-# ========================
-DEBUG_MODE = False            # Enable debug features
-DRY_RUN = True               # Prevent real trades even in production
-
-# ========================
-# Optimization Parameters
-# ========================
-OPTIMIZATION_METHOD = "random_search"
-OPTIMIZATION_PARAMETERS = {
-    'ma_fast': {'min': 10, 'max': 20},
-    'ma_slow': {'min': 20, 'max': 30}
-}
-
-# ========================
-# Evolutionary Algorithm Settings
-# ========================
-EA_POPULATION_SIZE = 100
-EA_GENERATIONS = 50
-EA_CROSSOVER_PROB = 0.7
-EA_MUTATION_PROB = 0.2
-
-
-
-ERROR_RATE_THRESHOLD = 5
-CRITICAL_ERROR_CODES = [5000, 6000]  # Includes RiskViolation and OrderExecution errors
-LOG_LEVEL = "INFO"
-LOG_FILE = "logs/bot.log"
+#
