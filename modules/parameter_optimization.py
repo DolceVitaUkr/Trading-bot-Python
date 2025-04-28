@@ -1,36 +1,260 @@
-# modules/parameter_optimization.py
-import random, itertools, logging
+import os
+import pickle
+import random
+import numpy as np
+import pandas as pd
+from typing import Dict, List, Callable, Optional
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from deap import base, creator, tools, algorithms
+import logging
+
 import config
+from modules.trade_simulator import TradeSimulator
+from modules.data_manager import DataManager
+from modules.top_pairs import get_spot_usdt_pairs
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
 
 class ParameterOptimizer:
+    """
+    Optimize strategy parameters via grid search, random search, or evolutionary algorithms.
+    Provides a `run()` method that uses a default EMA crossover backtest objective.
+    """
     def __init__(self):
+        # Read method and parameter definitions from config
         self.method = config.OPTIMIZATION_METHOD
         self.params = config.OPTIMIZATION_PARAMETERS
-        self.results = []
+        self.checkpoint_file = config.OPTIMIZATION_CHECKPOINT_FILE
+        self.results: pd.DataFrame = pd.DataFrame()
+        
+        # Set up DEAP fitness & individual types if needed
+        if not hasattr(creator, "FitnessMax"):
+            creator.create("FitnessMax", base.Fitness, weights=(1.0,))
+        if not hasattr(creator, "Individual"):
+            creator.create("Individual", list, fitness=creator.FitnessMax)
+        
+        self.toolbox = base.Toolbox()
+        self._setup_evolutionary_tools()
 
-    def optimize(self, objective_function):
+    def _setup_evolutionary_tools(self):
+        """Register DEAP operators for evolutionary optimization."""
+        # Attributes for each parameter
+        for key, bounds in self.params.items():
+            if isinstance(bounds, dict):
+                # continuous range
+                self.toolbox.register(f"attr_{key}", random.uniform, bounds['min'], bounds['max'])
+            else:
+                # discrete list
+                self.toolbox.register(f"attr_{key}", random.choice, bounds)
+        # Build individual and population
+        attrs = [getattr(self.toolbox, f"attr_{k}") for k in self.params]
+        self.toolbox.register("individual", tools.initCycle, creator.Individual, attrs, n=1)
+        self.toolbox.register("population", tools.initRepeat, list, self.toolbox.individual)
+        self.toolbox.register("mate", tools.cxBlend, alpha=0.5)
+        self.toolbox.register("mutate", tools.mutGaussian, mu=0, sigma=1, indpb=0.2)
+        self.toolbox.register("select", tools.selTournament, tournsize=3)
+
+    def optimize(self, objective_function: Callable[[Dict], float]) -> Dict:
+        """
+        Run the chosen optimization method with the given objective_function.
+        Returns the best parameter set.
+        """
+        # Load checkpoint if resuming
+        if os.path.exists(self.checkpoint_file):
+            logger.info("Resuming optimization from checkpoint")
+            with open(self.checkpoint_file, "rb") as f:
+                data = pickle.load(f)
+                self.results = data.get('results', self.results)
+        
+        # Dispatch to specific method
+        if self.method == "grid_search":
+            best = self._grid_search(objective_function)
+        elif self.method == "random_search":
+            best = self._random_search(objective_function)
+        elif self.method == "evolutionary":
+            best = self._evolutionary_optimization(objective_function)
+        else:
+            raise ValueError(f"Unknown optimization method: {self.method}")
+        
+        # Save final checkpoint
+        self._save_checkpoint()
+        return best
+
+    def run(self, 
+            symbol: Optional[str] = None, 
+            timeframe: str = "1h", 
+            initial_balance: Optional[float] = None) -> Dict:
+        """
+        UI-friendly entry point. Deletes any existing checkpoint and runs
+        optimization on a default EMA crossover backtest objective.
+        """
+        # Clean up old checkpoint to start fresh
+        if os.path.exists(self.checkpoint_file):
+            os.remove(self.checkpoint_file)
+            logger.info("Deleted old optimization checkpoint")
+
+        # Determine default symbol
+        if symbol is None:
+            try:
+                symbol = get_spot_usdt_pairs()[0]
+            except Exception:
+                symbol = config.DEFAULT_PAIR
+
+        # Determine initial balance
+        if initial_balance is None:
+            initial_balance = config.SIMULATION_START_BALANCE
+
+        def ema_crossover_objective(params: Dict) -> float:
+            """
+            Backtest EMA crossover strategy using given params.
+            Returns net profit (final balance - initial_balance).
+            """
+            try:
+                dm = DataManager(test_mode=False)
+                df = dm.load_historical_data(symbol, timeframe)
+                # Ensure integer spans
+                short_span = int(params["ema_short"])
+                long_span = int(params["ema_long"])
+                # Compute EMAs
+                df["ema_short"] = df["close"].ewm(span=short_span, adjust=False).mean()
+                df["ema_long"]  = df["close"].ewm(span=long_span,  adjust=False).mean()
+                # Simulate simple crossover
+                balance = initial_balance
+                position = 0.0
+                for i in range(1, len(df)):
+                    prev_short, prev_long = df["ema_short"].iat[i-1], df["ema_long"].iat[i-1]
+                    curr_short, curr_long = df["ema_short"].iat[i],   df["ema_long"].iat[i]
+                    price = df["close"].iat[i]
+                    # Golden cross: buy
+                    if prev_short <= prev_long and curr_short > curr_long and position == 0:
+                        position = balance / price
+                        balance = 0.0
+                    # Death cross: sell
+                    elif prev_short >= prev_long and curr_short < curr_long and position > 0:
+                        balance = position * price
+                        position = 0.0
+                # Close any open position
+                if position > 0:
+                    balance = position * df["close"].iat[-1]
+                return balance - initial_balance
+            except Exception as e:
+                logger.error(f"Objective function error with params {params}: {e}")
+                return -np.inf  # worst score
+
+        # Kick off optimization
+        best_params = self.optimize(ema_crossover_objective)
+        logger.info(f"Optimization complete. Best params: {best_params}")
+        return best_params
+
+    # -- Internal optimization methods follow (unchanged) --
+
+    def _grid_search(self, objective_function: Callable) -> Dict:
+        # Parallel grid search with pruning
         combos = self._generate_parameter_combinations()
         results = []
-        for p in combos:
-            try:
-                results.append((p, objective_function(p)))
-            except Exception as e:
-                logging.warning(f"Eval failed for {p}: {e}")
+        with ProcessPoolExecutor() as executor:
+            futures = {executor.submit(self._evaluate_parameters, objective_function, c): c for c in combos}
+            for f in as_completed(futures):
+                try:
+                    score = f.result()
+                    results.append((futures[f], score))
+                except Exception as e:
+                    logger.warning(f"Grid search eval failed: {e}")
         return self._select_best_result(results)
 
-    def _generate_parameter_combinations(self):
-        keys = list(self.params.keys())
-        lists = []
-        for k in keys:
-            vals = self.params[k]
-            if isinstance(vals, list):
-                lists.append(vals)
-            else:
-                lists.append([vals["min"], vals["max"]])
-        return [dict(zip(keys,comb)) for comb in itertools.product(*lists)]
+    def _random_search(self, objective_function: Callable, n_iter: int = 1000) -> Dict:
+        results = []
+        for i in range(n_iter):
+            params = {
+                k: (random.choice(v) if isinstance(v, list)
+                    else np.random.uniform(v["min"], v["max"]))
+                for k, v in self.params.items()
+            }
+            try:
+                score = self._evaluate_parameters(objective_function, params)
+                results.append((params, score))
+            except Exception as e:
+                logger.warning(f"Random search iter {i} failed: {e}")
+            if i % 100 == 0:
+                self._save_checkpoint()
+        return self._select_best_result(results)
 
-    def _select_best_result(self, results):
+    def _evolutionary_optimization(self, objective_function: Callable) -> Dict:
+        # Register evaluation wrapper
+        self.toolbox.register("evaluate", self._ea_evaluation_wrapper, objective_function)
+        pop = self.toolbox.population(n=config.EA_POPULATION_SIZE)
+        hof = tools.HallOfFame(1)
+        stats = tools.Statistics(lambda ind: ind.fitness.values)
+        stats.register("avg", np.mean)
+        stats.register("min", np.min)
+        stats.register("max", np.max)
+        algorithms.eaSimple(
+            pop,
+            self.toolbox,
+            cxpb=config.EA_CROSSOVER_PROB,
+            mutpb=config.EA_MUTATION_PROB,
+            ngen=config.EA_GENERATIONS,
+            stats=stats,
+            halloffame=hof,
+            verbose=False
+        )
+        return self._decode_individual(hof[0])
+
+    def _ea_evaluation_wrapper(self, objective_function: Callable, individual) -> tuple:
+        params = self._decode_individual(individual)
+        try:
+            return (objective_function(params),)
+        except Exception as e:
+            logger.warning(f"EA eval failed: {e}")
+            return (-np.inf,)
+
+    def _evaluate_parameters(self, objective_function: Callable, params: Dict) -> float:
+        self._validate_parameters(params)
+        return objective_function(params)
+
+    def _select_best_result(self, results: List) -> Dict:
         if not results:
-            raise ValueError("No valid results")
-        best = max(results, key=lambda x: x[1])[0]
-        return best
+            raise ValueError("No valid parameter evaluations")
+        df = pd.DataFrame(results, columns=["params", "score"])
+        df = df.sort_values("score", ascending=False).reset_index(drop=True)
+        self.results = df
+        return df.loc[0, "params"]
+
+    def _generate_parameter_combinations(self) -> List[Dict]:
+        # Exhaustive combinations for small spaces, else sample
+        total = np.prod([len(v) if isinstance(v, list) else 10 for v in self.params.values()])
+        if total > 1e4:
+            # Latin hypercube sampling for large spaces
+            samples = 1000
+            combos = []
+            for _ in range(samples):
+                combo = {}
+                for k, v in self.params.items():
+                    combo[k] = (random.choice(v) if isinstance(v, list)
+                                else np.random.uniform(v["min"], v["max"]))
+                combos.append(combo)
+            return combos
+        # Exhaustive
+        from itertools import product
+        keys, values = zip(*[(k, v if isinstance(v, list) else np.linspace(v["min"], v["max"], num=10)) 
+                             for k, v in self.params.items()])
+        return [dict(zip(keys, prod)) for prod in product(*values)]
+
+    def _decode_individual(self, individual) -> Dict:
+        return {k: individual[i] for i, k in enumerate(self.params)}
+
+    def _validate_parameters(self, params: Dict):
+        # Example validation: short EMA < long EMA
+        if "ema_short" in params and "ema_long" in params:
+            if params["ema_short"] >= params["ema_long"]:
+                raise ValueError("ema_short must be less than ema_long")
+
+    def _save_checkpoint(self):
+        data = {
+            "params": self.params,
+            "results": self.results
+        }
+        with open(self.checkpoint_file, "wb") as f:
+            pickle.dump(data, f)

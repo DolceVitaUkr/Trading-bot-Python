@@ -1,49 +1,49 @@
+# modules/ui.py
+
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
 import threading
 import time
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from typing import Callable, Dict, Any
 
-from modules.exchange import ExchangeAPI
-from modules.trade_simulator import TradeSimulator
-from modules.data_manager import DataManager
-from modules.error_handler import ErrorHandler
+import config
+from main import TradingBot  # assume TradingBot is defined in main.py
 
-# Safe default for UI refresh interval (ms) if not defined in config
-try:
-    from config import UI_REFRESH_INTERVAL
-except ImportError:
-    UI_REFRESH_INTERVAL = 1000  # default to 1 second
+# Safe default for UI refresh interval (ms)
+UI_REFRESH_INTERVAL = getattr(config, "UI_REFRESH_INTERVAL", 1000)
+
 
 class TradingUI:
-    def __init__(self):
+    """
+    GUI for controlling and monitoring the TradingBot.
+    - Accepts a TradingBot instance to drive core logic.
+    - Provides buttons for Start/Stop Training and Start/Stop Trading.
+    - Displays performance metrics, logs, and real-time charts.
+    """
+
+    def __init__(self, bot: TradingBot):
+        self.bot = bot
+        self._action_handlers: Dict[str, Callable[[], None]] = {}
+
         # Initialize main window
         self.root = tk.Tk()
         self.root.title("AI Trading Terminal v2.0")
         self.root.geometry("1600x900")
         self._configure_style()
 
-        # Initialize core components
-        self.exchange = ExchangeAPI()
-        self.data_manager = DataManager()
-        self.error_handler = ErrorHandler()
-
-        self.running = False
-        self.update_interval = UI_REFRESH_INTERVAL
-
-        # Build UI panels
+        # Build UI
         self._create_status_bar()
-        self._create_left_panel()
-        self._create_center_panel()
-        self._create_right_panel()
-        self._create_bottom_panel()
+        self._create_control_panel()
+        self._create_chart_panel()
+        self._create_metrics_panel()
+        self._create_log_panel()
 
-        # Start periodic update loop
-        self.root.after(100, self._update_data)
+        # Schedule periodic refresh
+        self.root.after(UI_REFRESH_INTERVAL, self._refresh)
 
     def _configure_style(self):
-        """Configure the application style and theme."""
         style = ttk.Style()
         style.theme_use('clam')
         style.configure('.', background='#1e1e1e', foreground='white')
@@ -52,166 +52,132 @@ class TradingUI:
         style.map('TNotebook.Tab', background=[('selected', '#3e3e3e')])
 
     def _create_status_bar(self):
-        """Create the top status bar with connection and time."""
-        status_frame = ttk.Frame(self.root)
-        status_frame.pack(side=tk.TOP, fill=tk.X)
-
-        self.connection_status = ttk.Label(status_frame, text=" Connected")
-        self.connection_status.pack(side=tk.LEFT, padx=10)
-
-        self.test_status = ttk.Label(status_frame, text="")
-        self.test_status.pack(side=tk.LEFT, padx=10)
-
-        self.balance_status = ttk.Label(status_frame, text="Balance: $10,000.00")
-        self.balance_status.pack(side=tk.RIGHT, padx=10)
-
-        self.time_label = ttk.Label(status_frame, text=time.strftime('%H:%M:%S'))
+        frame = ttk.Frame(self.root)
+        frame.pack(side=tk.TOP, fill=tk.X)
+        self.conn_label = ttk.Label(frame, text="⚡ Disconnected")
+        self.conn_label.pack(side=tk.LEFT, padx=10)
+        self.mode_label = ttk.Label(frame, text="Mode: N/A")
+        self.mode_label.pack(side=tk.LEFT, padx=10)
+        self.time_label = ttk.Label(frame, text=time.strftime('%H:%M:%S'))
         self.time_label.pack(side=tk.RIGHT, padx=10)
 
-    def _create_left_panel(self):
-        """Create the left control panel with start/stop and mode selection."""
-        left_frame = ttk.Frame(self.root, width=300)
-        left_frame.pack(side=tk.LEFT, fill=tk.Y)
+    def _create_control_panel(self):
+        frame = ttk.LabelFrame(self.root, text="Controls", padding=10)
+        frame.pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=5)
 
-        control_frame = ttk.LabelFrame(left_frame, text="Control Panel")
-        control_frame.pack(pady=10, padx=5, fill=tk.X)
+        btn_start_train = ttk.Button(frame, text="▶ Start Training", command=lambda: self._invoke("start_training"))
+        btn_start_train.pack(fill=tk.X, pady=2)
+        btn_stop_train = ttk.Button(frame, text="⏹ Stop Training", command=lambda: self._invoke("stop_training"))
+        btn_stop_train.pack(fill=tk.X, pady=2)
 
-        ttk.Button(control_frame, text="▶ Start Bot", command=self.start_bot).pack(fill=tk.X, pady=2)
-        ttk.Button(control_frame, text="⏹ Stop Bot", command=self.stop_bot).pack(fill=tk.X, pady=2)
-        # Removed "Run Self-Test" button to separate test logic from UI
+        btn_start_live = ttk.Button(frame, text="▶ Start Trading", command=lambda: self._invoke("start_trading"))
+        btn_start_live.pack(fill=tk.X, pady=10)
+        btn_stop_live = ttk.Button(frame, text="⏹ Stop Trading", command=lambda: self._invoke("stop_trading"))
+        btn_stop_live.pack(fill=tk.X, pady=2)
 
-        ttk.Label(left_frame, text="Trading Mode").pack(anchor=tk.W)
-        self.mode_var = tk.StringVar(value='paper')
-        ttk.Radiobutton(left_frame, text=" Paper Trading", variable=self.mode_var, value='paper').pack(anchor=tk.W)
-        ttk.Radiobutton(left_frame, text=" Live Trading", variable=self.mode_var, value='live').pack(anchor=tk.W)
-
-        account_frame = ttk.LabelFrame(left_frame, text="Account")
-        account_frame.pack(pady=10, fill=tk.X)
-        ttk.Label(account_frame, text="Equity:").pack(anchor=tk.W)
-        self.equity_label = ttk.Label(account_frame, text="$10,000.00")
-        self.equity_label.pack(anchor=tk.W)
-
-    def _create_center_panel(self):
-        """Create the central panel with a notebook for charts or other views."""
-        center_frame = ttk.Frame(self.root)
-        center_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        notebook = ttk.Notebook(center_frame)
-        notebook.pack(fill=tk.BOTH, expand=True)
-
-        # Price Chart tab
+    def _create_chart_panel(self):
+        frame = ttk.LabelFrame(self.root, text="Price Chart")
+        frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
         fig = Figure(figsize=(8, 5), dpi=100)
         self.ax = fig.add_subplot(111)
-        self.chart = FigureCanvasTkAgg(fig, notebook)
-        notebook.add(self.chart.get_tk_widget(), text="Price Chart")
+        self.chart_canvas = FigureCanvasTkAgg(fig, master=frame)
+        self.chart_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-        # (Additional tabs for metrics or depth charts can be added to the notebook)
+    def _create_metrics_panel(self):
+        frame = ttk.LabelFrame(self.root, text="Metrics", padding=10)
+        frame.pack(side=tk.RIGHT, fill=tk.Y, padx=5, pady=5)
 
-    def _create_right_panel(self):
-        """Create the right panel for order entry and positions display."""
-        right_frame = ttk.Frame(self.root, width=400)
-        right_frame.pack(side=tk.RIGHT, fill=tk.Y)
+        ttk.Label(frame, text="Wallet Balance:").pack(anchor=tk.W)
+        self.balance_var = tk.StringVar(value="$0.00")
+        ttk.Label(frame, textvariable=self.balance_var).pack(anchor=tk.W, pady=2)
 
-        # Order Entry section
-        order_frame = ttk.LabelFrame(right_frame, text="Order Entry")
-        order_frame.pack(pady=10, fill=tk.X)
-        ttk.Label(order_frame, text="Symbol").pack(anchor=tk.W)
-        self.symbol_entry = ttk.Combobox(order_frame, values=["BTC/USDT"])
-        self.symbol_entry.pack(fill=tk.X)
-        ttk.Button(order_frame, text="Buy", command=lambda: self.place_order('buy')).pack(side=tk.LEFT, padx=2)
-        ttk.Button(order_frame, text="Sell", command=lambda: self.place_order('sell')).pack(side=tk.RIGHT, padx=2)
+        ttk.Label(frame, text="Simulation Points:").pack(anchor=tk.W, pady=(10,0))
+        self.points_var = tk.StringVar(value="0")
+        ttk.Label(frame, textvariable=self.points_var).pack(anchor=tk.W, pady=2)
 
-        # Positions section
-        positions_frame = ttk.LabelFrame(right_frame, text="Positions")
-        positions_frame.pack(pady=10, fill=tk.BOTH, expand=True)
-        self.positions_tree = ttk.Treeview(positions_frame, columns=('Symbol', 'Size', 'P/L'))
-        self.positions_tree.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(frame, text="Portfolio Value:").pack(anchor=tk.W, pady=(10,0))
+        self.value_var = tk.StringVar(value="$0.00")
+        ttk.Label(frame, textvariable=self.value_var).pack(anchor=tk.W, pady=2)
 
-    def _create_bottom_panel(self):
-        """Create the bottom panel for logs."""
-        bottom_frame = ttk.Frame(self.root)
-        bottom_frame.pack(side=tk.BOTTOM, fill=tk.X)
-
-        log_frame = ttk.LabelFrame(bottom_frame, text="Logs")
-        log_frame.pack(fill=tk.BOTH, expand=True)
-        # Use ScrolledText for log output
-        self.log_text = scrolledtext.ScrolledText(log_frame, height=10, bg='#2d2d2d', fg='white')
+    def _create_log_panel(self):
+        frame = ttk.LabelFrame(self.root, text="Logs")
+        frame.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=5)
+        self.log_text = scrolledtext.ScrolledText(frame, height=8, bg='#2d2d2d', fg='white')
         self.log_text.pack(fill=tk.BOTH, expand=True)
+        # configure tags
+        self.log_text.tag_config('INFO', foreground='#00ff99')
+        self.log_text.tag_config('ERROR', foreground='#ff3300')
+        self.log_text.tag_config('SUCCESS', foreground='#00ccff')
 
-    def _update_data(self):
-        """Periodic update of data (price chart, time, etc.)."""
+    def add_action_handler(self, name: str, callback: Callable[[], None]):
+        """
+        Register a callback for a named UI action.
+        Supported names: 'start_training', 'stop_training', 'start_trading', 'stop_trading'
+        """
+        self._action_handlers[name] = callback
+
+    def update_simulation_results(self, balance: float, points: float):
+        """
+        Display final simulation results.
+        """
+        self.balance_var.set(f"${balance:,.2f}")
+        self.points_var.set(f"{points:.2f}")
+        self.log(f"Simulation complete: Balance=${balance:,.2f}, Points={points:.2f}", level='SUCCESS')
+
+    def log(self, message: str, level: str = 'INFO'):
+        """
+        Append a log message to the log panel.
+        """
+        ts = time.strftime('%H:%M:%S')
+        self.log_text.insert(tk.END, f"{ts} - {message}\n", level)
+        self.log_text.see(tk.END)
+
+    def _invoke(self, action: str):
+        """
+        Invoke a registered action handler.
+        """
+        cb = self._action_handlers.get(action)
+        if not cb:
+            messagebox.showwarning("Not implemented", f"No handler for '{action}'")
+            return
         try:
-            # Example: load and plot latest historical data for a symbol
-            df = self.data_manager.load_historical_data("BTC/USDT")
+            cb()
+        except Exception as e:
+            self.log(f"Error in action '{action}': {e}", level='ERROR')
+
+    def _refresh(self):
+        """
+        Periodic UI refresh: update time, chart, and live metrics.
+        """
+        # Update time
+        self.time_label.config(text=time.strftime('%H:%M:%S'))
+
+        # Update connection/mode status
+        conn = "Connected" if self.bot.is_connected else "Disconnected"
+        self.conn_label.config(text=f"⚡ {conn}")
+        mode = "Training" if self.bot.is_training else "Live" if self.bot.is_trading else "Idle"
+        self.mode_label.config(text=f"Mode: {mode}")
+
+        # Update balance & portfolio value
+        bal = self.bot.current_balance
+        val = self.bot.portfolio_value
+        self.balance_var.set(f"${bal:,.2f}")
+        self.value_var.set(f"${val:,.2f}")
+
+        # Update chart with latest data
+        try:
+            df = self.bot.data_manager.load_historical_data(self.bot.current_symbol, self.bot.timeframe)
             self.ax.clear()
-            self.ax.plot(df['close'], color='#00ff99')
-            self.chart.draw()
-
-            # Update time in status bar
-            self.time_label.config(text=time.strftime('%H:%M:%S'))
+            self.ax.plot(df['close'])
+            self.chart_canvas.draw()
         except Exception as e:
-            # Log any error in updating data
-            self.log(f"Error updating data: {str(e)}", level='error')
-        # Schedule the next update
-        self.root.after(self.update_interval, self._update_data)
+            self.log(f"Chart update failed: {e}", level='ERROR')
 
-    def log(self, message: str, level: str = 'info'):
-        """Log a message to the log text area with a given level (info, error, success)."""
-        colors = {
-            'info': '#00ff99',
-            'error': '#ff3300',
-            'success': '#00cc00'
-        }
-        color = colors.get(level, 'white')
-        # Configure tag for this level if not already done
-        self.log_text.tag_config(level, foreground=color)
-        # Insert timestamped message with the level tag
-        timestamp = time.strftime('%H:%M:%S')
-        self.log_text.insert(tk.END, f"{timestamp} - {message}\n", level)
-        self.log_text.see(tk.END)  # Auto-scroll to the end
-
-    def start_bot(self):
-        """Start the trading bot in a background thread."""
-        self.running = True
-        self.connection_status.config(text=" Running")
-        threading.Thread(target=self._run_strategy, daemon=True).start()
-
-    def stop_bot(self):
-        """Stop the trading bot."""
-        self.running = False
-        self.connection_status.config(text=" Stopped")
-
-    def place_order(self, side: str):
-        """Place a buy or sell order through the exchange API."""
-        order = {
-            'symbol': self.symbol_entry.get(),
-            'side': side,
-            'amount': 0.001,
-            'price': 50000  # In a real bot, price would be current market or specified
-        }
-        try:
-            self.exchange.create_order(**order)
-            self.log(f"{side.capitalize()} order executed", level='info')
-        except Exception as e:
-            self.log(f"Order failed: {str(e)}", level='error')
-
-    def _run_strategy(self):
-        """Background thread entry point for running the trading strategy loop."""
-        # This is a placeholder for the actual trading logic.
-        # It would continually run while self.running is True.
-        while self.running:
-            try:
-                # Example strategy step (could call TradeSimulator or ExchangeAPI methods)
-                time.sleep(1)  # placeholder for real strategy work
-            except Exception as e:
-                self.log(f"Strategy error: {str(e)}", level='error')
-                self.running = False
+        # Schedule next refresh
+        self.root.after(UI_REFRESH_INTERVAL, self._refresh)
 
     def run(self):
-        """Start the Tkinter main loop to display the UI."""
+        """
+        Start the Tkinter main loop.
+        """
         self.root.mainloop()
-
-# If this module is run directly, launch the UI.
-if __name__ == "__main__":
-    ui = TradingUI()
-    ui.run()

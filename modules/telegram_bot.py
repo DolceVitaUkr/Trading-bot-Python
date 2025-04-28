@@ -1,198 +1,204 @@
 # modules/telegram_bot.py
 
-import logging
-import asyncio
 import os
+import asyncio
+import threading
+import logging
 from datetime import datetime
 from typing import Optional, Union, Dict, List
 
-import config
 from telegram import Bot, InputFile
 from telegram.error import TelegramError, RetryAfter
 
+import config
+
 logger = logging.getLogger(__name__)
-logger.addHandler(logging.NullHandler())
+logger.setLevel(logging.INFO)
+
 
 class TelegramNotifier:
+    """
+    Unified Telegram notification client.
+
+    - Reads credentials from config.TELEGRAM_BOT_TOKEN and config.TELEGRAM_CHAT_ID.
+    - Supports async sending by default; can be forced into sync mode.
+    - Exposes send_message() for async use and send_message_sync() for blocking calls.
+    - Queues messages to respect rate limits and retries transient failures.
+    """
+
     def __init__(self, disable_async: bool = False):
-        """
-        :param disable_async: If True, sends messages synchronously; otherwise, uses background event loop.
-        """
+        token = os.getenv("TELEGRAM_BOT_TOKEN", config.TELEGRAM_BOT_TOKEN)
+        chat_id = os.getenv("TELEGRAM_CHAT_ID", config.TELEGRAM_CHAT_ID)
+        if not token or not chat_id:
+            raise ValueError("Telegram bot token and chat ID must be set in config or environment")
+
+        self._bot = Bot(token=token)
+        self._chat_id = int(chat_id)
         self._disable_async = disable_async
-        self._bot: Bot
-        self._chat_id: int
-        self._loop: asyncio.AbstractEventLoop
-        self._message_queue: asyncio.Queue = asyncio.Queue()
-        self._worker_task: Optional[asyncio.Task] = None
-        self._shutting_down = False
-        self._rate_limit_delay = 0.0
-        self._max_retries = 3
 
-        self._validate_config()
+        # Async machinery
+        self._loop = asyncio.new_event_loop()
+        self._queue: asyncio.Queue = asyncio.Queue(loop=self._loop)
+        self._worker: Optional[asyncio.Task] = None
+        self._shutdown = False
+
         if not self._disable_async:
-            # start dedicated event loop
-            self._loop = asyncio.new_event_loop()
-            self._thread = asyncio.Thread(target=self._run_event_loop, daemon=True)
+            self._thread = threading.Thread(target=self._start_loop, daemon=True)
             self._thread.start()
-        else:
-            # use default event loop for synchronous sends
-            self._loop = asyncio.get_event_loop()
+            # Schedule the consumer
+            def _schedule_consumer():
+                self._worker = self._loop.create_task(self._consumer())
+            self._loop.call_soon_threadsafe(_schedule_consumer)
 
-    def _validate_config(self):
-        token = getattr(config, 'TELEGRAM_BOT_TOKEN', None)
-        chat = getattr(config, 'TELEGRAM_CHAT_ID', None)
-        if not token or not chat:
-            logger.critical("Telegram token or chat ID not configured")
-            raise ValueError("Invalid Telegram configuration")
-        self._bot = Bot(token=str(token))
-        try:
-            self._chat_id = int(chat)
-        except Exception as e:
-            logger.critical(f"Invalid chat ID: {e}")
-            raise
-
-    def _run_event_loop(self):
+    def _start_loop(self):
+        """Run the asyncio event loop in its own thread."""
         asyncio.set_event_loop(self._loop)
-        self._worker_task = self._loop.create_task(self._message_consumer())
         self._loop.run_forever()
 
-    async def _message_consumer(self):
-        """
-        Consume queued messages and send them with rate-limit handling.
-        """
-        while not self._shutting_down:
-            message, kwargs = await self._message_queue.get()
-            await self._safe_send_message(message, **kwargs)
-            await asyncio.sleep(self._rate_limit_delay)
-            self._message_queue.task_done()
+    async def _consumer(self):
+        """Process the message queue, sending messages one by one."""
+        while not self._shutdown:
+            msg, kwargs = await self._queue.get()
+            await self._do_send(msg, **kwargs)
+            self._queue.task_done()
+            # Respect Telegram rate limits
+            await asyncio.sleep(1)
 
-    async def _safe_send_message(self, message: str, parse_mode: str = 'HTML'):
-        """
-        Try sending a message with retries and rate-limit handling.
-        """
-        retry = 0
-        last_error = None
-        while retry < self._max_retries and not self._shutting_down:
+    async def _do_send(self, text: str, parse_mode: Optional[str] = None):
+        """Actual send call with retry logic."""
+        for attempt in range(3):
             try:
                 await self._bot.send_message(
                     chat_id=self._chat_id,
-                    text=message,
+                    text=text,
                     parse_mode=parse_mode,
                     disable_web_page_preview=True
                 )
                 return
             except RetryAfter as e:
-                self._rate_limit_delay = e.retry_after
+                logger.warning(f"Telegram rate limit, sleeping {e.retry_after}s")
                 await asyncio.sleep(e.retry_after)
             except TelegramError as e:
-                last_error = e
-                await asyncio.sleep(2 ** retry)
-                retry += 1
+                logger.warning(f"Telegram error on send: {e} (attempt {attempt+1}/3)")
+                await asyncio.sleep(2 ** attempt)
             except Exception as e:
-                last_error = e
-                logger.error(f"Unexpected send error: {e}")
+                logger.error(f"Unexpected Telegram error: {e}", exc_info=True)
                 break
-        if last_error:
-            logger.error(f"Failed to send message after retries: {last_error}")
+        logger.error("Failed to send Telegram message after retries")
 
     def send_message(self, content: Union[str, Dict], format: str = 'text'):
         """
-        Public method to send a message. In async mode, queues it; in sync mode, sends immediately.
-        :param content: message content or structured dict
-        :param format: 'text', 'log', 'trade', or 'alert'
+        Enqueue a message for sending.
+
+        :param content: str or dict (for structured formats 'log', 'trade', 'alert')
+        :param format: 'text' | 'log' | 'trade' | 'alert'
         """
-        formatted, kwargs = self._prepare_message(content, format)
         if self._disable_async:
-            try:
-                result = self._safe_send_message(formatted, **kwargs)
-                if asyncio.iscoroutine(result):
-                    asyncio.run(result)
-            except Exception as e:
-                logger.error(f"Synchronous send failed: {e}")
-        else:
-            self._loop.call_soon_threadsafe(
-                self._message_queue.put_nowait, (formatted, kwargs)
+            # In sync mode, delegate to blocking send
+            self.send_message_sync(content, format=format)
+            return
+
+        # Prepare text
+        text = self._format(content, format)
+        # Truncate if necessary
+        text = self._truncate(text)
+        # Put in queue
+        self._loop.call_soon_threadsafe(self._queue.put_nowait, (text, {"parse_mode": "HTML"}))
+
+    def send_message_sync(self, content: Union[str, Dict], format: str = 'text'):
+        """
+        Blocking send (useful for critical alerts).
+        """
+        text = self._format(content, format)
+        text = self._truncate(text)
+        try:
+            self._bot.send_message(
+                chat_id=self._chat_id,
+                text=text,
+                parse_mode="HTML",
+                disable_web_page_preview=True
             )
+        except Exception as e:
+            logger.error(f"Synchronous Telegram send failed: {e}", exc_info=True)
 
-    def _prepare_message(self, content: Union[str, Dict], fmt: str):
+    def send_file(self, file_path: str, caption: str = ""):
         """
-        Format content according to specified template and return (message, kwargs).
-        """
-        if fmt == 'text':
-            msg = str(content)
-        elif fmt == 'log':
-            msg = self._format_log(content)
-        elif fmt == 'trade':
-            msg = self._format_trade(content)
-        elif fmt == 'alert':
-            msg = self._format_alert(content)
-        else:
-            raise ValueError(f"Unknown format: {fmt}")
-        return msg, {'parse_mode': 'HTML'}
-
-    def _format_log(self, data: Dict) -> str:
-        if not isinstance(data, dict) or 'level' not in data or 'message' not in data:
-            raise ValueError("Log format requires {'level','message'} keys")
-        level = data['level'].upper()
-        ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        return f"[{ts}] {level}: {data['message']}"
-
-    def _format_trade(self, data: Dict) -> str:
-        if not isinstance(data, dict) or not all(k in data for k in ('symbol','side','amount','price')):
-            raise ValueError("Trade format requires {'symbol','side','amount','price'} keys")
-        total = float(data['amount']) * float(data['price'])
-        ts = datetime.now().strftime('%H:%M:%S')
-        return (
-            f"TRADE {data['side'].upper()} {data['symbol']}"
-            f" qty={data['amount']:.6f} @ {data['price']:.2f}"
-            f" total={total:.2f} time={ts}"
-        )
-
-    def _format_alert(self, data: Dict) -> str:
-        if not isinstance(data, dict) or 'message' not in data:
-            raise ValueError("Alert format requires {'message'} key")
-        ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        return f"ALERT: {data['message']} at {ts}"
-
-    async def send_file(self, file_path: str, caption: str = ''):
-        """
-        Send a file via Telegram, enforcing size limits.
+        Send a file (document) to Telegram.
         """
         if not os.path.exists(file_path):
-            logger.error(f"File not found: {file_path}")
+            logger.error(f"File to send not found: {file_path}")
             return
-        if os.path.getsize(file_path) > 50 * 1024 * 1024:
-            logger.error(f"File too large (>50MB): {file_path}")
+        size = os.path.getsize(file_path)
+        if size > 50 * 1024 * 1024:
+            logger.error(f"File too large to send: {file_path}")
             return
-        await self._bot.send_document(
-            chat_id=self._chat_id,
-            document=InputFile(file_path),
-            caption=caption[:1000]
-        )
 
-    async def test_connection(self) -> bool:
-        """
-        Test bot connectivity with get_me().
-        """
-        try:
-            await self._bot.get_me()
-            return True
-        except Exception as e:
-            logger.error(f"Telegram connection test failed: {e}")
-            return False
+        async def _send():
+            try:
+                await self._bot.send_document(
+                    chat_id=self._chat_id,
+                    document=InputFile(file_path),
+                    caption=self._truncate(caption, max_length=1000)
+                )
+            except Exception as e:
+                logger.error(f"Telegram send_file failed: {e}", exc_info=True)
 
-    async def graceful_shutdown(self):
+        if self._disable_async:
+            # Blocking
+            loop = asyncio.new_event_loop()
+            loop.run_until_complete(_send())
+            loop.close()
+        else:
+            self._loop.call_soon_threadsafe(self._queue.put_nowait, (_send, {}))
+
+    def _format(self, content: Union[str, Dict], format: str) -> str:
         """
-        Gracefully stop consumer and close the Bot.
+        Prepare the message text based on format.
         """
-        self._shutting_down = True
+        if format == 'text':
+            return str(content)
+        elif format == 'log' and isinstance(content, dict):
+            lvl = content.get('level', 'INFO').upper()
+            msg = content.get('message', '')
+            ts = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+            return f"<b>{lvl}</b> [{ts}]\n{msg}"
+        elif format == 'trade' and isinstance(content, dict):
+            return (
+                f"📊 <b>TRADE {content.get('side','').upper()}</b>\n"
+                f"Pair: {content.get('symbol')}\n"
+                f"Amount: {content.get('amount')}\n"
+                f"Price: {content.get('price')}\n"
+                f"Time: {datetime.utcnow().strftime('%H:%M:%S')}"
+            )
+        elif format == 'alert' and isinstance(content, dict):
+            typ = content.get('type', 'ALERT').upper()
+            msg = content.get('message', '')
+            return f"🚨 <b>{typ}</b> 🚨\n{msg}"
+        else:
+            raise ValueError(f"Unknown telegram format '{format}' or bad content")
+
+    def _truncate(self, text: str, max_length: int = 4000) -> str:
+        """
+        Truncate text to Telegram limit, preserving words.
+        """
+        if len(text) <= max_length:
+            return text
+        cut = text[: max_length - 3]
+        if ' ' in cut:
+            cut = cut.rsplit(' ', 1)[0]
+        return cut + "..."
+
+    def graceful_shutdown(self):
+        """
+        Stop the background consumer and close bot.
+        """
+        self._shutdown = True
+        if self._worker:
+            self._worker.cancel()
         if not self._disable_async:
-            # Drain queue
-            await self._message_queue.join()
-            if self._worker_task:
-                self._worker_task.cancel()
-            self._loop.stop()
+            self._loop.call_soon_threadsafe(self._loop.stop)
+            self._thread.join(timeout=1)
         try:
-            await self._bot.close()
-        except Exception as e:
-            logger.error(f"Error during Telegram shutdown: {e}")
+            self._bot.session.close()
+        except Exception:
+            pass

@@ -2,40 +2,12 @@
 
 import logging
 import numpy as np
-import pandas as pd
-from typing import Dict, Tuple
 from dataclasses import dataclass
-
-# import exception classes so they are available as risk_management.RiskViolationError, etc.
-from modules.exceptions import RiskViolationError, NetworkError, APIError, OrderExecutionError
+from typing import Dict, Tuple
+from modules.error_handler import RiskViolationError
 
 logger = logging.getLogger(__name__)
-
-# ================== SIMULATION FUNCTIONS ==================
-
-def calculate_stop_loss(entry_price: float, risk_percentage: float = 0.02) -> float:
-    """Basic stop loss calculation for simulations."""
-    try:
-        return entry_price * (1 - risk_percentage)
-    except Exception as e:
-        logger.error(f"Stop loss calculation failed: {e}")
-        return entry_price * 0.98
-
-def dynamic_adjustment(entry_price: float,
-                       current_price: float,
-                       stop_loss: float,
-                       take_profit: float) -> Tuple[float, float]:
-    """Basic dynamic adjustment for simulations."""
-    try:
-        price_change = (current_price - entry_price) / entry_price
-        new_stop = max(stop_loss, current_price * 0.99)
-        new_tp = take_profit * (1 + abs(price_change) * 0.5)
-        return round(new_stop, 4), round(new_tp, 4)
-    except Exception as e:
-        logger.error(f"Dynamic adjustment failed: {e}")
-        return stop_loss, take_profit
-
-# ================== PRODUCTION CLASSES ==================
+logger.addHandler(logging.NullHandler())
 
 @dataclass
 class PositionRisk:
@@ -48,42 +20,130 @@ class PositionRisk:
     dollar_risk: float
 
 class RiskManager:
-    def __init__(self, account_balance: float, max_portfolio_risk: float = 0.05):
-        self.account_balance = account_balance
-        self.max_portfolio_risk = max_portfolio_risk
-        self.open_positions = {}
-        self.max_leverage = 10
-        self.risk_free_rate = 0.02
-        self.min_risk_reward = 1.5
-        self.atr_period = 14
-        self.volatility_factor = 2.0
+    """
+    Encapsulates all risk logic:
+      - position sizing
+      - dynamic stop adjustments
+      - portfolio‐level risk assessment
+      - drawdown monitoring
+    """
 
-    def calculate_position_size(self,
-                                entry_price: float,
-                                stop_price: float,
-                                risk_percent: float = 0.01) -> float:
-        self._validate_prices(entry_price, stop_price)
+    def __init__(
+        self,
+        account_balance: float,
+        max_portfolio_risk: float = 0.05,
+        max_drawdown_limit: float  = 0.10
+    ):
+        self.account_balance     = account_balance
+        self.max_portfolio_risk  = max_portfolio_risk
+        self.open_positions      : Dict[str, PositionRisk] = {}
+        self.max_leverage        = 10
+        self.risk_free_rate      = 0.02
+        self.min_risk_reward     = 1.5
+        self.atr_period          = 14
+        self.volatility_factor   = 2.0
+
+        # --- drawdown tracking ---
+        self.peak_equity         = account_balance
+        self.current_equity      = account_balance
+        self.max_drawdown_limit  = max_drawdown_limit
+
+    def update_equity(self, equity: float) -> float:
+        """
+        Call this after each mark‐to‐market update.
+        Raises RiskViolationError if drawdown exceeds the configured limit.
+        Returns the current drawdown fraction.
+        """
+        self.current_equity = equity
+        if equity > self.peak_equity:
+            self.peak_equity = equity
+
+        drawdown = (self.peak_equity - equity) / self.peak_equity
+        if drawdown > self.max_drawdown_limit:
+            logger.critical(
+                f"Drawdown {drawdown:.2%} exceeds limit {self.max_drawdown_limit:.2%} "
+                f"(peak={self.peak_equity:.2f}, current={equity:.2f})"
+            )
+            raise RiskViolationError(
+                f"Maximum drawdown exceeded ({drawdown:.2%})",
+                context={"peak_equity": self.peak_equity, "current_equity": equity}
+            )
+        return drawdown
+
+    def calculate_position_size(
+        self,
+        entry_price: float,
+        stop_price: float,
+        risk_percent: float = 0.01
+    ) -> float:
+        """
+        Determine how many units to trade so that dollar risk = account_balance * risk_percent.
+        Enforces max_leverage and max_portfolio_risk.
+        """
+        # validate inputs
+        if entry_price <= 0 or stop_price <= 0:
+            msg = f"Invalid prices: entry={entry_price}, stop={stop_price}"
+            logger.error(msg)
+            raise RiskViolationError(msg)
+
         price_risk = abs(entry_price - stop_price)
-        if price_risk <= 0:
-            raise RiskViolationError("Invalid price risk calculation")
+        if price_risk == 0:
+            msg = f"Zero price risk (entry==stop=={entry_price})"
+            logger.error(msg)
+            raise RiskViolationError(msg)
+
         dollar_risk = self.account_balance * risk_percent
         position_size = dollar_risk / price_risk
-        return self._apply_leverage_limits(position_size, entry_price)
 
-    def dynamic_stop_management(self,
-                                current_price: float,
-                                position: PositionRisk) -> PositionRisk:
+        # enforce leverage
+        margin_required = position_size * entry_price / self.max_leverage
+        if margin_required > self.account_balance:
+            msg = (
+                f"Insufficient margin: required={margin_required:.2f} "
+                f"> balance={self.account_balance:.2f}"
+            )
+            logger.error(msg)
+            raise RiskViolationError(msg)
+
+        # enforce portfolio risk
+        total_risk = sum(p.dollar_risk for p in self.open_positions.values())
+        if (total_risk + dollar_risk) / self.account_balance > self.max_portfolio_risk:
+            msg = (
+                f"Portfolio risk would exceed max: "
+                f"current={total_risk/self.account_balance:.2%}, "
+                f"new={(total_risk + dollar_risk)/self.account_balance:.2%}, "
+                f"limit={self.max_portfolio_risk:.2%}"
+            )
+            logger.error(msg)
+            raise RiskViolationError(msg)
+
+        return position_size
+
+    def dynamic_stop_management(
+        self,
+        current_price: float,
+        position: PositionRisk
+    ) -> PositionRisk:
+        """
+        Move the stop_loss up (never down) as price moves in your favor.
+        """
         price_change_pct = (current_price - position.entry_price) / position.entry_price
+        # Example trailing logic
         if price_change_pct > 0.05:
             new_stop = max(position.stop_loss, position.entry_price)
         elif price_change_pct > 0.02:
             new_stop = position.stop_loss * 1.01
         else:
             new_stop = position.stop_loss
+
+        # also use ATR‐based floor
         atr = self._calculate_atr(position.entry_price)
         new_stop = max(new_stop, current_price - self.volatility_factor * atr)
+
+        # recompute take_profit
         risk = position.entry_price - new_stop
         new_tp = position.entry_price + (risk * position.risk_reward_ratio)
+
         return PositionRisk(
             entry_price=position.entry_price,
             stop_loss=new_stop,
@@ -94,32 +154,21 @@ class RiskManager:
             dollar_risk=position.dollar_risk
         )
 
-    def portfolio_risk_assessment(self) -> Dict:
-        total_risk = sum(pos.dollar_risk for pos in self.open_positions.values())
-        margin_used = sum(pos.position_size * pos.entry_price for pos in self.open_positions.values())
+    def portfolio_risk_assessment(self) -> Dict[str, float]:
+        """
+        Summarize total risk, portfolio leverage, drawdown, etc.
+        """
+        total_dollar_risk = sum(p.dollar_risk for p in self.open_positions.values())
+        margin_used       = sum(p.position_size * p.entry_price for p in self.open_positions.values())
         return {
-            'total_dollar_risk': total_risk,
-            'portfolio_risk_ratio': total_risk / self.account_balance,
-            'margin_utilization': margin_used / self.account_balance,
-            'leverage_ratio': margin_used / self.account_balance,
-            'max_drawdown': self._calculate_max_drawdown()
+            "total_dollar_risk": total_dollar_risk,
+            "portfolio_risk_ratio": total_dollar_risk / self.account_balance,
+            "margin_utilization": margin_used / self.account_balance,
+            "leverage_ratio": margin_used / self.account_balance,
+            "max_drawdown": (self.peak_equity - self.current_equity) / self.peak_equity,
         }
 
     def _calculate_atr(self, current_price: float, lookback: int = 14) -> float:
+        """Placeholder ATR; replace with real history if desired."""
         return current_price * 0.02
 
-    def _calculate_max_drawdown(self) -> float:
-        total = sum(pos.dollar_risk for pos in self.open_positions.values())
-        return total / self.account_balance
-
-    def _validate_prices(self, entry: float, stop: float):
-        if entry <= 0 or stop <= 0:
-            raise RiskViolationError("Invalid price values")
-        if (entry < stop and entry < 0) or (entry > stop and entry > 0):
-            raise RiskViolationError("Stop loss must be on correct side of entry")
-
-    def _apply_leverage_limits(self, position_size: float, entry_price: float) -> float:
-        margin_required = position_size * entry_price / self.max_leverage
-        if margin_required > self.account_balance:
-            raise RiskViolationError("Insufficient margin for position size")
-        return position_size

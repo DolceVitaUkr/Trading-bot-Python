@@ -1,14 +1,26 @@
 # modules/top_pairs.py
+
 import requests
 import logging
 import json
 import os
+import threading
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+handler = logging.StreamHandler()
+handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+logger.addHandler(handler)
 
 class PairManager:
+    """
+    Fetches and caches active USDT trading pairs from Bybit's spot symbols API.
+    - Caches to a JSON file with 1-hour TTL.
+    - Falls back to file or hardcoded list on failure.
+    - Proactively expires the cache every hour in a background thread.
+    """
     def __init__(self):
         self.cache_file = "pair_cache.json"
         self.cache_duration = timedelta(hours=1)
@@ -19,96 +31,116 @@ class PairManager:
             "Accept": "application/json"
         }
 
+        # Start a background timer to expire cache every hour
+        self._start_cache_expiry_timer()
+
+    def _start_cache_expiry_timer(self):
+        """Daemon thread that removes the cache file every cache_duration."""
+        def expire():
+            try:
+                if os.path.exists(self.cache_file):
+                    os.remove(self.cache_file)
+                    logger.info("Pair cache expired and removed proactively")
+            except Exception as e:
+                logger.error(f"Error expiring pair cache: {e}")
+            finally:
+                # Schedule next expiry
+                threading.Timer(self.cache_duration.total_seconds(), expire).start()
+        # Initial timer
+        threading.Timer(self.cache_duration.total_seconds(), expire).start()
+
     def get_active_pairs(self) -> List[str]:
-        """Main entry point to get trading pairs with fallback strategy"""
+        """Main entry point: returns a list of active USDT pairs."""
+        # Try fresh API data first
         try:
-            # Try to get fresh data
             pairs = self._fetch_api_pairs()
             if pairs:
                 self._update_cache(pairs)
+                logger.info(f"Loaded {len(pairs)} pairs from API")
                 return pairs
         except Exception as e:
-            logger.warning(f"API fetch failed: {str(e)}")
+            logger.warning(f"API fetch failed: {e}")
 
-        # Fallback strategies in order of priority
-        return self._get_cached_pairs() or self._get_file_fallback() or self._get_hardcoded_fallback()
+        # Then try cached data
+        cached = self._get_cached_pairs()
+        if cached:
+            logger.info(f"Loaded {len(cached)} pairs from cache")
+            return cached
+
+        # Then file fallback
+        file_fb = self._get_file_fallback()
+        if file_fb:
+            logger.info(f"Loaded {len(file_fb)} pairs from fallback file")
+            return file_fb
+
+        # Finally, hardcoded fallback
+        hard = self._get_hardcoded_fallback()
+        logger.warning(f"Using hardcoded fallback pairs ({len(hard)} total)")
+        return hard
 
     def _fetch_api_pairs(self) -> Optional[List[str]]:
-        """Fetch pairs from Bybit API with enhanced validation"""
-        try:
-            response = requests.get(
-                self.api_endpoint,
-                headers=self.headers,
-                timeout=(3.05, 10)
-            )
-            response.raise_for_status()
-
-            data = response.json()
-            if not self._validate_api_response(data):
-                raise ValueError("Invalid API response structure")
-
-            return self._process_pairs(data.get("result", []))
-        except Exception as e:
-            logger.error(f"API request failed: {str(e)}")
-            raise
+        """Fetch pairs from Bybit API and validate the response."""
+        resp = requests.get(self.api_endpoint, headers=self.headers, timeout=(3.05, 10))
+        resp.raise_for_status()
+        data = resp.json()
+        if not self._validate_api_response(data):
+            raise ValueError("Invalid API response structure")
+        pairs = self._process_pairs(data["result"])
+        return pairs
 
     def _validate_api_response(self, data: Dict) -> bool:
-        """Validate API response structure"""
-        required_keys = ["ret_code", "result"]
-        return all(key in data for key in required_keys) and data["ret_code"] == 0
+        """Ensure the API returned the expected keys and success code."""
+        return data.get("ret_code") == 0 and "result" in data
 
     def _process_pairs(self, symbols: List[Dict]) -> List[str]:
-        """Process and filter symbol data"""
-        valid_pairs = [
-            symbol["name"] for symbol in symbols
-            if symbol.get("quoteCurrency") == "USDT" 
-            and symbol.get("status") == "Trading"
+        """Filter to USDT-quoted, Trading-status pairs and return their names."""
+        valid = [
+            sym["name"]
+            for sym in symbols
+            if sym.get("quoteCurrency") == "USDT" and sym.get("status") == "Trading"
         ]
-        logger.info(f"Processed {len(valid_pairs)} active USDT pairs")
-        return valid_pairs
+        logger.debug(f"API returned {len(symbols)} symbols, {len(valid)} valid USDT pairs")
+        return valid
 
     def _update_cache(self, pairs: List[str]) -> None:
-        """Update local cache with timestamp"""
-        cache_data = {
-            "timestamp": datetime.now().isoformat(),
+        """Write the timestamped list of pairs to the cache file."""
+        payload = {
+            "timestamp": datetime.utcnow().isoformat(),
             "pairs": pairs
         }
         try:
             with open(self.cache_file, "w") as f:
-                json.dump(cache_data, f)
+                json.dump(payload, f)
         except Exception as e:
-            logger.error(f"Cache update failed: {str(e)}")
+            logger.error(f"Failed to update pair cache: {e}")
 
     def _get_cached_pairs(self) -> Optional[List[str]]:
-        """Get cached pairs if still valid"""
+        """Return cached pairs if cache file exists and is still fresh."""
         try:
             if not os.path.exists(self.cache_file):
                 return None
-
             with open(self.cache_file, "r") as f:
                 data = json.load(f)
-
-            cache_time = datetime.fromisoformat(data["timestamp"])
-            if datetime.now() - cache_time < self.cache_duration:
-                logger.info("Using valid cached pairs")
+            ts = datetime.fromisoformat(data["timestamp"])
+            if datetime.utcnow() - ts < self.cache_duration:
                 return data["pairs"]
         except Exception as e:
-            logger.error(f"Cache read failed: {str(e)}")
+            logger.error(f"Error reading pair cache: {e}")
         return None
 
     def _get_file_fallback(self) -> Optional[List[str]]:
-        """Get fallback pairs from external file"""
+        """Load fallback pairs from an external JSON file, if present."""
         try:
             if os.path.exists(self.fallback_file):
                 with open(self.fallback_file, "r") as f:
                     return json.load(f)
         except Exception as e:
-            logger.error(f"File fallback failed: {str(e)}")
+            logger.error(f"Error reading fallback file: {e}")
         return None
 
     def _get_hardcoded_fallback(self) -> List[str]:
-        """Final fallback to embedded pairs"""
-        logger.warning("Using hardcoded fallback pairs")
+        """Return a built-in list of popular USDT pairs."""
+        # Only a small sample here — extend as needed.
         return [
         "1INCHUSDT", "1SOLUSDT", "3PUSDT", "5IREUSDT", "A8USDT", "AARKUSDT", "AAVEUSDT", "ACAUSDT",
         "ACHUSDT", "ACSUSDT", "ADAUSDT", "AEGUSDT", "AEROUSDT", "AEVOUSDT", "AFCUSDT", "AFGUSDT",
@@ -182,18 +214,13 @@ class PairManager:
         "ZKJUSDT", "ZKLUSDT", "ZKUSDT", "ZRCUSDT", "ZROUSDT", "ZRXUSDT", "ZTXUSDT"
         ]
 
+
 def get_spot_usdt_pairs() -> List[str]:
-    """Public interface for getting USDT pairs"""
+    """Convenience function to fetch active USDT pairs."""
     return PairManager().get_active_pairs()
 
+
 if __name__ == "__main__":
-    # Test script with verbose output
-    import logging
     logging.basicConfig(level=logging.INFO)
-    
     pairs = get_spot_usdt_pairs()
-    print(f"Active USDT pairs ({len(pairs)}):")
-    for pair in pairs[:10]:  # Print first 10 for demo
-        print(pair)
-    if len(pairs) > 10:
-        print(f"... and {len(pairs)-10} more")
+    print(f"Active USDT pairs ({len(pairs)}): {pairs[:10]}{'...' if len(pairs)>10 else ''}")
