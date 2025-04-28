@@ -1,157 +1,87 @@
 # utils/utilities.py
+
 import os
-import time
 import logging
-import datetime
-from pathlib import Path
-from functools import wraps
-from typing import Optional, Callable, Type, Tuple, Union
-import json
-from logging.handlers import RotatingFileHandler
+import functools
+import time
+from datetime import datetime, date
+from typing import Any, Callable, Tuple, Type, Union
 
-# ---------------------------
-# File System Utilities
-# ---------------------------
-
-def ensure_directory(path: Union[str, Path]) -> Path:
-    """Create directory structure with pathlib and return Path object."""
-    dir_path = Path(path).expanduser().resolve()
+def ensure_directory(path: str) -> None:
+    """
+    Create `path` (and any parent dirs) if it doesn’t already exist,
+    handling race conditions safely.
+    """
     try:
-        dir_path.mkdir(parents=True, exist_ok=True)
-        logging.debug(f"Verified/Created directory: {dir_path}")
-        return dir_path
-    except PermissionError as e:
-        logging.error(f"Permission denied creating directory {dir_path}: {e}")
-        raise
-    except Exception as e:
-        logging.error(f"Error creating directory {dir_path}: {e}")
-        raise
+        os.makedirs(path, exist_ok=True)
+    except OSError:
+        if not os.path.isdir(path):
+            raise
 
-# ---------------------------
-# Time Utilities
-# ---------------------------
+def configure_logging(
+    level: Union[int, str] = logging.INFO,
+    log_file: str = None,
+    fmt: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+) -> None:
+    """
+    Configure the root logger.  
+    If `log_file` is given, logs to that file, otherwise to stderr.
+    """
+    logger = logging.getLogger()
+    # allow string levels like 'DEBUG'
+    lvl = level if isinstance(level, int) else getattr(logging, level.upper(), logging.INFO)
+    logger.setLevel(lvl)
 
-def format_timestamp(
-    timestamp: Union[int, float],
-    fmt: str = "%Y-%m-%d %H:%M:%S",
-    timezone: Optional[datetime.tzinfo] = None
-) -> Optional[str]:
-    """Convert timestamp (seconds/ms) to formatted datetime with timezone support."""
-    try:
-        # Handle milliseconds
-        if timestamp > 1e12:
-            timestamp /= 1000
-            
-        dt = (datetime.datetime.fromtimestamp(timestamp, tz=timezone) 
-              if timezone else datetime.datetime.fromtimestamp(timestamp))
-              
-        return dt.strftime(fmt)
-    except (ValueError, TypeError) as e:
-        logging.error(f"Invalid timestamp {timestamp}: {e}")
-        return None
+    handler = logging.FileHandler(log_file) if log_file else logging.StreamHandler()
+    handler.setFormatter(logging.Formatter(fmt))
+    # avoid adding multiple handlers if re-called
+    if not any(isinstance(h, type(handler)) for h in logger.handlers):
+        logger.addHandler(handler)
 
-# ---------------------------
-# Retry Logic
-# ---------------------------
+def format_timestamp(ts: Union[int, float, datetime, date]) -> str:
+    """
+    Turn a UNIX timestamp (seconds or ms), datetime or date into
+    a UTC ISO-8601 string.
+    """
+    if isinstance(ts, (int, float)):
+        # assume ms if >1e12
+        secs = ts / 1000 if ts > 1e12 else ts
+        dt = datetime.utcfromtimestamp(secs)
+    elif isinstance(ts, date):
+        dt = datetime.combine(ts, datetime.min.time())
+    elif isinstance(ts, datetime):
+        dt = ts
+    else:
+        raise TypeError(f"Cannot format timestamp of type {type(ts)}")
+    return dt.replace(tzinfo=None).isoformat() + "Z"
 
 def retry(
     max_attempts: int = 3,
-    initial_delay: float = 1.0,
-    max_delay: float = 30.0,
-    backoff_factor: float = 2.0,
-    exceptions: Tuple[Type[Exception]] = (Exception,),
-    logger: Optional[logging.Logger] = None
+    delay: float = 1.0,
+    exceptions: Tuple[Type[BaseException], ...] = (Exception,),
+    backoff: float = 2.0
 ) -> Callable:
-    """Decorator with exponential backoff for retrying operations."""
-    def decorator(func: Callable) -> Callable:
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            current_delay = initial_delay
-            for attempt in range(1, max_attempts + 1):
+    """
+    Decorator to retry a function up to `max_attempts` times on the given
+    exception types, waiting `delay` seconds (then `delay*backoff`, etc.).
+    """
+    def decorator(fn: Callable) -> Callable:
+        @functools.wraps(fn)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            m, d = max_attempts, delay
+            last_exc = None
+            for attempt in range(1, m + 1):
                 try:
-                    return func(*args, **kwargs)
+                    return fn(*args, **kwargs)
                 except exceptions as e:
-                    if attempt == max_attempts:
-                        msg = f"{func.__name__} failed after {max_attempts} attempts"
-                        (logger or logging.getLogger()).error(msg)
+                    last_exc = e
+                    logging.warning(f"[retry] {fn.__name__} failed on attempt {attempt}/{m}: {e}")
+                    if attempt == m:
+                        logging.error(f"[retry] All {m} attempts failed for {fn.__name__}")
                         raise
-                        
-                    sleep_time = min(current_delay * backoff_factor ** (attempt - 1), max_delay)
-                    (logger or logging.getLogger()).warning(
-                        f"Retry {attempt}/{max_attempts} for {func.__name__} "
-                        f"in {sleep_time:.1f}s. Error: {e}"
-                    )
-                    time.sleep(sleep_time)
-            return func(*args, **kwargs)  # Final attempt
-        return wrapper
-    return decorator
-
-# ---------------------------
-# Logging Configuration
-# ---------------------------
-
-def configure_logging(
-    log_file: Union[str, Path] = "logs/app.log",
-    log_level: int = logging.INFO,
-    max_bytes: int = 10 * 1024 * 1024,  # 10MB
-    backup_count: int = 5,
-    json_format: bool = False
-) -> None:
-    """Configure logging with rotating files and optional JSON formatting."""
-    log_path = ensure_directory(log_file).parent
-    
-    class JsonFormatter(logging.Formatter):
-        def format(self, record):
-            log_entry = {
-                "timestamp": datetime.datetime.utcnow().isoformat(),
-                "level": record.levelname,
-                "logger": record.name,
-                "message": record.getMessage(),
-                "module": record.module,
-                "function": record.funcName,
-                "line": record.lineno
-            }
-            if record.exc_info:
-                log_entry["exception"] = self.formatException(record.exc_info)
-            return json.dumps(log_entry)
-
-    root_logger = logging.getLogger()
-    root_logger.setLevel(log_level)
-
-    # File handler with rotation
-    file_handler = RotatingFileHandler(
-        filename=log_file,
-        maxBytes=max_bytes,
-        backupCount=backup_count,
-        encoding='utf-8'
-    )
-    file_handler.setFormatter(
-        JsonFormatter() if json_format else
-        logging.Formatter('%(asctime)s [%(levelname)s] %(name)s:%(lineno)d - %(message)s')
-    )
-
-    # Console handler
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(logging.Formatter(
-        '%(asctime)s [%(levelname)s] %(message)s'
-    ))
-
-    # Clear existing handlers and add new ones
-    root_logger.handlers = [file_handler, console_handler]
-
-    logging.info("Logging system initialized")
-
-# ---------------------------
-# Async Utilities
-# ---------------------------
-
-async def async_retry(*args, **kwargs):
-    """Async version of the retry decorator"""
-    def decorator(func):
-        @wraps(func)
-        async def wrapper(*args, **kwargs):
-            # Implementation similar to sync version but with async sleep
-            # (Omitted for brevity)
-            pass
+                    time.sleep(d)
+                    d *= backoff
+            # unreachable
+            raise last_exc
         return wrapper
     return decorator
