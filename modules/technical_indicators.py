@@ -4,15 +4,13 @@ import math
 from typing import List, Tuple, Dict, Optional
 
 # NOTE: This module exposes a *function* API (sma, ema, rsi, atr, etc.)
-# AND a light wrapper class `TechnicalIndicators` with the same names as
-# static methods. This keeps older imports working:
-#   from modules.technical_indicators import TechnicalIndicators
-# while also allowing direct function import:
-#   from modules.technical_indicators import sma, rsi, atr
+# AND a wrapper class `TechnicalIndicators` with pandas-aware static methods.
+# - Functions: operate on plain Python lists, return scalars/series-likes.
+# - Class methods: accept pandas Series (preferred) or lists; return pandas Series.
 
 
 # ─────────────────────────────
-# Core moving averages
+# Core moving averages (list API)
 # ─────────────────────────────
 def sma(data: List[float], window: int) -> Optional[float]:
     """Simple Moving Average of the last `window` values."""
@@ -25,7 +23,6 @@ def ema(data: List[float], window: int) -> Optional[float]:
     """Exponential Moving Average over `window` values (Wilder-style)."""
     if not data or window <= 0 or len(data) < window:
         return None
-    # Seed with SMA
     seed = sum(data[:window]) / window
     k = 2.0 / (window + 1)
     ema_val = seed
@@ -44,7 +41,7 @@ def exponential_moving_average(data: List[float], period: int) -> Optional[float
 
 
 # ─────────────────────────────
-# Momentum / Oscillators
+# Momentum / Oscillators (list API)
 # ─────────────────────────────
 def rsi(close: List[float], window: int = 14) -> Optional[float]:
     """Relative Strength Index (last value)."""
@@ -52,17 +49,15 @@ def rsi(close: List[float], window: int = 14) -> Optional[float]:
         return None
     gains = 0.0
     losses = 0.0
-    # First average
     for i in range(1, window + 1):
         diff = close[i] - close[i - 1]
         if diff >= 0:
             gains += diff
         else:
-            losses -= diff  # loss is positive
+            losses -= diff
     avg_gain = gains / window
     avg_loss = losses / window
 
-    # Wilder smoothing for remaining data
     for i in range(window + 1, len(close)):
         diff = close[i] - close[i - 1]
         gain = max(diff, 0.0)
@@ -83,17 +78,12 @@ def stochastic_oscillator(
     k_period: int = 14,
     d_period: int = 3
 ) -> Optional[Tuple[List[Optional[float]], List[Optional[float]]]]:
-    """
-    %K and %D lines of the Stochastic Oscillator.
-    Pads initial values with None.
-    """
+    """%K and %D lines (list API). Pads initial values with None."""
     length = len(close)
     if not (high and low and close) or length < k_period:
         return None
-
     k_line: List[Optional[float]] = [None] * length
     d_line: List[Optional[float]] = [None] * length
-
     for i in range(length):
         if i + 1 >= k_period:
             low_min = min(low[i + 1 - k_period:i + 1])
@@ -101,7 +91,6 @@ def stochastic_oscillator(
             denom = (high_max - low_min) or 1e-12
             k_val = (close[i] - low_min) / denom * 100.0
             k_line[i] = k_val
-
             if i + 1 >= k_period + d_period - 1:
                 window = [v for v in k_line[i + 1 - d_period:i + 1] if v is not None]
                 if window:
@@ -123,7 +112,7 @@ def williams_r(high: List[float], low: List[float], close: List[float],
 
 
 # ─────────────────────────────
-# Trend / Volatility
+# Trend / Volatility (list API)
 # ─────────────────────────────
 def atr(high: List[float], low: List[float], close: List[float], period: int = 14) -> Optional[float]:
     """Average True Range (last value, Wilder smoothing)."""
@@ -131,8 +120,6 @@ def atr(high: List[float], low: List[float], close: List[float], period: int = 1
     length = len(close)
     if not (high and low and close) or length < n + 1:
         return None
-
-    # True Range per bar
     tr = [0.0] * length
     for i in range(1, length):
         tr[i] = max(
@@ -140,9 +127,7 @@ def atr(high: List[float], low: List[float], close: List[float], period: int = 1
             abs(high[i] - close[i - 1]),
             abs(low[i] - close[i - 1])
         )
-    # Seed ATR with simple average of first n TRs (excluding tr[0])
     atr_val = sum(tr[1:n + 1]) / n
-    # Wilder smoothing
     for i in range(n + 1, length):
         atr_val = (atr_val * (n - 1) + tr[i]) / n
     return atr_val
@@ -155,7 +140,6 @@ def adx(high: List[float], low: List[float], close: List[float],
     length = len(close)
     if not (high and low and close) or length < 2 * n:
         return None
-
     tr = [0.0] * length
     pdm = [0.0] * length
     ndm = [0.0] * length
@@ -169,18 +153,14 @@ def adx(high: List[float], low: List[float], close: List[float],
         down = low[i - 1] - low[i]
         pdm[i] = up if (up > down and up > 0) else 0.0
         ndm[i] = down if (down > up and down > 0) else 0.0
-
-    # Wilder's smoothing for ATR, +DM, -DM
     atr_seed = sum(tr[1:n + 1]) / n
     p_seed = sum(pdm[1:n + 1])
     n_seed = sum(ndm[1:n + 1])
     if atr_seed == 0:
         return 0.0
-
     pdi = (p_seed / atr_seed) * 100.0
     ndi = (n_seed / atr_seed) * 100.0
     prev_adx = (abs(pdi - ndi) / (pdi + ndi) * 100.0) if (pdi + ndi) else 0.0
-
     atr_s = atr_seed
     p_s = p_seed
     n_s = n_seed
@@ -192,7 +172,6 @@ def adx(high: List[float], low: List[float], close: List[float],
         ndi = (n_s / atr_s) * 100.0 if atr_s else 0.0
         dx = (abs(pdi - ndi) / (pdi + ndi) * 100.0) if (pdi + ndi) else 0.0
         prev_adx = ((prev_adx * (n - 1)) + dx) / n
-
     return prev_adx
 
 
@@ -225,20 +204,14 @@ def bollinger_bands(close: List[float], period: int = 20, num_std: float = 2.0) 
 
 
 def entropy_volatility(close: List[float], period: int = 14) -> Optional[List[Optional[float]]]:
-    """
-    Rolling entropy of absolute returns over `period`, as a proxy for volatility.
-    Pads first (period) entries with None.
-    """
+    """Rolling entropy of absolute returns over `period` (list API)."""
     length = len(close)
     if not close or length < period + 1:
         return None
-
-    # compute returns
     returns = [0.0] * length
     for i in range(1, length):
         prev = close[i - 1] or 1e-12
         returns[i] = (close[i] - close[i - 1]) / prev
-
     ent_series: List[Optional[float]] = [None] * length
     for i in range(period, length):
         window = returns[i + 1 - period:i + 1]
@@ -250,12 +223,11 @@ def entropy_volatility(close: List[float], period: int = 14) -> Optional[List[Op
             if p > 0:
                 entropy -= p * math.log(p)
         ent_series[i] = entropy
-
     return ent_series
 
 
 def obv(close: List[float], volume: List[float]) -> Optional[List[float]]:
-    """On-Balance Volume series."""
+    """On-Balance Volume series (list API)."""
     if close is None or volume is None or len(close) != len(volume):
         return None
     length = len(close)
@@ -294,10 +266,7 @@ def fibonacci_retracement(
 
 
 def market_regime(close: List[float], short_period: int = 50, long_period: int = 200) -> Optional[List[Optional[int]]]:
-    """
-    Market regime series: +1 (bull) if short SMA > long SMA, -1 if short < long.
-    Pads initial values with None.
-    """
+    """Market regime series (list API). +1 if short SMA > long SMA, else -1."""
     length = len(close)
     if not close or length < long_period:
         return None
@@ -312,20 +281,55 @@ def market_regime(close: List[float], short_period: int = 50, long_period: int =
 
 
 # ─────────────────────────────
-# Wrapper class for old imports
+# Pandas-aware wrapper class (single definition)
 # ─────────────────────────────
 class TechnicalIndicators:
-    """Static wrapper to keep older code paths working."""
-    sma = staticmethod(sma)
-    ema = staticmethod(ema)
-    rsi = staticmethod(rsi)
-    atr = staticmethod(atr)
-    adx = staticmethod(adx)
-    cci = staticmethod(cci)
-    williams_r = staticmethod(williams_r)
-    obv = staticmethod(obv)
-    stochastic_oscillator = staticmethod(stochastic_oscillator)
-    bollinger_bands = staticmethod(bollinger_bands)
-    fibonacci_retracement = staticmethod(fibonacci_retracement)
-    market_regime = staticmethod(market_regime)
-    entropy_volatility = staticmethod(entropy_volatility)
+    """
+    Static methods that return pandas Series when given a Series (preferred).
+    If given a list/array, will try to convert to a pandas Series and still
+    return a Series. Falls back to None if pandas is unavailable.
+    """
+
+    @staticmethod
+    def _to_series(x):
+        try:
+            import pandas as pd  # lazy import
+            if hasattr(x, "rolling"):  # already a Series/DataFrame column
+                return x
+            return pd.Series(list(x))
+        except Exception:
+            return None
+
+    @staticmethod
+    def sma(series, window: int):
+        s = TechnicalIndicators._to_series(series)
+        if s is None:
+            return None
+        try:
+            return s.rolling(window=window, min_periods=window).mean()
+        except Exception:
+            return None
+
+    @staticmethod
+    def ema(series, window: int):
+        s = TechnicalIndicators._to_series(series)
+        if s is None:
+            return None
+        try:
+            return s.ewm(span=window, adjust=False, min_periods=window).mean()
+        except Exception:
+            return None
+
+    @staticmethod
+    def rsi(series, window: int = 14):
+        s = TechnicalIndicators._to_series(series)
+        if s is None:
+            return None
+        try:
+            delta = s.diff()
+            up = delta.clip(lower=0).rolling(window=window, min_periods=window).mean()
+            down = (-delta.clip(upper=0)).rolling(window=window, min_periods=window).mean()
+            rs = up / down.replace(0, float("inf"))
+            return 100 - (100 / (1 + rs))
+        except Exception:
+            return None
