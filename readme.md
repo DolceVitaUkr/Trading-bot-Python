@@ -1,175 +1,171 @@
-# Trading Bot – Python (Crypto, Perps, Forex, Forex Options)
+🐍 Self-Learning AI Trading Bot
+A modular Python trading framework designed for crypto, forex, and options with built-in Machine Learning (ML) and Reinforcement Learning (RL) strategy engines.
 
-## Overview
-A modular, self-learning trading bot capable of paper and live trading across multiple asset classes:
-- **Crypto Spot**
-- **Crypto Perpetuals (Perps)**
-- **Forex**
-- **Forex Options** (planned)
+Supports Bybit, Binance, and future connectors. Built for low-risk, scalable, and automated trading with live and simulation modes.
 
-Supports both **swing** and **scalp** strategies with dynamic parameter adaptation, multi-timeframe confirmation, capital segregation, and stage-gated rollout.
+🚀 Features
+Multi-market support: Spot, Perpetuals, Forex, FX Options (FX/Options toggles default OFF at boot)
 
----
+RL/ML Brain: Self-learning trading logic with online reinforcement updates
 
-## Key Features
+Live & Paper Trading: Unified code for both
 
-### Multi-Asset Support
-- Crypto Spot, Perps, Forex, and Forex Options
-- Per-exchange profiles (`spot`, `perp`, `spot+perp`)
-- Independent accounts for Forex/Options (no cross-funding)
-- Dynamic timeframe mapping per asset class
-  - Crypto: **15m** primary, **5m** confirmation
-  - Forex: adjustable (default 1h/15m), auto-detect for options expiry
+Risk Management: Position sizing, exposure caps, cooldowns
 
-### Data & Execution
-- WebSocket + REST market data adapters
-- Partitioned parquet historical storage (by day) with deduplication
-- Live order execution with TP/SL attachment for **all** trades
-- SL/TP can move in favourable conditions, never widened to increase loss
-- Reconciliation after restart (reattach missing TP/SL, monitor existing positions)
-- Position sizing:
-  - Base: 5% of wallet per trade
-  - Canary: 2% risk for first 50 trades / 7 days in new domain
-  - Exposure caps: 15% per pair, 30% portfolio concurrent
+Technical Indicators: SMA, EMA, RSI, ATR, ADX, Bollinger, Fibonacci, and more
 
-### Risk & Guardrails
-- Max drawdown ≤ 15%
-- Consecutive-loss cooldown
-- Regime awareness:
-  - Tight SL in chop
-  - Wider SL in trend (still capped)
-  - Time-based max hold
-  - Avoid weekend carry (configurable)
-- Fee/slippage model per pair with periodic calibration
-- Global API throttle guard + backfill queue
-- Disaster mode: one-click flatten across domains (Telegram confirm)
+Backtesting Engine: Fee/slippage-aware simulations
 
-### Learning & Exploration
-- Online reinforcement learning (ON/OFF toggle)
-- Minimum exploration rate = 10%, dynamic to 25% in chop
-- Strategy adapters per asset class
-- Optional sentiment score hook
-- Drift detection + scheduled retraining
-- Bayesian optimization via Optuna (or grid/evolutionary search)
+Telegram Bot Integration: Notifications, daily/weekly KPIs
 
-### Telemetry & Reporting
-- Prometheus metrics exporter
-- KPI snapshots per rollout stage
-- Daily & weekly PnL reports
-- Export KPIs/plots to CSV/PNG
-- Telegram notifications for:
-  - Stage changes
-  - KPI threshold results
-  - Disaster mode activation
-  - Trade entries/exits
+State Persistence: Restart-safe with order reconciliation
 
----
+Configurable Rollout Stages: 1–5 progressive deployment phases
 
-## Rollout Plan (State Machine)
+📂 Project Structure
+plaintext
+Copy
+Edit
+.
+├── main.py                        # Entry point
+├── config.py                      # Central configuration
+├── modules/                       # Core modules
+│   ├── data_manager.py
+│   ├── exchange.py
+│   ├── trade_executor.py
+│   ├── risk_management.py
+│   ├── reward_system.py
+│   ├── technical_indicators.py
+│   ├── top_pairs.py
+│   ├── self_learning.py
+│   ├── trade_simulator.py
+│   ├── telegram_bot.py
+│   ├── ui.py
+│
+├── forex/                         # Forex adapters
+│   ├── forex_exchange.py
+│   ├── forex_data.py
+│   └── forex_strategy.py
+│
+├── options/                       # Options adapters
+│   └── options_exchange.py
+│
+├── telemetry/                     # Metrics and reports
+│   ├── metrics_exporter.py
+│   └── report_generator.py
+│
+├── state/                         # State persistence and reconciliation
+│   ├── runtime_state.py
+│   └── position_reconciler.py
+│
+├── modules.md                     # API surface & module contracts
+└── README.md
+⚙️ Installation
+1. Clone repo
 
-### Stage 1 – Crypto Paper (Learn)
-- Paper trade Crypto Spot (Perps/Forex OFF)
-- Train on live data (15m + 5m confirm)
-- Paper wallet: `$1,000` (Crypto_Paper)
-- Gate to Stage 2: hit KPI thresholds (win rate, Sharpe, DD)
+bash
+Copy
+Edit
+git clone https://github.com/youruser/self-learning-bot.git
+cd self-learning-bot
+2. Install dependencies
 
-### Stage 2 – Crypto Live + Exploration
-- Live trade Crypto with real wallet
-- Continue Crypto paper exploration trades (≥10% dynamic)
-- Canary sizing for first 50 trades or 7 days
-- Perps/Forex still paper-only
-
-### Stage 3 – Crypto Live + Perps/Forex Paper
-- Crypto Live + Exploration
-- Start Perps_Paper = `$1,000`
-- Start Forex_Paper = `$1,000`
-- Independent paper wallets per domain
-
-### Stage 4 – Crypto & Forex Live + Options Paper
-- Promote Forex to live (separate broker account)
-- Start ForexOptions_Paper = `$1,000`
-- Exploration for Crypto & Forex live
-
-### Stage 5 – Full Rollout
-- Crypto Live + Forex Live
-- Continue learning & exploration
-- Optional promotion of Options to live
-
----
-
-## Capital Segregation
-- **Paper wallets**: `Crypto_Paper`, `Perps_Paper`, `Forex_Paper`, `ForexOptions_Paper` – start with `$1,000` each when activated
-- **Live accounts**:  
-  - Crypto/Perps → Bybit (Spot & Perp profiles)  
-  - Forex/Options → Separate broker(s)
-- No cross-funding between domains
-- Real-time wallet balance checks before order placement
-
----
-
-## UI & Controls
-- Stage selection buttons (Stage 1–5)
-- Asset toggles:
-  - Spot / Perp / Spot+Perp (Crypto)
-  - Forex ON/OFF (default OFF every boot)
-  - Options ON/OFF (default OFF every boot)
-- Exploration % slider (min 10%)
-- Online Learning toggle
-- Disaster Mode button (flatten all)
-
----
-
-## Config & State
-- `config.py` holds rollout defaults, exposure caps, fee models, and timeframes
-- `runtime_state.json` stores:
-  - Last stage and toggles
-  - Open positions per domain
-  - Paper wallet balances
-  - Canary/trade stats
-
----
-
-## Repo Structure
-See [`Modules.md`](Modules.md) for full breakdown.
-
-Key directories:
-- `modules/` – core bot logic (data, exchange, strategies, risk, UI)
-- `self_test/` – unit/integration tests
-- `utils/` – common helpers
-- `forex/` – forex & options adapters (placeholders until enabled)
-- `marketdata/` – WS/REST adapters
-- `dataio/` – parquet/historical data handling
-- `state/` – runtime persistence
-- `risk/` – sizing & guardrails
-- `strategy/` – regime classifiers & exploration manager
-- `telemetry/` – Prometheus metrics & KPI reporting
-
----
-
-## Getting Started
-```bash
-# Install dependencies
+bash
+Copy
+Edit
 pip install -r requirements.txt
+3. Configure API keys & settings
+Edit config.py:
 
-# Set environment variables
-export BYBIT_API_KEY="..."
-export BYBIT_API_SECRET="..."
-export TELEGRAM_BOT_TOKEN="..."
-export TELEGRAM_CHAT_ID="..."
+python
+Copy
+Edit
+BYBIT_API_KEY = "your_api_key"
+BYBIT_API_SECRET = "your_secret"
+ENVIRONMENT = "simulation"  # or "production"
+▶️ Usage
+Simulation Mode
 
-# Start in Stage 1 (Crypto Paper)
-python main.py --stage 1
-KPI Targets (per domain)
-Win rate: ≥ 70% swing / ≥ 60% scalp
+bash
+Copy
+Edit
+python main.py --mode simulation
+Live Trading
 
-Sharpe ratio: ≥ 2.0 swing / ≥ 1.5 scalp
+bash
+Copy
+Edit
+python main.py --mode production
+Backtest
 
-Avg profit per trade: realistic per strategy type
+bash
+Copy
+Edit
+python -m modules.trade_simulator
+🧠 RL / ML Training
+RL Online: Runs continuously during trading if enabled via UI or config.
 
-Swing: 10–30%
+ML Training: Load historical data via DataManager → train supervised models offline.
 
-Scalp: 0.3–2%
+📡 Notifications
+The bot can send:
 
-Max drawdown: ≤ 15%
+Trade entries/exits
 
-Error budget & latency OK
+Risk violations
+
+Daily & weekly KPI summaries
+
+via Telegram — configure in config.py:
+
+python
+Copy
+Edit
+TELEGRAM_BOT_TOKEN = "your_token"
+TELEGRAM_CHAT_ID = "your_chat_id"
+📊 Backtesting
+Example:
+
+python
+Copy
+Edit
+from modules.trade_simulator import TradeSimulator
+from modules.trade_executor import TradeDecision
+import pandas as pd
+
+bars = pd.read_csv("data/BTCUSDT_15m.csv")
+decisions = [...]  # generate or load
+sim = TradeSimulator(fee_model=config.FEE_MODEL["bybit"]["spot"])
+results = sim.run_backtest(decisions, bars)
+print(results)
+🛡️ Risk Management
+Max exposure per pair & portfolio
+
+Position sizing based on balance & stop loss
+
+Loss streak cooldowns
+
+Force exits on rule violations
+
+📌 Rollout Stages
+Data only
+
+Simulated trades
+
+Small live trades (canary)
+
+Scaled positions
+
+Full deployment
+
+📅 Roadmap
+ Add Binance connector
+
+ Expand options trading module
+
+ Auto strategy selection per market regime
+
+ Web dashboard for live monitoring
+
+📄 License
+MIT License — feel free to fork and modify, but contribute back improvements.
