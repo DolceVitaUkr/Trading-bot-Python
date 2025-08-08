@@ -19,6 +19,8 @@ from modules.trade_simulator import TradeSimulator
 from modules.ui import TradingUI
 from modules.runtime_state import RuntimeState
 from modules.rollout_manager import RolloutManager
+from modules.reward_system import RewardSystem
+from modules.risk_management import RiskManager
 
 # ensure repo root on path
 PROJECT_ROOT = os.path.dirname(__file__)
@@ -57,22 +59,37 @@ class TradingBot:
         # Core components
         # ────────────────────────────────────────────────────────────────────────
         self.data_manager = DataManager(test_mode=self.simulation)
-        self.exchange = ExchangeAPI()  # NOTE: implements get_position(), close()
+        self.exchange = ExchangeAPI()  # supports get_position(), close(), reconcile_open_state()
         self.executor = TradeExecutor(simulation_mode=self.simulation)
         self.error_handler = ErrorHandler()
         self.pair_manager = PairManager()
-        self.simulator = TradeSimulator()  # uses simple synthetic SIM logic
+        self.simulator = TradeSimulator()  # simple synthetic SIM logic
         self.optimizer = ParameterOptimizer()
+
+        # RL wiring: explicit reward + risk, and fixed state size
+        reward = RewardSystem()
+        # RiskManager balance: sim uses SIMULATION_START_BALANCE; live could use a config value
+        rm_balance = config.SIMULATION_START_BALANCE if self.simulation else getattr(config, "LIVE_ACCOUNT_BALANCE", 0.0)
+        risk_mgr = RiskManager(account_balance=rm_balance)
+
+        # Choose a state vector size (SelfLearningBot builds ~5 features; we pad to 8)
+        self.state_size = int(getattr(config, "RL_STATE_SIZE", 8))
+
         self.sl_bot = SelfLearningBot(
             data_provider=self.data_manager,
             error_handler=self.error_handler,
-            training=self.simulation
+            reward_system=reward,
+            risk_manager=risk_mgr,
+            state_size=self.state_size,
+            action_size=6,                 # buy, sell, hold, close + 2 extras
+            training=self.simulation,
+            timeframe=self.timeframe,
+            symbol=self.current_symbol,
         )
 
         # ────────────────────────────────────────────────────────────────────────
-        # UI
+        # UI (pass the bot instance; avoid importing TradingBot inside UI to prevent circular import)
         # ────────────────────────────────────────────────────────────────────────
-        # Pass a reference to this bot (current ui.py expects a bot)
         self.ui = TradingUI(self)
         self._register_ui_handlers()
 
@@ -112,7 +129,7 @@ class TradingBot:
         )
 
     # ────────────────────────────────────────────────────────────────────────────
-    # Simulation / Backtest (sync simulator -> run in executor thread)
+    # Simulation / Backtest
     # ────────────────────────────────────────────────────────────────────────────
     async def _run_simulation(self):
         """Run a simple backtest pass and push results to UI."""
@@ -125,13 +142,11 @@ class TradingBot:
 
             # Use DataManager to get candles for selected symbol/tf
             df = self.data_manager.load_historical_data(self.current_symbol, self.timeframe)
-            # Convert to kline list: [ts, open, high, low, close, volume]
             market_data = [
                 [int(ts.value // 1_000_000), row["open"], row["high"], row["low"], row["close"], row["volume"]]
                 for ts, row in df.iterrows()
             ]
 
-            # Run simulator in a thread to avoid blocking loop
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, self.simulator.run, market_data)
 
@@ -143,7 +158,6 @@ class TradingBot:
             self.state._event("simulation.end", f"Balance={balance:.2f}, Points={points:.2f}")
             self.state.save()
 
-            # UI hook (exists in your current UI)
             self.ui.update_simulation_results(balance=balance, points=points)
 
         except Exception as e:
@@ -156,10 +170,7 @@ class TradingBot:
     # Live trading loop
     # ────────────────────────────────────────────────────────────────────────────
     async def _run_live_trading(self):
-        """
-        Continuous live trading using the self-learning bot.
-        Live Crypto allowed from Stage >= 2.
-        """
+        """Continuous live trading using the self-learning bot (stage-gated)."""
         if not self.rollout.guard_live("crypto", ui=self.ui):
             return
 
@@ -188,16 +199,20 @@ class TradingBot:
 
         while self._running:
             try:
-                # 1) Fetch latest data (primary timeframe)
+                # (Optional) Ensure candles are up-to-date here if you add a refresher
                 df = self.data_manager.load_historical_data(symbol, self.timeframe)
                 latest = df.iloc[-1]
                 price = float(latest["close"])
 
-                # 2) RL agent act & learn (symbol-based API)
+                # RL agent act & learn
                 self.sl_bot.act_and_learn(symbol, datetime.now(timezone.utc))
 
-                # 3) Update metrics exposed to UI
-                bal = getattr(self.executor, "get_balance", lambda: self.current_balance)()
+                # Update metrics
+                try:
+                    bal = self.executor.get_balance()
+                except Exception:
+                    bal = self.current_balance
+
                 eq = bal
                 try:
                     eq += self.executor.unrealized_pnl(symbol)
@@ -218,17 +233,15 @@ class TradingBot:
             await asyncio.sleep(interval)
 
     # ────────────────────────────────────────────────────────────────────────────
-    # Optimization (runs default objective inside optimizer)
+    # Optimization
     # ────────────────────────────────────────────────────────────────────────────
     async def _run_optimization(self):
         try:
             self.state._event("optimization.start", f"symbol={self.current_symbol}, tf={self.timeframe}")
             loop = asyncio.get_event_loop()
-            # Run optimizer in thread pool
             best_params = await loop.run_in_executor(None, self.optimizer.run, self.current_symbol, self.timeframe, None)
             self.state._event("optimization.end", f"Best={best_params}")
             self.state.save()
-            # UI might not have a dedicated method yet; log to UI panel
             try:
                 self.ui.log(f"Optimization complete. Best params: {best_params}", level="SUCCESS")
             except Exception:
@@ -243,20 +256,16 @@ class TradingBot:
         """Start the UI (blocking)."""
         for sig in (signal.SIGINT, signal.SIGTERM):
             signal.signal(sig, lambda *_: asyncio.ensure_future(self._shutdown()))
-
-        # If your UI provides set_title(), use it; else the window title is already set inside UI
         try:
             if hasattr(self.ui, "set_title"):
                 self.ui.set_title(f"Trading Bot ({self.environment.title()})")
         except Exception:
             pass
-
         self.ui.run()
 
     async def _shutdown(self):
         """Gracefully stop all tasks and close resources."""
         if not self._running and not self.is_trading and not self.is_training:
-            # still save a heartbeat event
             self.state._event("bot.shutdown", "idle")
             self.state.save()
             return
@@ -271,7 +280,6 @@ class TradingBot:
         logger.info("Shutting down trading bot...")
         await asyncio.sleep(0.1)
 
-        # UI may or may not support async shutdown; guard it
         try:
             if hasattr(self.ui, "shutdown"):
                 await self.ui.shutdown()
