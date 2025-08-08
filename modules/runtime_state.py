@@ -2,306 +2,337 @@
 import json
 import os
 import time
-from dataclasses import dataclass, field
-from threading import RLock
-from typing import Any, Dict, Optional
+import threading
+from typing import Any, Dict, Optional, List
 
-STATE_DIR = os.getenv("STATE_DIR", os.path.join("data", "_state"))
-STATE_FILE = os.path.join(STATE_DIR, "runtime.json")
-STATE_BACKUP_FILE = os.path.join(STATE_DIR, "runtime.backup.json")
-
-# Schema versioning so we can migrate state in the future if fields change.
-SCHEMA_VERSION = 1
-
-_default_state: Dict[str, Any] = {
-    "schema_version": SCHEMA_VERSION,
-    "created_ts": None,
-    "updated_ts": None,
-
-    # Rollout stage (1..5). We persist what the bot *was on*, but stage changes
-    # are controlled via rollout_manager and the UI gate checks.
-    "rollout_stage": 1,
-
-    # Domain toggles (runtime view). Forex/Options always boot OFF unless explicitly
-    # enabled after startup — rollout_manager will enforce that on load().
-    "domains": {
-        "crypto": {"profile": "spot", "live": False},
-        "perp":   {"live": False},
-        "forex":  {"enabled": False, "live": False},
-        "options":{"enabled": False, "live": False}
-    },
-
-    # Exploration (paper “exploration trades” share). Manager enforces min.
-    "exploration": {
-        "enabled": True,
-        "target_rate": 0.25,
-        "min_rate": 0.10,
-        "window": {"lookback_trades": 200, "actual_rate": 0.0, "count_explore": 0, "count_total": 0}
-    },
-
-    # Canary sizing/ramp tracking (applies when a domain is newly live).
-    "canary": {
-        "active": False,
-        "domain": None,               # "crypto_spot" | "perp" | "forex"
-        "schedule": [0.02, 0.03, 0.05],
-        "step_index": 0,
-        "started_ts": None,
-        "max_days": 7,
-        "max_trades": 50,
-        "trade_count": 0
-    },
-
-    # Exposure snapshot & open positions (ids or symbols) so we can reconcile on restart.
-    "positions": {
-        "crypto_spot": {},
-        "perp": {},
-        "forex": {},
-        "options": {}
-    },
-
-    # KPI moving snapshot per domain (used for gates & monitoring)
-    "kpi": {
-        "crypto_spot": {"win_rate": None, "sharpe": None, "avg_profit_swing": None, "avg_profit_scalp": None, "max_dd": None},
-        "perp":        {"win_rate": None, "sharpe": None, "avg_profit_swing": None, "avg_profit_scalp": None, "max_dd": None},
-        "forex":       {"win_rate": None, "sharpe": None, "avg_profit_swing": None, "avg_profit_scalp": None, "max_dd": None},
-        "options":     {"win_rate": None, "sharpe": None, "avg_profit_swing": None, "avg_profit_scalp": None, "max_dd": None}
-    },
-
-    # Wallet views for paper accounts (segregated), persist across runs unless reset via UI.
-    "paper_wallets": {
-        "Crypto_Paper": {"balance": 1000.0, "created_ts": None},
-        "Perps_Paper":  None,  # becomes {"balance": 1000.0, ...} when Stage 3 starts
-        "Forex_Paper":  None,  # becomes active at Stage 3
-        "ForexOptions_Paper": None  # becomes active at Stage 4
-    }
-}
+try:
+    # Prefer config values if present
+    from . import config
+    STATE_DIR = getattr(config, "STATE_DIR", os.path.join("data", "_state"))
+    RUNTIME_STATE_FILE = getattr(config, "RUNTIME_STATE_FILE", os.path.join(STATE_DIR, "runtime.json"))
+    EXPLORATION_MIN_RATE = getattr(config, "EXPLORATION_MIN_RATE", 0.10)
+    EXPLORATION_RATE_TARGET = getattr(config, "EXPLORATION_RATE_TARGET", 0.25)
+except Exception:
+    # Safe fallbacks
+    STATE_DIR = os.path.join("data", "_state")
+    RUNTIME_STATE_FILE = os.path.join(STATE_DIR, "runtime.json")
+    EXPLORATION_MIN_RATE = 0.10
+    EXPLORATION_RATE_TARGET = 0.25
 
 
-@dataclass
+def _now() -> float:
+    return time.time()
+
+
 class RuntimeState:
-    path: str = STATE_FILE
-    backup_path: str = STATE_BACKUP_FILE
-    _state: Dict[str, Any] = field(default_factory=lambda: json.loads(json.dumps(_default_state)))
-    _lock: RLock = field(default_factory=RLock)
+    """
+    JSON-backed runtime state for:
+      - rollout stage & domain toggles
+      - paper wallet balances per domain
+      - canary status / counters
+      - exploration rate & online learning flag
+      - open position snapshots per domain
+      - KPI snapshots history
+      - last seen balances (live)
+      - audit log (lightweight)
+    """
 
-    # ───────────────────────────
-    # Core I/O
-    # ───────────────────────────
+    _LOCK = threading.Lock()
+
+    # Domains used across the bot
+    DOMAINS = ("crypto", "perps", "forex", "options")
+
+    # Paper wallets keyed in the file
+    PAPER_KEYS = ("Crypto_Paper", "Perps_Paper", "Forex_Paper", "ForexOptions_Paper")
+
+    SCHEMA_VERSION = 1
+
+    def __init__(self, path: Optional[str] = None):
+        self.path = path or RUNTIME_STATE_FILE
+        self._ensure_dirs()
+        self.state: Dict[str, Any] = {}
+        self.load()
+
+    # ────────────────────────────────────────────────────────────────────────────
+    # Filesystem
+    # ────────────────────────────────────────────────────────────────────────────
+    def _ensure_dirs(self) -> None:
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+
+    def _default_state(self) -> Dict[str, Any]:
+        ts = _now()
+        return {
+            "schema_version": self.SCHEMA_VERSION,
+            "created_at": ts,
+            "updated_at": ts,
+
+            # Rollout & flags
+            "rollout_stage": 1,                      # 1..5
+            "exchange_profile": "spot",              # "spot" | "perp" | "spot+perp"
+            "forex_enabled": 0,                      # boot default OFF
+            "options_enabled": 0,                    # boot default OFF
+            "online_learning_enabled": 1,
+            "exploration_rate": EXPLORATION_MIN_RATE,
+
+            # Canary (per domain)
+            "canary": {
+                # domain -> dict
+                #   {"active": 1/0, "start_ts": float, "trade_count": int}
+            },
+
+            # Per-domain live state
+            "domains": {
+                "crypto": {"live": 0},
+                "perps":  {"live": 0},
+                "forex":  {"live": 0},
+                "options":{"live": 0},
+            },
+
+            # Paper wallets (persist across boots)
+            "paper_wallets": {
+                "Crypto_Paper": 0.0,
+                "Perps_Paper": 0.0,
+                "Forex_Paper": 0.0,
+                "ForexOptions_Paper": 0.0,
+            },
+
+            # Open positions snapshot by domain
+            "open_positions": {
+                # "crypto": {"BTCUSDT": {...}, ...}
+            },
+
+            # Last seen balances on venues (helps reconcile after restart)
+            "last_seen_balances": {
+                # "crypto": {"spot": float, "perp": float}, etc.
+            },
+
+            # KPI snapshots (rolling window)
+            "kpi_history": {
+                # "crypto": [{"ts": ts, "win_rate":..., "sharpe":..., ...}, ...]
+            },
+
+            # Audit / breadcrumbs
+            "events": [],  # list of {"ts": ts, "type": str, "msg": str}
+        }
+
+    # ────────────────────────────────────────────────────────────────────────────
+    # Load / Save
+    # ────────────────────────────────────────────────────────────────────────────
     def load(self) -> None:
-        with self._lock:
-            os.makedirs(os.path.dirname(self.path), exist_ok=True)
-
-            # Enforce safe-boot semantics BEFORE loading persisted toggles:
-            # Forex/Options trading switches must come up disabled for NEW orders,
-            # but we will still reconcile any open positions later.
-            self._apply_boot_defaults()
-
-            if not os.path.isfile(self.path):
-                # First run: stamp created_ts
-                now = time.time()
-                self._state["created_ts"] = now
-                self._state["updated_ts"] = now
-                self._write_atomic(self._state)
+        with self._LOCK:
+            if not os.path.exists(self.path):
+                self.state = self._default_state()
+                self._write()
                 return
-
             try:
                 with open(self.path, "r", encoding="utf-8") as f:
-                    disk = json.load(f)
-                self._state = self._migrate_if_needed(disk)
-                # After load, apply boot rule for FX/Options toggles.
-                self._apply_boot_defaults()
+                    data = json.load(f)
+                # Simple schema guard / merge defaults for missing keys
+                defaults = self._default_state()
+                merged = {**defaults, **data}
+                # Deep merge for nested dicts we care about
+                for k in ("canary", "domains", "paper_wallets", "open_positions",
+                          "last_seen_balances", "kpi_history"):
+                    merged[k] = {**defaults.get(k, {}), **data.get(k, {})}
+                self.state = merged
             except Exception:
-                # If state is corrupt, attempt backup; otherwise restore defaults.
-                if os.path.isfile(self.backup_path):
-                    with open(self.backup_path, "r", encoding="utf-8") as f:
-                        disk = json.load(f)
-                    self._state = self._migrate_if_needed(disk)
-                    self._apply_boot_defaults()
-                else:
-                    self._state = json.loads(json.dumps(_default_state))
-                    self._state["created_ts"] = time.time()
-                    self._state["updated_ts"] = self._state["created_ts"]
-                    self._apply_boot_defaults()
-                # Always rewrite after recovering
-                self._write_atomic(self._state)
+                # If corrupted, rotate and recreate minimal valid file
+                backup = f"{self.path}.corrupt.{int(_now())}.bak"
+                try:
+                    os.replace(self.path, backup)
+                except Exception:
+                    pass
+                self.state = self._default_state()
+                self._write()
 
     def save(self) -> None:
-        with self._lock:
-            self._state["updated_ts"] = time.time()
-            self._write_atomic(self._state)
+        with self._LOCK:
+            self.state["updated_at"] = _now()
+            self._write()
 
-    def _write_atomic(self, state: Dict[str, Any]) -> None:
-        tmp = self.path + ".tmp"
+    def _write(self) -> None:
+        tmp = f"{self.path}.tmp"
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(state, f, indent=2, sort_keys=False)
-        # Rotate backup then replace
-        try:
-            if os.path.isfile(self.path):
-                # copy current to backup
-                with open(self.path, "r", encoding="utf-8") as src, open(self.backup_path, "w", encoding="utf-8") as dst:
-                    dst.write(src.read())
-        except Exception:
-            # Non-fatal
-            pass
+            json.dump(self.state, f, indent=2, sort_keys=False)
         os.replace(tmp, self.path)
 
-    # ───────────────────────────
-    # Boot rules & migration
-    # ───────────────────────────
-    def _apply_boot_defaults(self) -> None:
-        """Enforce safe restart semantics:
-        - Forex/Options 'enabled' flags are forced False on boot (no new orders),
-          but we keep any position snapshots for reconciliation by the domain adapters.
-        """
-        d = self._state.get("domains", {})
-        forex = d.get("forex", {"enabled": False, "live": False})
-        options = d.get("options", {"enabled": False, "live": False})
+    # ────────────────────────────────────────────────────────────────────────────
+    # Rollout & toggles
+    # ────────────────────────────────────────────────────────────────────────────
+    def get_stage(self) -> int:
+        return int(self.state.get("rollout_stage", 1))
 
-        forex["enabled"] = False
-        options["enabled"] = False
+    def set_stage(self, stage: int) -> None:
+        self.state["rollout_stage"] = int(stage)
+        self._event("stage.set", f"rollout_stage={stage}")
+        self.save()
 
-        d["forex"] = forex
-        d["options"] = options
-        self._state["domains"] = d
+    def get_exchange_profile(self) -> str:
+        return str(self.state.get("exchange_profile", "spot"))
 
-    def _migrate_if_needed(self, disk: Dict[str, Any]) -> Dict[str, Any]:
-        schema = disk.get("schema_version", 0)
-        if schema == SCHEMA_VERSION:
-            # Fill any missing keys from defaults without overwriting existing
-            return _deep_merge_defaults(disk, _default_state)
-        # Future migrations go here
-        # Example: if schema == 0: migrate... and set to SCHEMA_VERSION
-        disk = _deep_merge_defaults(disk, _default_state)
-        disk["schema_version"] = SCHEMA_VERSION
-        return disk
+    def set_exchange_profile(self, profile: str) -> None:
+        profile = profile.lower()
+        assert profile in ("spot", "perp", "spot+perp")
+        self.state["exchange_profile"] = profile
+        self._event("exchange_profile.set", profile)
+        self.save()
 
-    # ───────────────────────────
-    # Accessors / Mutators
-    # ───────────────────────────
-    def get(self, key: str, default: Any = None) -> Any:
-        with self._lock:
-            return self._state.get(key, default)
+    def get_flag(self, name: str) -> Any:
+        return self.state.get(name)
 
-    def whole(self) -> Dict[str, Any]:
-        with self._lock:
-            return json.loads(json.dumps(self._state))
+    def set_flag(self, name: str, value: Any) -> None:
+        self.state[name] = value
+        self._event("flag.set", f"{name}={value}")
+        self.save()
 
-    def set_rollout_stage(self, stage: int) -> None:
-        with self._lock:
-            self._state["rollout_stage"] = int(stage)
+    def set_domain_live(self, domain: str, live: bool) -> None:
+        assert domain in self.DOMAINS
+        self.state["domains"].setdefault(domain, {})
+        self.state["domains"][domain]["live"] = 1 if live else 0
+        self._event("domain.live.set", f"{domain}={live}")
+        self.save()
+
+    def get_domain_live(self, domain: str) -> bool:
+        assert domain in self.DOMAINS
+        return bool(self.state.get("domains", {}).get(domain, {}).get("live", 0))
+
+    # ────────────────────────────────────────────────────────────────────────────
+    # Exploration / learning
+    # ────────────────────────────────────────────────────────────────────────────
+    def get_exploration_rate(self) -> float:
+        return float(self.state.get("exploration_rate", EXPLORATION_MIN_RATE))
+
+    def set_exploration_rate(self, rate: float) -> None:
+        rate = float(max(0.0, min(1.0, rate)))
+        self.state["exploration_rate"] = rate
+        self._event("exploration_rate.set", f"{rate:.4f}")
+        self.save()
+
+    def get_online_learning_enabled(self) -> bool:
+        return bool(self.state.get("online_learning_enabled", 1))
+
+    def set_online_learning_enabled(self, enabled: bool) -> None:
+        self.state["online_learning_enabled"] = 1 if enabled else 0
+        self._event("online_learning.set", str(enabled))
+        self.save()
+
+    # ────────────────────────────────────────────────────────────────────────────
+    # Canary controls
+    # ────────────────────────────────────────────────────────────────────────────
+    def get_canary(self, domain: str) -> Dict[str, Any]:
+        assert domain in self.DOMAINS
+        can = self.state["canary"].get(domain)
+        if not can:
+            can = {"active": 0, "start_ts": 0.0, "trade_count": 0}
+            self.state["canary"][domain] = can
+            self.save()
+        return can
+
+    def set_canary(self, domain: str, active: bool, reset: bool = False) -> None:
+        assert domain in self.DOMAINS
+        can = self.get_canary(domain)
+        can["active"] = 1 if active else 0
+        if reset or (active and can["start_ts"] == 0.0):
+            can["start_ts"] = _now()
+            can["trade_count"] = 0
+        self.state["canary"][domain] = can
+        self._event("canary.set", f"{domain} active={active} reset={reset}")
+        self.save()
+
+    def canary_mark_trade(self, domain: str) -> int:
+        can = self.get_canary(domain)
+        can["trade_count"] = int(can.get("trade_count", 0)) + 1
+        self.state["canary"][domain] = can
+        self._event("canary.trade", f"{domain} count={can['trade_count']}")
+        self.save()
+        return can["trade_count"]
+
+    # ────────────────────────────────────────────────────────────────────────────
+    # Paper wallets
+    # ────────────────────────────────────────────────────────────────────────────
+    def get_paper_wallet(self, key: str) -> float:
+        assert key in self.PAPER_KEYS, f"Unknown paper wallet key: {key}"
+        return float(self.state.get("paper_wallets", {}).get(key, 0.0))
+
+    def set_paper_wallet(self, key: str, balance: float) -> None:
+        assert key in self.PAPER_KEYS, f"Unknown paper wallet key: {key}"
+        self.state["paper_wallets"][key] = float(balance)
+        self._event("paper_wallet.set", f"{key}={balance:.2f}")
+        self.save()
+
+    def add_paper_wallet(self, key: str, delta: float) -> float:
+        bal = self.get_paper_wallet(key) + float(delta)
+        self.set_paper_wallet(key, bal)
+        return bal
+
+    # ────────────────────────────────────────────────────────────────────────────
+    # Open positions snapshot (for reconciliation after restart)
+    # ────────────────────────────────────────────────────────────────────────────
+    def upsert_open_position(self, domain: str, symbol: str, position: Dict[str, Any]) -> None:
+        assert domain in self.DOMAINS
+        self.state["open_positions"].setdefault(domain, {})
+        self.state["open_positions"][domain][symbol] = position
+        self._event("position.upsert", f"{domain}:{symbol}")
+        self.save()
+
+    def remove_open_position(self, domain: str, symbol: str) -> None:
+        assert domain in self.DOMAINS
+        domain_book = self.state.get("open_positions", {}).get(domain, {})
+        if symbol in domain_book:
+            del domain_book[symbol]
+            self._event("position.remove", f"{domain}:{symbol}")
             self.save()
 
-    def set_domain(self, domain: str, key: str, value: Any) -> None:
-        with self._lock:
-            if "domains" not in self._state:
-                self._state["domains"] = {}
-            if domain not in self._state["domains"]:
-                self._state["domains"][domain] = {}
-            self._state["domains"][domain][key] = value
-            self.save()
+    def get_open_positions(self, domain: str) -> Dict[str, Any]:
+        assert domain in self.DOMAINS
+        return dict(self.state.get("open_positions", {}).get(domain, {}))
 
-    def start_canary(self, domain: str, schedule: Optional[list] = None, max_days: int = 7, max_trades: int = 50) -> None:
-        with self._lock:
-            c = self._state["canary"]
-            c.update({
-                "active": True,
-                "domain": domain,
-                "schedule": schedule or c.get("schedule") or [0.02, 0.03, 0.05],
-                "step_index": 0,
-                "started_ts": time.time(),
-                "max_days": max_days,
-                "max_trades": max_trades,
-                "trade_count": 0
-            })
-            self.save()
+    def clear_open_positions(self, domain: str) -> None:
+        assert domain in self.DOMAINS
+        self.state["open_positions"][domain] = {}
+        self._event("positions.clear", domain)
+        self.save()
 
-    def canary_step_pct(self) -> Optional[float]:
-        with self._lock:
-            c = self._state["canary"]
-            if not c.get("active"):
-                return None
-            idx = c.get("step_index", 0)
-            sch = c.get("schedule") or []
-            return sch[idx] if 0 <= idx < len(sch) else None
+    # ────────────────────────────────────────────────────────────────────────────
+    # Last seen balances (live venues)
+    # ────────────────────────────────────────────────────────────────────────────
+    def set_last_seen_balance(self, domain: str, key: str, value: float) -> None:
+        self.state["last_seen_balances"].setdefault(domain, {})
+        self.state["last_seen_balances"][domain][key] = float(value)
+        self._event("balance.set", f"{domain}:{key}={value:.2f}")
+        self.save()
 
-    def increment_canary_trade(self) -> None:
-        with self._lock:
-            c = self._state["canary"]
-            if not c.get("active"):
-                return
-            c["trade_count"] = int(c.get("trade_count", 0)) + 1
-            self.save()
+    def get_last_seen_balance(self, domain: str, key: str) -> Optional[float]:
+        return self.state.get("last_seen_balances", {}).get(domain, {}).get(key)
 
-    def advance_canary(self) -> None:
-        with self._lock:
-            c = self._state["canary"]
-            if not c.get("active"):
-                return
-            c["step_index"] += 1
-            # Auto-complete if we outgrow schedule
-            if c["step_index"] >= len(c.get("schedule") or []):
-                c["active"] = False
-                c["domain"] = None
-            self.save()
+    # ────────────────────────────────────────────────────────────────────────────
+    # KPI snapshots
+    # ────────────────────────────────────────────────────────────────────────────
+    def record_kpi(self, domain: str, snapshot: Dict[str, Any], keep_last: int = 200) -> None:
+        assert domain in self.DOMAINS
+        self.state["kpi_history"].setdefault(domain, [])
+        snap = {"ts": _now(), **snapshot}
+        self.state["kpi_history"][domain].append(snap)
+        # keep tail small
+        if len(self.state["kpi_history"][domain]) > keep_last:
+            self.state["kpi_history"][domain] = self.state["kpi_history"][domain][-keep_last:]
+        self._event("kpi.record", domain)
+        self.save()
 
-    def stop_canary(self) -> None:
-        with self._lock:
-            c = self._state["canary"]
-            c.update({"active": False, "domain": None})
-            self.save()
+    def get_kpis(self, domain: str, last_n: Optional[int] = None) -> List[Dict[str, Any]]:
+        assert domain in self.DOMAINS
+        arr = list(self.state.get("kpi_history", {}).get(domain, []))
+        if last_n is not None:
+            return arr[-int(last_n):]
+        return arr
 
-    def record_position_snapshot(self, domain: str, symbol: str, snapshot: Dict[str, Any]) -> None:
-        with self._lock:
-            self._state["positions"].setdefault(domain, {})
-            self._state["positions"][domain][symbol] = snapshot
-            self.save()
+    # ────────────────────────────────────────────────────────────────────────────
+    # Events / Audit
+    # ────────────────────────────────────────────────────────────────────────────
+    def _event(self, typ: str, msg: str) -> None:
+        ev = {"ts": _now(), "type": typ, "msg": msg}
+        self.state.setdefault("events", []).append(ev)
+        # Trim long audit lists silently (don’t spam the file)
+        if len(self.state["events"]) > 1000:
+            self.state["events"] = self.state["events"][-500:]
 
-    def clear_position_snapshot(self, domain: str, symbol: str) -> None:
-        with self._lock:
-            if symbol in self._state["positions"].get(domain, {}):
-                del self._state["positions"][domain][symbol]
-                self.save()
-
-    def record_exploration_trade(self, is_exploration: bool) -> None:
-        with self._lock:
-            w = self._state["exploration"]["window"]
-            w["count_total"] += 1
-            if is_exploration:
-                w["count_explore"] += 1
-            w["actual_rate"] = (w["count_explore"] / max(1, w["count_total"]))
-            self.save()
-
-    def set_kpi(self, domain: str, **kpis: Any) -> None:
-        with self._lock:
-            self._state["kpi"].setdefault(domain, {})
-            self._state["kpi"][domain].update({k: v for k, v in kpis.items() if v is not None})
-            self.save()
-
-    def ensure_paper_wallet(self, name: str, initial: float = 1000.0) -> None:
-        with self._lock:
-            pw = self._state["paper_wallets"].get(name)
-            if pw is None:
-                self._state["paper_wallets"][name] = {
-                    "balance": float(initial),
-                    "created_ts": time.time()
-                }
-                self.save()
-
-    def set_paper_balance(self, name: str, balance: float) -> None:
-        with self._lock:
-            if name not in self._state["paper_wallets"]:
-                self.ensure_paper_wallet(name, balance)
-            else:
-                self._state["paper_wallets"][name]["balance"] = float(balance)
-                self.save()
-
-
-def _deep_merge_defaults(current: Dict[str, Any], defaults: Dict[str, Any]) -> Dict[str, Any]:
-    """Merge keys from defaults into current without overwriting existing values."""
-    for k, v in defaults.items():
-        if k not in current:
-            current[k] = json.loads(json.dumps(v))
-        else:
-            if isinstance(v, dict) and isinstance(current[k], dict):
-                _deep_merge_defaults(current[k], v)
-    return current
