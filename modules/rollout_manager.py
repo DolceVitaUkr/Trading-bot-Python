@@ -1,143 +1,166 @@
 # modules/rollout_manager.py
-from typing import Optional, Dict, Any
+from __future__ import annotations
+from typing import Dict, Optional
+import logging
+
+import config
 from modules.runtime_state import RuntimeState
 
-class BalanceAdapter:
-    """
-    Interface each venue/domain must implement.
-    Implementations:
-      - BybitSpotBalanceAdapter
-      - BybitPerpBalanceAdapter
-      - ForexBrokerBalanceAdapter
-      - OptionsBrokerBalanceAdapter
-    """
-    def available_balance(self) -> float:
-        raise NotImplementedError  # MUST be implemented against real API
+logger = logging.getLogger(__name__)
+
 
 class RolloutManager:
     """
-    Gatekeeper for rollout stages, domain toggles, canary ramp, wallet segregation,
-    exposure caps, and KPI gates. No mocks; live balances must come from adapters.
+    Rollout stage gatekeeper + helper utilities.
+
+    Stages (from readme):
+      1: Crypto Paper (Learn)
+      2: Crypto Live (+ Exploration)
+      3: Crypto Live + Perps/Forex Paper
+      4: Crypto & Forex Live (+ Options Paper)
+      5: Full Rollout (Crypto Live + Forex Live; Options optional)
+
+    Domain mapping:
+      - crypto: paper allowed from stage 1; live from stage 2
+      - perps:  paper allowed from stage 3; live (when enabled later) can share rules with crypto (spot+perp)
+      - forex:  paper from stage 3; live from stage 4
+      - options: paper from stage 4; live from stage 5 (optional)
+
+    This class does NOT place orders. It only decides if features are permitted,
+    reconciles toggles on boot, and updates persistent state.
     """
-    def __init__(self, state: RuntimeState, adapters: Dict[str, BalanceAdapter]):
-        """
-        adapters: dict keyed by domain {"crypto": ..., "perp": ..., "forex": ..., "options": ...}
-        Each value must implement available_balance() hitting the real venue/broker API.
-        """
+
+    def __init__(self, state: RuntimeState):
         self.state = state
-        self.adapters = adapters
-        self.state.load()
 
-    # ── Startup ────────────────────────────────────────────────────────────────
-    def startup_sequence(self) -> None:
-        stage = self.state.get("rollout_stage")
-        print(f"[Rollout] Booting at Stage {stage}")
-
-        if stage == 1:
-            self._enable_domains(crypto_spot=True, perps=False, forex=False, options=False, live=False)
-        elif stage == 2:
-            self._enable_domains(crypto_spot=True, perps=False, forex=False, options=False, live=True)
-        elif stage == 3:
-            self._enable_domains(crypto_spot=True, perps=True, forex=False, options=False, live=True)
-        elif stage == 4:
-            self._enable_domains(crypto_spot=True, perps=True, forex=True, options=False, live=True)
-        elif stage == 5:
-            self._enable_domains(crypto_spot=True, perps=True, forex=True, options=True, live=True)
-
-        self._ensure_stage_wallets(stage)
-
-    # ── Stage control ──────────────────────────────────────────────────────────
-    def set_stage(self, new_stage: int) -> None:
-        if not (1 <= new_stage <= 5):
-            raise ValueError("Rollout stage must be between 1 and 5.")
-        self.state.set_rollout_stage(new_stage)
-        self.startup_sequence()
-        print(f"[Rollout] Stage updated to {new_stage}")
-
-    def _ensure_stage_wallets(self, stage: int) -> None:
-        if stage >= 1:
-            self.state.ensure_paper_wallet("Crypto_Paper", initial=1000.0)
-        if stage >= 3:
-            self.state.ensure_paper_wallet("Perps_Paper", initial=1000.0)
-        if stage >= 3:
-            self.state.ensure_paper_wallet("Forex_Paper", initial=1000.0)
-        if stage >= 4:
-            self.state.ensure_paper_wallet("ForexOptions_Paper", initial=1000.0)
-
-    def _enable_domains(self, crypto_spot: bool, perps: bool, forex: bool, options: bool, live: bool) -> None:
-        self.state.set_domain("crypto", "enabled", crypto_spot)
-        self.state.set_domain("crypto", "live", live and crypto_spot)
-
-        self.state.set_domain("perp", "enabled", perps)
-        self.state.set_domain("perp", "live", live and perps)
-
-        self.state.set_domain("forex", "enabled", forex)
-        self.state.set_domain("forex", "live", live and forex)
-
-        self.state.set_domain("options", "enabled", options)
-        self.state.set_domain("options", "live", live and options)
-
-    # ── Canary (trade-count/time gated ramp) ───────────────────────────────────
-    def start_canary_for_domain(self, domain: str) -> None:
-        self.state.start_canary(domain)
-
-    def get_current_canary_pct(self) -> Optional[float]:
-        return self.state.canary_step_pct()
-
-    def register_canary_trade(self) -> None:
-        self.state.increment_canary_trade()
-        self.state.advance_canary_if_needed()
-
-    # ── Guardrails ─────────────────────────────────────────────────────────────
-    def check_kpi_gate(self, domain: str) -> bool:
-        kpi = self.state.get("kpi").get(domain, {})
-        if not kpi:
-            return False
-        return (
-            kpi.get("win_rate", 0) >= 0.65 and
-            kpi.get("sharpe", 0)   >= 1.5 and
-            kpi.get("max_dd", 1)   <= 0.20
-        )
-
-    def exposure_cap_for_domain(self, domain: str) -> float:
-        stage = self.state.get("rollout_stage")
-        if domain == "crypto":
-            return 0.10 if stage >= 2 else 0.0
-        if domain == "perp":
-            return 0.15 if stage >= 3 else 0.0
-        if domain == "forex":
-            return 0.10 if stage >= 4 else 0.0
-        if domain == "options":
-            return 0.05 if stage >= 5 else 0.0
-        return 0.0
-
-    # ── Balances / segregation ─────────────────────────────────────────────────
-    def available_balance(self, domain: str, live: bool) -> float:
-        """
-        Live: MUST use adapter.available_balance() (real API call).
-        Paper: returns segregated paper wallet balance from runtime state.
-        """
-        if live:
-            adapter = self.adapters.get(domain)
-            if adapter is None:
-                raise RuntimeError(f"No balance adapter configured for domain '{domain}'.")
-            return float(adapter.available_balance())
-
-        paper_name = self._paper_wallet_name(domain)
-        return float(self.state.get("paper_wallets", {}).get(paper_name, {}).get("balance", 0.0))
-
-    def record_paper_balance(self, domain: str, balance: float) -> None:
-        self.state.set_paper_balance(self._paper_wallet_name(domain), float(balance))
-
-    # ── Helpers ────────────────────────────────────────────────────────────────
-    def _paper_wallet_name(self, domain: str) -> str:
-        mapping = {
-            "crypto": "Crypto_Paper",
-            "perp": "Perps_Paper",
-            "forex": "Forex_Paper",
-            "options": "ForexOptions_Paper",
+        # Gate definitions
+        self._paper_gate = {
+            "crypto": 1,
+            "perps": 3,
+            "forex": 3,
+            "options": 4,
         }
-        try:
-            return mapping[domain]
-        except KeyError:
-            raise ValueError(f"Unknown domain '{domain}'")
+        self._live_gate = {
+            "crypto": 2,
+            # perps live rides under crypto EXCHANGE_PROFILE = "spot+perp"
+            "forex": 4,
+            "options": 5,  # optional even at 5; still gated
+        }
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Capability checks
+    # ──────────────────────────────────────────────────────────────────────
+    def allows_paper(self, domain: str) -> bool:
+        stage = self.state.get_stage()
+        return stage >= self._paper_gate.get(domain, 99)
+
+    def allows_live(self, domain: str) -> bool:
+        stage = self.state.get_stage()
+        need = self._live_gate.get(domain, 99)
+        return stage >= need
+
+    def can_trade_crypto_live(self) -> bool:
+        return self.allows_live("crypto")
+
+    def can_trade_forex_live(self) -> bool:
+        return self.allows_live("forex")
+
+    def can_trade_options_live(self) -> bool:
+        return self.allows_live("options")
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Reconciliation on boot
+    # ──────────────────────────────────────────────────────────────────────
+    def reconcile_on_boot(self) -> None:
+        """
+        Enforce safe-restart semantics:
+          - Forex and Options toggles OFF on boot (no new orders) but monitor/reconcile open positions.
+          - Crypto retains last state; Perps governed by EXCHANGE_PROFILE (spot|perp|spot+perp).
+          - Paper wallets persist; never reset unless user requests.
+        """
+        # FX/Options: disable trading toggles at boot, but keep monitoring
+        self.state.set_flag("forex_enabled", 0)   # OFF for new orders
+        self.state.set_flag("options_enabled", 0) # OFF for new orders
+
+        # Ensure we have stage & baseline exploration min
+        if self.state.get_flag("exploration_min_rate") is None:
+            self.state.set_flag("exploration_min_rate", config.EXPLORATION_MIN_RATE)
+
+        # Record current profile for crypto (spot/perp/spot+perp)
+        self.state.set_flag("exchange_profile", config.EXCHANGE_PROFILE)
+
+        self.state._event("rollout.reconcile_boot", "Toggles normalized at boot")
+        self.state.save()
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Guard helpers (returns bool and optionally pushes a UI message)
+    # ──────────────────────────────────────────────────────────────────────
+    def guard_paper(self, domain: str, ui=None) -> bool:
+        if not self.allows_paper(domain):
+            msg = f"Stage gate: Paper trading for {domain} not allowed at stage {self.state.get_stage()}."
+            logger.warning(msg)
+            if ui:
+                ui.push_warning(msg)
+            return False
+        return True
+
+    def guard_live(self, domain: str, ui=None) -> bool:
+        if not self.allows_live(domain):
+            msg = f"Stage gate: Live trading for {domain} not allowed at stage {self.state.get_stage()}."
+            logger.warning(msg)
+            if ui:
+                ui.push_warning(msg)
+            return False
+        return True
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Stage transitions (manual promotion via UI, if you expose it)
+    # ──────────────────────────────────────────────────────────────────────
+    def set_stage(self, stage: int) -> None:
+        """Force set stage (e.g., after KPI review) — call from a UI handler with confirmation."""
+        prev = self.state.get_stage()
+        self.state.set_stage(stage)
+        self.state._event("rollout.stage_set", f"{prev} -> {stage}")
+        self.state.save()
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Domain enable helpers
+    # ──────────────────────────────────────────────────────────────────────
+    def enable_crypto_live(self) -> bool:
+        if not self.guard_live("crypto"):
+            return False
+        self.state.set_domain_live("crypto", True)
+        self.state._event("domain.crypto.live_on", "")
+        self.state.save()
+        return True
+
+    def disable_crypto_live(self) -> None:
+        self.state.set_domain_live("crypto", False)
+        self.state._event("domain.crypto.live_off", "")
+        self.state.save()
+
+    def enable_forex_live(self) -> bool:
+        if not self.guard_live("forex"):
+            return False
+        self.state.set_flag("forex_enabled", 1)
+        self.state._event("domain.forex.live_on", "")
+        self.state.save()
+        return True
+
+    def disable_forex_live(self) -> None:
+        self.state.set_flag("forex_enabled", 0)
+        self.state._event("domain.forex.live_off", "")
+        self.state.save()
+
+    def enable_options_live(self) -> bool:
+        if not self.guard_live("options"):
+            return False
+        self.state.set_flag("options_enabled", 1)
+        self.state._event("domain.options.live_on", "")
+        self.state.save()
+        return True
+
+    def disable_options_live(self) -> None:
+        self.state.set_flag("options_enabled", 0)
+        self.state._event("domain.options.live_off", "")
+        self.state.save()
