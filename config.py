@@ -1,5 +1,6 @@
 # modules/config.py
 import os
+from typing import Literal
 
 # ────────────────────────────────────────────────────────────────────────────────
 # Environment & Mode
@@ -7,6 +8,18 @@ import os
 # ENVIRONMENT: "simulation" or "production"
 ENVIRONMENT = os.getenv("ENVIRONMENT", "simulation").lower()
 USE_SIMULATION = ENVIRONMENT == "simulation"
+
+# Rollout Stage: 1..5 (Stage logic handled in rollout_manager)
+ROLLOUT_STAGE = int(os.getenv("ROLLOUT_STAGE", "1"))
+
+# Exchange profile: "spot", "perp", "spot+perp"
+EXCHANGE_PROFILE: Literal["spot", "perp", "spot+perp"] = os.getenv(
+    "EXCHANGE_PROFILE", "spot"
+).lower()
+
+# Domain toggles (Forex / Options start OFF by default)
+FOREX_ENABLED_DEFAULT = False
+OPTIONS_ENABLED_DEFAULT = False
 
 # ────────────────────────────────────────────────────────────────────────────────
 # Logging
@@ -45,7 +58,7 @@ SIMULATION_ORDER_DELAY = float(os.getenv("SIMULATION_ORDER_DELAY", "0.5"))  # se
 DEFAULT_SYMBOL         = os.getenv("DEFAULT_SYMBOL", "BTC/USDT")
 SIMULATION_START_BALANCE = float(os.getenv("SIMULATION_START_BALANCE", "1000.0"))
 
-# When live trading, risk at most this fraction per trade, but at least this USD
+# Risk sizing per trade (domain-specific handled in RISK_CAPS below)
 TRADE_SIZE_PERCENT     = float(os.getenv("TRADE_SIZE_PERCENT", "0.05"))  # 5% of balance
 MIN_TRADE_AMOUNT_USD   = float(os.getenv("MIN_TRADE_AMOUNT_USD", "10.0"))
 
@@ -53,35 +66,70 @@ MIN_TRADE_AMOUNT_USD   = float(os.getenv("MIN_TRADE_AMOUNT_USD", "10.0"))
 FEE_PERCENTAGE         = float(os.getenv("FEE_PERCENTAGE", "0.002"))     # 0.2%
 
 # ────────────────────────────────────────────────────────────────────────────────
+# Risk & Exposure Caps
+# ────────────────────────────────────────────────────────────────────────────────
+RISK_CAPS = {
+    "crypto_spot":  {"per_pair_pct": 0.15, "portfolio_concurrent_pct": 0.30},
+    "perp":         {"per_pair_pct": 0.15, "portfolio_concurrent_pct": 0.30},
+    "forex":        {"per_pair_pct": 0.10, "portfolio_concurrent_pct": 0.20},
+    "options":      {"per_pair_pct": 0.05, "portfolio_concurrent_pct": 0.10}
+}
+
+# Canary → Ramp schedule (percent of balance)
+CANARY_RAMP_SCHEDULE = [0.02, 0.03, 0.05]
+
+# KPI guardrails
+KPI_TARGETS = {
+    "win_rate": 0.70,           # per domain
+    "sharpe_ratio": 1.8,
+    "avg_profit_swing": 0.10,   # 10%+ for swing trades
+    "avg_profit_scalp": 0.002,  # 0.2%+ for scalps
+    "max_drawdown": 0.15,
+    "consec_loss_cooldown": 3
+}
+
+# ────────────────────────────────────────────────────────────────────────────────
+# Fee/Slippage Models
+# ────────────────────────────────────────────────────────────────────────────────
+FEE_MODEL = {
+    "bybit": {
+        "spot": {"taker": 0.001, "maker": 0.0007},
+        "perp": {"taker": 0.00055, "maker": 0.0002}
+    },
+    "forex": {"spread_bps": 0.8},
+    "options": {"commission_per_contract": 0.65}
+}
+
+# Slippage assumptions in simulation/backtest (basis points)
+SLIPPAGE_BPS = {
+    "crypto_spot": 5,
+    "perp": 3,
+    "forex": 1,
+    "options": 5
+}
+
+# ────────────────────────────────────────────────────────────────────────────────
 # Error Handling
 # ────────────────────────────────────────────────────────────────────────────────
-# Which error codes are considered "critical" and should trigger immediate alerts
-CRITICAL_ERROR_CODES   = {5000, 6000, 7000, 8000}   # e.g. RiskViolationError, OrderExecutionError, ConfigurationError, NotificationError
-# If an error code occurs more than this many times in a row, circuit breaker trips
+CRITICAL_ERROR_CODES   = {5000, 6000, 7000, 8000}
 ERROR_RATE_THRESHOLD   = int(os.getenv("ERROR_RATE_THRESHOLD", "5"))
 
 # ────────────────────────────────────────────────────────────────────────────────
 # Backtester / Simulator
 # ────────────────────────────────────────────────────────────────────────────────
-# How many top pairs to test in backtests by default (if you incorporate pair rotation)
 MAX_SIMULATION_PAIRS   = int(os.getenv("MAX_SIMULATION_PAIRS", "5"))
 
 # ────────────────────────────────────────────────────────────────────────────────
 # Genetic / Evolutionary Optimization
 # ────────────────────────────────────────────────────────────────────────────────
 OPTIMIZATION_METHOD    = os.getenv("OPTIMIZATION_METHOD", "grid_search")  # grid_search | random_search | evolutionary
-
-# Define which strategy parameters to tune, and their ranges or lists
-# Example params for EMA crossover + RSI threshold strategies:
 OPTIMIZATION_PARAMETERS = {
-    "ema_short": { "min": 5,   "max": 20   },  # short EMA window
-    "ema_long":  { "min": 20,  "max": 100  },  # long EMA window
-    "rsi_period":{ "min": 5,   "max": 30   },  # RSI lookback
-    "rsi_overbought": [70, 75, 80],            # list of discrete choices
+    "ema_short": { "min": 5,   "max": 20   },
+    "ema_long":  { "min": 20,  "max": 100  },
+    "rsi_period":{ "min": 5,   "max": 30   },
+    "rsi_overbought": [70, 75, 80],
     "rsi_oversold":   [20, 25, 30]
 }
-
-# DEAP evolutionary algorithm defaults (only if OPTIMIZATION_METHOD == "evolutionary")
 EA_POPULATION_SIZE    = int(os.getenv("EA_POPULATION_SIZE", "20"))
 EA_CROSSOVER_PROB     = float(os.getenv("EA_CROSSOVER_PROB", "0.5"))
 EA_MUTATION_PROB      = float(os.getenv("EA_MUTATION_PROB", "0.2"))
