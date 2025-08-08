@@ -3,7 +3,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
 import time
-from typing import Callable, Dict, Any
+from typing import Callable, Dict, Any, Optional
 
 import config
 
@@ -271,4 +271,5 @@ class TradingUI:
             self.log(f"Chart update failed: {e}", level='ERROR')
 
         self.root.after(UI_REFRESH_INTERVAL, self._refresh)
+
 
