@@ -1,11 +1,10 @@
-#modules/self_learning.py
+# modules/self_learning.py
 
-import os
 import random
 import numpy as np
 from collections import deque, namedtuple
 from typing import List, Dict, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -19,36 +18,47 @@ from modules.trade_executor import TradeExecutor
 from modules.technical_indicators import TechnicalIndicators
 from modules.risk_management import RiskManager, RiskViolationError
 
-Experience = namedtuple('Experience', ['state', 'action', 'reward', 'next_state', 'done'])
+Experience = namedtuple("Experience", ["state", "action", "reward", "next_state", "done"])
+
 
 class ReplayBuffer:
     def __init__(self, capacity: int):
         self.buffer = deque(maxlen=capacity)
-    
+
     def push(self, state, action, reward, next_state, done):
         self.buffer.append(Experience(state, action, reward, next_state, done))
-    
+
     def sample(self, batch_size: int):
         return random.sample(self.buffer, batch_size)
-    
+
     def __len__(self):
         return len(self.buffer)
 
+
 class DQNetwork(nn.Module):
     def __init__(self, input_dim: int, hidden_dims: List[int], output_dim: int):
-        super(DQNetwork, self).__init__()
+        super().__init__()
         self.fc1 = nn.Linear(input_dim, hidden_dims[0])
         self.fc2 = nn.Linear(hidden_dims[0], hidden_dims[1])
         self.fc3 = nn.Linear(hidden_dims[1], hidden_dims[2])
         self.out = nn.Linear(hidden_dims[2], output_dim)
-    
+
     def forward(self, x):
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         x = F.relu(self.fc3(x))
         return self.out(x)
 
+
 class SelfLearningBot:
+    """
+    DQN-based agent:
+      - builds compact state vector from live OHLCV + indicators
+      - epsilon-greedy action selection
+      - interacts through TradeExecutor (paper/live), with optional SL/TP
+      - stores experiences and learns with target network
+    """
+
     def __init__(
         self,
         data_provider: DataManager,
@@ -56,17 +66,19 @@ class SelfLearningBot:
         reward_system: RewardSystem,
         risk_manager: Optional[RiskManager],
         state_size: int,
-        action_size: int = 10,
+        action_size: int = 6,  # buy/sell/hold/close + 2 extras
         hidden_dims: List[int] = [128, 64, 32],
         batch_size: int = 64,
         gamma: float = 0.99,
         learning_rate: float = 1e-3,
         exploration_max: float = 1.0,
-        exploration_min: float = 0.1,
+        exploration_min: float = 0.05,
         exploration_decay: float = 0.995,
-        memory_size: int = 100000,
-        tau: float = 0.001,
-        training: bool = True
+        memory_size: int = 100_000,
+        tau: float = 0.005,
+        training: bool = True,
+        timeframe: str = "1h",
+        symbol: Optional[str] = None,
     ):
         self.data_provider = data_provider
         self.error_handler = error_handler
@@ -79,6 +91,7 @@ class SelfLearningBot:
         self.batch_size = batch_size
         self.learning_rate = learning_rate
         self.tau = tau
+
         self.epsilon = exploration_max if training else 0.0
         self.epsilon_min = exploration_min
         self.epsilon_decay = exploration_decay
@@ -97,16 +110,21 @@ class SelfLearningBot:
         self.train_steps = 0
         self.logger = logging.getLogger(self.__class__.__name__)
 
+        self.timeframe = timeframe
+        self.default_symbol = symbol  # optional default if caller doesn’t pass
+
+    # ------------------- core loop -------------------
+
     def select_action(self, state: np.ndarray) -> int:
         try:
             if self.training and random.random() < self.epsilon:
                 return random.randrange(self.action_size)
-            state_tensor = torch.FloatTensor(state).to(self.device).unsqueeze(0)
+            state_tensor = torch.as_tensor(state, dtype=torch.float32, device=self.device).unsqueeze(0)
             with torch.no_grad():
                 q_values = self.policy_net(state_tensor)
-            return torch.argmax(q_values, dim=1).item()
+            return int(torch.argmax(q_values, dim=1).item())
         except Exception as e:
-            self.error_handler.log_error(e, {'state': state.tolist()})
+            self.error_handler.log_error(e, {"stage": "select_action"})
             return 2  # hold
 
     def learn(self):
@@ -114,119 +132,181 @@ class SelfLearningBot:
             if len(self.memory) < self.batch_size:
                 return
             batch = Experience(*zip(*self.memory.sample(self.batch_size)))
-            states = torch.FloatTensor(np.stack(batch.state)).to(self.device)
-            actions = torch.LongTensor(batch.action).unsqueeze(1).to(self.device)
-            rewards = torch.FloatTensor(batch.reward).unsqueeze(1).to(self.device)
-            next_states = torch.FloatTensor(np.stack(batch.next_state)).to(self.device)
-            dones = torch.FloatTensor(batch.done).unsqueeze(1).to(self.device)
 
-            current_q = self.policy_net(states).gather(1, actions)
+            states = torch.as_tensor(np.stack(batch.state), dtype=torch.float32, device=self.device)
+            actions = torch.as_tensor(batch.action, dtype=torch.long, device=self.device).unsqueeze(1)
+            rewards = torch.as_tensor(batch.reward, dtype=torch.float32, device=self.device).unsqueeze(1)
+            next_states = torch.as_tensor(np.stack(batch.next_state), dtype=torch.float32, device=self.device)
+            dones = torch.as_tensor(batch.done, dtype=torch.float32, device=self.device).unsqueeze(1)
+
+            q_curr = self.policy_net(states).gather(1, actions)
             with torch.no_grad():
-                next_q = self.target_net(next_states).max(1)[0].unsqueeze(1)
-            target_q = rewards + (self.gamma * next_q * (1 - dones))
+                q_next = self.target_net(next_states).max(1, keepdim=True)[0]
+            q_targ = rewards + (self.gamma * q_next * (1 - dones))
 
-            loss = F.mse_loss(current_q, target_q)
+            loss = F.mse_loss(q_curr, q_targ)
             self.optimizer.zero_grad()
             loss.backward()
             nn.utils.clip_grad_norm_(self.policy_net.parameters(), 1.0)
             self.optimizer.step()
 
+            # soft update
             for t_param, p_param in zip(self.target_net.parameters(), self.policy_net.parameters()):
-                t_param.data.copy_(self.tau * p_param.data + (1.0 - self.tau) * t_param.data)
+                t_param.data.mul_(1.0 - self.tau).add_(self.tau * p_param.data)
         except Exception as e:
-            self.error_handler.log_error(e, {'stage': 'learn'})
+            self.error_handler.log_error(e, {"stage": "learn"})
 
-    def act_and_learn(self, symbol: str, timestamp: datetime):
+    def act_and_learn(self, symbol: Optional[str], timestamp: Optional[datetime] = None):
+        """
+        Build state -> choose action -> execute via TradeExecutor -> compute reward -> learn.
+        """
+        sym = symbol or self.default_symbol
+        if not sym:
+            self.logger.warning("act_and_learn called without symbol")
+            return
+
+        ts = timestamp or datetime.now(timezone.utc)
+
         try:
-            state = self._get_state(symbol)
+            state = self._get_state(sym)
             action_idx = self.select_action(state)
             action_name = self._action_to_command(action_idx)
 
-            price = self._safe_get_price(symbol, state)
-            qty = 1.0
+            # Price for sizing/validation
+            price = self._safe_last_price(sym, state)
 
-            if self.risk_manager and action_name in ['buy', 'sell']:
-                try:
-                    stop_price = price * (0.99 if action_name == 'buy' else 1.01)
-                    qty = self.risk_manager.calculate_position_size(price, stop_price)
-                except RiskViolationError as re:
-                    self.logger.warning(f"Risk limit hit: {re}")
-                    return
+            # Default qty is min-notional sized; risk_manager can override
+            qty = None
+            sl_px, tp_px = None, None
+            risk_close = False
 
-            trade_result = self.executor.execute_order(symbol, action_name, qty, price)
+            if action_name in ("buy", "sell"):
+                # simple protective SL/TP suggestion (can replace with ATR/volatility later)
+                sl_mult = 0.99 if action_name == "buy" else 1.01
+                tp_mult = 1.02 if action_name == "buy" else 0.98
+                sl_px = price * sl_mult
+                tp_px = price * tp_mult
+
+                if self.risk_manager:
+                    try:
+                        qty = self.risk_manager.calculate_position_size(entry_price=price, stop_price=sl_px)
+                    except RiskViolationError as re:
+                        self.logger.info(f"Risk blocked order: {re}")
+                        return
+            elif action_name == "close":
+                risk_close = True
+
+            # Execute (lets TradeExecutor derive default qty from min-notional if qty None)
+            tr = self.executor.execute_order(
+                sym,
+                action_name if action_name != "close" else "sell",  # close = opposite side; executor has risk_close
+                quantity=qty,
+                price=price,
+                order_type="market",
+                attach_sl=sl_px,
+                attach_tp=tp_px,
+                risk_close=risk_close,
+            )
+
+            # Reward: raw P&L proxy + points (time/discipline)
+            entry_price = float(tr.get("entry_price") or price)
+            exit_price = float(tr.get("exit_price") or entry_price)
+            q_used = float(tr.get("quantity") or (qty or 0.0))
+            entry_time = tr.get("timestamp") or ts
+            exit_time = tr.get("timestamp") or ts
 
             reward_raw = self.reward_system.calculate_reward(
-                trade_result.get('entry_price', price),
-                trade_result.get('exit_price', price),
-                trade_result.get('quantity', qty),
-                trade_result.get('entry_time', timestamp),
-                trade_result.get('exit_time', timestamp),
-                max_drawdown=trade_result.get('max_drawdown', 0.0),
-                volatility=trade_result.get('volatility', 0.0),
-                stop_loss_triggered=trade_result.get('stop_loss_triggered', False)
+                entry_price=entry_price,
+                exit_price=exit_price,
+                position_size=q_used,
+                entry_time=ts if isinstance(entry_time, datetime) else ts,
+                exit_time=ts if isinstance(exit_time, datetime) else ts,
+                max_drawdown=0.0,
+                volatility=0.0,
+                stop_loss_triggered=False,
             )
-
-            reward_points = calculate_points(
+            reward_pts = calculate_points(
                 profit=reward_raw,
-                entry_time=trade_result.get('entry_time', timestamp),
-                exit_time=trade_result.get('exit_time', timestamp),
-                stop_loss_triggered=trade_result.get('stop_loss_triggered', False)
+                entry_time=ts,
+                exit_time=ts,
+                stop_loss_triggered=False,
             )
+            reward_total = float(reward_raw + reward_pts)
 
-            reward_total = reward_raw + reward_points
-            next_state = self._get_state(symbol)
-            done = trade_result.get('done', False)
+            next_state = self._get_state(sym)
+            done = tr.get("status") in ("closed",)  # basic terminal flag on full close
 
             self.memory.push(state, action_idx, reward_total, next_state, done)
             self.train_steps += 1
-            self.logger.info(f"Step {self.train_steps}: {action_name} -> Reward {reward_total:.4f}")
+            self.logger.info(
+                f"Step {self.train_steps} {sym} | action={action_name} qty={q_used:.8f} "
+                f"reward={reward_total:.4f} eps={self.epsilon:.4f}"
+            )
 
             if self.training:
                 self.learn()
                 self.epsilon = max(self.epsilon * self.epsilon_decay, self.epsilon_min)
+
         except Exception as e:
-            self.error_handler.handle(e, {'symbol': symbol})
+            self.error_handler.handle(e, {"symbol": sym})
+
+    # ------------------- state builder -------------------
 
     def _get_state(self, symbol: str) -> np.ndarray:
         try:
-            df = self.data_provider.load_historical_data(symbol, timeframe='1h')
+            df = self.data_provider.load_historical_data(symbol, timeframe=self.timeframe)
+            if df.empty:
+                return np.zeros(self.state_size, dtype=np.float32)
         except Exception as e:
-            self.error_handler.handle(e, {'symbol': symbol})
+            self.error_handler.handle(e, {"symbol": symbol, "stage": "load_state"})
             return np.zeros(self.state_size, dtype=np.float32)
 
-        if df.empty:
-            return np.zeros(self.state_size, dtype=np.float32)
+        # compact features: normalized price change + SMA ratio + RSI + volume
+        lookback = min(len(df), 50)
+        tail = df.iloc[-lookback:].copy()
 
-        prices = df['close'].values[-50:]
-        norm_price = prices[-1] / prices[0] if prices[0] != 0 else 0.0
+        prices = tail["close"].to_numpy()
+        norm_price = float(prices[-1] / prices[0]) if prices[0] else 0.0
 
-        df['sma_short'] = TechnicalIndicators.sma(df['close'], window=10)
-        df['sma_long'] = TechnicalIndicators.sma(df['close'], window=50)
-        df['rsi'] = TechnicalIndicators.rsi(df['close'], window=14)
-        latest = df.iloc[-1]
+        tail["sma_short"] = TechnicalIndicators.sma(tail["close"], window=10)
+        tail["sma_long"] = TechnicalIndicators.sma(tail["close"], window=50)
+        tail["rsi"] = TechnicalIndicators.rsi(tail["close"], window=14)
+        last = tail.iloc[-1]
+
+        sma_short = float(last["sma_short"]) if last["sma_short"] else 0.0
+        sma_long = float(last["sma_long"]) if last["sma_long"] else 0.0
+        rsi_last = float(last["rsi"]) if last["rsi"] else 0.0
+        vol_last = float(last["volume"])
 
         features = [
             norm_price,
-            latest['sma_short'] / prices[-1] if latest['sma_short'] and prices[-1] else 0.0,
-            latest['sma_long'] / prices[-1] if latest['sma_long'] and prices[-1] else 0.0,
-            (latest['rsi'] or 0) / 100.0,
-            float(latest['volume'])
+            (sma_short / prices[-1]) if prices[-1] else 0.0,
+            (sma_long / prices[-1]) if prices[-1] else 0.0,
+            rsi_last / 100.0,
+            vol_last,
         ]
-
         state = np.array(features, dtype=np.float32)
-        return np.pad(state, (0, max(0, self.state_size - len(state))))[:self.state_size]
+
+        if state.size < self.state_size:
+            pad = np.zeros(self.state_size - state.size, dtype=np.float32)
+            state = np.concatenate([state, pad])
+        else:
+            state = state[: self.state_size]
+        return state
+
+    # ------------------- helpers -------------------
 
     def _action_to_command(self, action_idx: int) -> str:
-        action_map = {
-            0: 'buy', 1: 'sell', 2: 'hold',
-            3: 'buy', 4: 'sell', 5: 'close',
-            6: 'buy', 7: 'sell', 8: 'buy', 9: 'sell'
-        }
-        return action_map.get(action_idx, 'hold')
+        """
+        Map action index to command understood by TradeExecutor.
+        0: buy, 1: sell, 2: hold, 3: buy, 4: sell, 5: close
+        """
+        mapping = {0: "buy", 1: "sell", 2: "hold", 3: "buy", 4: "sell", 5: "close"}
+        return mapping.get(action_idx, "hold")
 
-    def _safe_get_price(self, symbol: str, state: np.ndarray) -> float:
+    def _safe_last_price(self, symbol: str, state: np.ndarray) -> float:
         try:
-            df = self.data_provider.load_historical_data(symbol, timeframe='1h')
-            return df['close'].iloc[-1]
-        except:
-            return state[0] if state.size > 0 else 0.0
+            df = self.data_provider.load_historical_data(symbol, timeframe=self.timeframe)
+            return float(df["close"].iloc[-1])
+        except Exception:
+            return float(state[0]) if state.size > 0 else 0.0
