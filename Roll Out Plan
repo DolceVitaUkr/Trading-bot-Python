@@ -1,0 +1,42 @@
+Rollout stages (state machine)
+Stage 1 – Crypto Paper (Learn)
+
+Paper trade Crypto (Spot by default; Perps/Forex OFF).
+
+Train on live data (15m primary, 5m confirm).
+
+Start paper wallet = $1,000 (segregated “Crypto_Paper”).
+
+Gate to next: hit KPI thresholds (win%, Sharpe, DD).
+
+Stage 2 – Crypto Live (+ Exploration)
+
+Live trade Crypto with real wallet (uses exchange balance, not $1k stub).
+
+Keep exploration paper trades running (≥10% dynamic).
+
+Canary sizing for first 50 trades or 7 days.
+
+Paper wallets for Perps/Forex remain separate.
+
+Stage 3 – Crypto Live + Perps/Forex Paper
+
+Continue Crypto live (+ exploration).
+
+Start Perps_Paper = $1,000, Forex_Paper = $1,000 (two new segregated paper wallets).
+
+Strategy adapters: allow different params per asset class.
+
+Stage 4 – Crypto & Forex Live (+ Options Paper)
+
+Promote Forex to live (own broker/account, independent from Bybit).
+
+Keep ForexOptions_Paper = $1,000 to incubate options strategy.
+
+Exploration for both Crypto & Forex live.
+
+Stage 5 – Full Rollout
+
+Crypto Live + Forex Live; continue learning (online RL) + exploration (≥10%).
+
+Options can be promoted later if KPIs pass
