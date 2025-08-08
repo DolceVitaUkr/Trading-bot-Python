@@ -15,7 +15,8 @@ if not logger.handlers:
     h = logging.StreamHandler()
     h.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
     logger.addHandler(h)
-logger.setLevel(getattr(logging, config.LOG_LEVEL, logging.INFO))
+logger.setLevel(getattr(logging, str(getattr(config, "LOG_LEVEL", "INFO")), logging.INFO)
+                if isinstance(getattr(config, "LOG_LEVEL", "INFO"), str) else getattr(config, "LOG_LEVEL", logging.INFO))
 
 
 class TradeExecutor:
@@ -26,14 +27,21 @@ class TradeExecutor:
     - Simulation mode: uses ExchangeAPI's in-memory fills but still applies our fee model.
     - Uses exchange helpers for min-notional and precision.
     - Optional SL/TP attachment (inline on live if supported; shadow in paper).
-    - Telegram notifications (trade + alert).
+    - Sends notifications either via a NotificationManager-like object (preferred) or Telegram fallback.
     """
 
-    def __init__(self, simulation_mode: Optional[bool] = None, notifier: Optional[TelegramNotifier] = None):
+    def __init__(
+        self,
+        simulation_mode: Optional[bool] = None,
+        notifier: Optional[TelegramNotifier] = None,
+        notifications: Optional[Any] = None,  # duck-typed: expected to have notify_trade/notify_error/notify_status
+    ):
         self.simulation_mode = config.USE_SIMULATION if simulation_mode is None else simulation_mode
         self.exchange = ExchangeAPI()
-        # Use sync notifier for deterministic logs; you can swap to async if preferred
+        # Fallback notifier (used if no notifications manager or manager chooses to be quiet)
         self.notifier = notifier or TelegramNotifier(disable_async=True)
+        # Optional higher-level notifications manager
+        self.notifications = notifications
         self.fee_rate = float(getattr(config, "FEE_PERCENTAGE", 0.002))
 
     # ---------------------------- Public API ---------------------------- #
@@ -86,7 +94,6 @@ class TradeExecutor:
         now_iso = datetime.now(timezone.utc).isoformat()
 
         if self.simulation_mode:
-            # derive qty if not given
             pos = getattr(self.exchange, "_sim_positions", {}).get(sym)
             if not pos:
                 return None
@@ -94,7 +101,6 @@ class TradeExecutor:
             side_for_close = "sell" if pos["side"] == "long" else "buy"
             px = float(price or self.exchange.get_price(sym) or pos["entry_price"])
 
-            # simulate reduce-only close
             res = self.exchange._simulate_order(
                 sym, side_for_close, "market", qty, px, attach_sl=None, attach_tp=None, reduce_only=True
             )
@@ -102,24 +108,34 @@ class TradeExecutor:
             try:
                 exit_notional = px * qty
                 exit_fee = exit_notional * self.fee_rate
-                # Deduct exit fee from sim cash
                 self.exchange._sim_cash_usd -= exit_fee  # type: ignore[attr-defined]
             except Exception:
                 pass
 
-            self._notify_trade(
-                f"SIM CLOSE {sym} x{qty:.8f} @ {px} | status={res.get('status')} | pnl={res.get('pnl', 0):.4f}"
-            )
+            event = {
+                "symbol": sym,
+                "side": side_for_close,
+                "qty": qty,
+                "price": px,
+                "status": res.get("status"),
+                "opened": None,
+                "closed": now_iso,
+                "pnl": float(res.get("pnl", 0.0)),
+                "return_pct": None,
+                "leverage": None,
+                "meta": {"mode": "paper", "action": "close"},
+            }
+            self._emit_trade_event(event)
             res["timestamp"] = now_iso
             return res
 
-        # live: fetch current position size then submit reduce-only market order
+        # live
         try:
             pos_list = self.exchange.fetch_positions(sym)
             if not pos_list:
                 return None
             p = pos_list[0]
-            side = p.get("side", "").lower()  # "long"/"short"
+            side = p.get("side", "").lower()
             qty_live = abs(float(
                 p.get("contracts") or p.get("contractsSize") or p.get("amount") or 0.0
             ))
@@ -130,7 +146,21 @@ class TradeExecutor:
             order = self.exchange.create_order(
                 sym, "market", close_side, qty_live, px_live, reduce_only=True
             )
-            self._notify_trade(f"LIVE CLOSE {sym} x{qty_live:.8f} | id={order.get('id')}")
+
+            event = {
+                "symbol": sym,
+                "side": close_side,
+                "qty": qty_live,
+                "price": px_live,
+                "status": order.get("status", "closed"),
+                "opened": None,
+                "closed": now_iso,
+                "pnl": None,
+                "return_pct": None,
+                "leverage": None,
+                "meta": {"mode": "live", "action": "close", "order_id": order.get("id")},
+            }
+            self._emit_trade_event(event)
             order["timestamp"] = now_iso
             return order
         except Exception as e:
@@ -164,15 +194,12 @@ class TradeExecutor:
         now_iso = datetime.now(timezone.utc).isoformat()
 
         # Resolve a usable price (for validation/precision)
-        mkt_price = None
-        if price is not None:
-            mkt_price = float(price)
-        else:
+        mkt_price = float(price) if price is not None else None
+        if mkt_price is None:
             try:
                 mkt_price = float(self.exchange.get_price(sym))
             except Exception as e:
                 raise OrderExecutionError(f"Cannot fetch price for {sym}: {e}")
-
         if not mkt_price or mkt_price <= 0:
             raise OrderExecutionError(f"Invalid price for {sym}: {mkt_price}")
 
@@ -189,42 +216,46 @@ class TradeExecutor:
         # --------- Simulation path --------- #
         if self.simulation_mode:
             try:
-                # Sim fill; ExchangeAPI manages simulated cash for cost/PNL. We add fees ourselves.
                 res = self.exchange._simulate_order(
                     sym, side, order_type.lower(), qty_rounded, px_rounded,
                     attach_sl=attach_sl, attach_tp=attach_tp, reduce_only=risk_close
                 )
 
-                # Calculate and deduct fees on the notional involved in this action
+                # Apply fees to cash in paper (both entry/add and exit)
                 try:
-                    if res.get("status") in ("open", "closed_partial"):
-                        # opening/add costs
+                    if res.get("status") in ("open", "open_added", "open_increased"):
                         open_notional = px_rounded * qty_rounded
-                        open_fee = open_notional * self.fee_rate
-                        self.exchange._sim_cash_usd -= open_fee  # type: ignore[attr-defined]
-                    # For a closing event, we also charge exit fee
+                        self.exchange._sim_cash_usd -= open_notional * self.fee_rate  # type: ignore[attr-defined]
                     if res.get("status") in ("closed", "closed_partial"):
                         exit_notional = px_rounded * float(res.get("quantity", qty_rounded))
-                        exit_fee = exit_notional * self.fee_rate
-                        self.exchange._sim_cash_usd -= exit_fee  # type: ignore[attr-defined]
+                        self.exchange._sim_cash_usd -= exit_notional * self.fee_rate  # type: ignore[attr-defined]
                 except Exception:
                     pass
 
-                # Build normalized response
+                # Build normalized response + event
                 if res.get("status") in ("closed", "closed_partial"):
-                    # We don't have entry/exit split in res; expose price and pnl
                     pnl = float(res.get("pnl", 0.0))
                     calc = calculate_trade_result(
-                        entry_price=px_rounded,  # approximation for reporting; true entry is tracked inside exchange
+                        entry_price=px_rounded,  # reporting approximation
                         exit_price=px_rounded,
                         quantity=float(res.get("quantity", qty_rounded)),
                         fee_percentage=self.fee_rate
                     )
-                    msg = (
-                        f"SIM {side.upper()} {sym} x{qty_rounded:.8f} @ {px_rounded} "
-                        f"| status={res.get('status')} | pnl={pnl:.4f}"
-                    )
-                    self._notify_trade(msg)
+                    event = {
+                        "symbol": sym,
+                        "side": side,
+                        "qty": float(res.get("quantity", qty_rounded)),
+                        "price": px_rounded,
+                        "status": res.get("status"),
+                        "opened": None,
+                        "closed": now_iso,
+                        "pnl": pnl,
+                        "return_pct": float(calc["return_pct"]),
+                        "leverage": None,
+                        "meta": {"mode": "paper"},
+                    }
+                    self._emit_trade_event(event)
+
                     return {
                         "status": res.get("status", "simulated"),
                         "symbol": sym,
@@ -239,9 +270,21 @@ class TradeExecutor:
                     }
 
                 # Open/added
-                self._notify_trade(
-                    f"SIM {side.upper()} {sym} x{qty_rounded:.8f} @ {px_rounded} | status={res.get('status')}"
-                )
+                event = {
+                    "symbol": sym,
+                    "side": side,
+                    "qty": float(res.get("quantity", qty_rounded)),
+                    "price": float(res.get("entry_price", px_rounded)),
+                    "status": res.get("status", "open"),
+                    "opened": now_iso,
+                    "closed": None,
+                    "pnl": None,
+                    "return_pct": None,
+                    "leverage": None,
+                    "meta": {"mode": "paper"},
+                }
+                self._emit_trade_event(event)
+
                 return {
                     "status": res.get("status", "open"),
                     "symbol": sym,
@@ -267,7 +310,22 @@ class TradeExecutor:
                 sym, order_type, side, qty_rounded, px_rounded,
                 attach_sl=attach_sl, attach_tp=attach_tp, reduce_only=risk_close
             )
-            self._notify_trade(f"LIVE {side.upper()} {sym} x{qty_rounded:.8f} @ {px_rounded} | id={order.get('id')}")
+
+            event = {
+                "symbol": sym,
+                "side": side,
+                "qty": float(order.get("amount", qty_rounded)),
+                "price": float(order.get("price", px_rounded)),
+                "status": order.get("status", "open"),
+                "opened": now_iso,
+                "closed": None,
+                "pnl": None,
+                "return_pct": None,
+                "leverage": None,
+                "meta": {"mode": "live", "order_id": order.get("id")},
+            }
+            self._emit_trade_event(event)
+
             return {
                 "status": order.get("status", "open"),
                 "symbol": order.get("symbol", sym),
@@ -287,6 +345,40 @@ class TradeExecutor:
 
     # ---------------------------- Internals ---------------------------- #
 
+    def _emit_trade_event(self, event: Dict[str, Any]):
+        """
+        Prefer NotificationManager-style dispatch; fallback to direct Telegram message.
+        Expected event keys: symbol, side, qty, price, status, opened, closed, pnl, return_pct, leverage, meta
+        """
+        # Dispatch to manager if present
+        if self.notifications and hasattr(self.notifications, "notify_trade"):
+            try:
+                self.notifications.notify_trade(event)
+                return
+            except Exception as e:
+                logger.warning(f"notifications.notify_trade failed: {e}")
+
+        # Fallback Telegram formatting
+        side = str(event.get("side", "")).upper()
+        sym = event.get("symbol")
+        qty = event.get("qty")
+        price = event.get("price")
+        status = event.get("status", "")
+        pnl = event.get("pnl")
+        ret = event.get("return_pct")
+        pieces = [
+            f"Pair: {sym}",
+            f"Amount: {qty}",
+            f"Price: {price}",
+            f"Status: {status}",
+        ]
+        if pnl is not None:
+            pieces.append(f"PnL: {pnl:.4f}")
+        if ret is not None:
+            pieces.append(f"Return: {ret:.2f}%")
+        text = f"📊 TRADE {side}\n" + "\n".join(pieces)
+        self._notify_trade(text)
+
     def _notify_trade(self, text: str):
         try:
             self.notifier.send_message_sync(text, format="trade")
@@ -294,6 +386,12 @@ class TradeExecutor:
             logger.warning(f"Telegram trade notify failed: {e}")
 
     def _notify_alert(self, text: str):
+        # Send to manager too, if present
+        if self.notifications and hasattr(self.notifications, "notify_error"):
+            try:
+                self.notifications.notify_error(text)
+            except Exception:
+                pass
         try:
             self.notifier.send_message_sync({"type": "ALERT", "message": text}, format="alert")
         except Exception as e:
