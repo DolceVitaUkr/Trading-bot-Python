@@ -4,7 +4,7 @@ import time
 import logging
 from dataclasses import dataclass
 from typing import Dict, Any, Optional, List
-
+from dataclasses import dataclass, field
 from modules.telegram_bot import TelegramNotifier
 
 logger = logging.getLogger(__name__)
@@ -21,13 +21,13 @@ class TradeEvent:
     side: str
     qty: float
     price: float
-    status: Optional[str] = None
-    opened: bool = False
-    closed: bool = False
     pnl: Optional[float] = None
     return_pct: Optional[float] = None
     leverage: Optional[float] = None
-    meta: Optional[Dict[str, Any]] = None  # e.g., {"mode": "paper"|"live"}
+    opened: bool = False
+    closed: bool = False
+    status: str = "open"
+    meta: Dict[str, Any] = field(default_factory=dict)
 
 
 class NotificationManager:
@@ -83,9 +83,9 @@ class NotificationManager:
 
     # ---------- main API ----------
 
-    def notify_trade(self, event: "TradeEvent | Dict[str, Any]"):
-        e = self._normalize_event(event)
-        mode = (e.meta or {}).get("mode") or self.default_mode
+    def notify_trade(self, event: Any):
+        e = event.__dict__ if hasattr(event, "__dict__") else event
+        mode = (e.get("meta", {}) or {}).get("mode", "live")
 
         if mode == "paper":
             self._paper_events.append(e)
