@@ -1,10 +1,13 @@
 # modules/data_manager.py
+from __future__ import annotations
 
 import os
-import logging
+import json
 import time
-from datetime import datetime
-from typing import List, Dict, Optional, Any
+import logging
+import pathlib
+from datetime import datetime, timedelta, timezone
+from typing import List, Dict, Optional, Any, Tuple
 
 import pandas as pd
 import requests
@@ -18,231 +21,516 @@ handler = logging.StreamHandler()
 handler.setFormatter(
     logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 )
-logger.addHandler(handler)
+if not any(isinstance(h, logging.StreamHandler) for h in logger.handlers):
+    logger.addHandler(handler)
+
+# Bybit v5 market kline endpoint (public)
+BYBIT_V5_KLINE = (getattr(config, "BYBIT_BASE_URL", "https://api.bybit.com").rstrip("/")
+                  + "/v5/market/kline")
 
 
+# ────────────────────────────────────────────────────────────────────────────────
+# Helpers
+# ────────────────────────────────────────────────────────────────────────────────
 def timeframe_to_minutes(tf: str) -> int:
-    """
-    Convert a timeframe string like '15m', '1h', '1d', or '1w' to minutes.
-    """
+    """Convert timeframe string like '5m','1h','1d','1w' to minutes."""
     unit_map = {"m": 1, "h": 60, "d": 1440, "w": 10080}
     unit = tf[-1]
     num = int(tf[:-1])
     return num * unit_map.get(unit, 1)
 
 
+def _utc_ms(dt: datetime) -> int:
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return int(dt.timestamp() * 1000)
+
+
+def _ms_to_utc(ms: int) -> datetime:
+    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
+
+
+def _floor_to_tf(ts: int, tf_ms: int) -> int:
+    return ts - (ts % tf_ms)
+
+
+# ────────────────────────────────────────────────────────────────────────────────
+# DataManager
+# ────────────────────────────────────────────────────────────────────────────────
 class DataManager:
     """
-    Manages historical OHLCV data:
-    - In test_mode: generates mock candles.
-    - In live mode: fetches new candles from Bybit public API.
-    Data is stored in Parquet under config.HISTORICAL_DATA_PATH.
+    Historical OHLCV manager (no mocks; uses live Bybit HTTP):
+    - Fetches v5 klines for spot/perp
+    - Writes partitioned parquet by day:
+        {HISTORICAL_DATA_PATH}/{SYMBOL}/{TF}/YYYY-MM-DD.parquet
+    - Dedupes, sorts, gap-fills (safe after restarts)
+    - Exposes readers: load_historical_data/load_window/load_all/last_timestamp
+    - WebSocket-ready: upsert_bar() accepts finalized bars
+
+    Supported TF (initial): '5m', '15m'. Extend TF_MAP and INTERVAL_MAP to add more.
     """
 
+    TF_MAP = {
+        "5m": 5 * 60 * 1000,
+        "15m": 15 * 60 * 1000,
+    }
+
+    # Bybit v5 interval strings
+    INTERVAL_MAP = {
+        "5m": "5",
+        "15m": "15",
+    }
+
+    DEFAULT_CATEGORY = "spot"  # "spot" or "linear"/"inverse"
+
+    # HTTP limits/budgets
+    _CONNECT_TIMEOUT = 3.05
+    _READ_TIMEOUT = 10.0
+    _REQS_PER_MIN_BUDGET = 40
+    _PAGE_LIMIT = 1000  # v5 max rows/page
+
     def __init__(self, test_mode: bool = False):
+        """
+        test_mode kept only for signature compatibility; it does nothing (no mocks).
+        """
         self.data_folder = config.HISTORICAL_DATA_PATH
-        self.test_mode = test_mode
-        # Bybit REST base URL (can override via config.BYBIT_BASE_URL)
-        self.base_url = getattr(config, "BYBIT_BASE_URL", "https://api.bybit.com")
-        self._ensure_data_folder()
-        self.cache: Dict[str, pd.DataFrame] = {}
-
-    def _ensure_data_folder(self):
-        """Create the data folder if it doesn't exist."""
         ensure_directory(self.data_folder)
+        self.data_root = pathlib.Path(self.data_folder)
 
-    def _get_filename(self, symbol: str, timeframe: str) -> str:
-        """
-        Build the Parquet filename for a given symbol/timeframe.
-        Prefix with 'test_' when in test_mode.
-        """
-        base = f"{symbol.replace('/', '').lower()}_{timeframe}.parquet"
-        if self.test_mode:
-            base = f"test_{base}"
-        return os.path.join(self.data_folder, base)
+        self.cache: Dict[str, pd.DataFrame] = {}
+        self._rate_bucket: List[float] = []
+        self._meta_cache: Dict[str, Dict[str, Any]] = {}
 
-    def _generate_mock_klines(self, periods: int, timeframe: str) -> List[list]:
-        """
-        Generate synthetic OHLCV data for testing:
-        intervals of perfect spacing, prices incrementing by 1.
-        """
-        interval_ms = timeframe_to_minutes(timeframe) * 60 * 1000
-        start = int(time.time() * 1000) - periods * interval_ms
-        return [
-            [
-                start + i * interval_ms,
-                50000 + i,          # open
-                50000 + i + 50,     # high
-                50000 + i - 50,     # low
-                50000 + i + 25,     # close
-                1000 + i            # volume
-            ]
-            for i in range(periods)
-        ]
-
-    @retry(times=3, backoff=2)
-    def fetch_recent_klines(
-        self,
-        symbol: str,
-        timeframe: str,
-        since: Optional[int] = None,
-        limit: int = 200
-    ) -> List[list]:
-        """
-        Fetch OHLCV data from Bybit public API.
-        - symbol: e.g. 'BTC/USDT'
-        - timeframe: '1m', '5m', '1h', etc.
-        - since: timestamp in ms to fetch data after
-        - limit: number of candle points
-        Returns list of [timestamp_ms, open, high, low, close, volume].
-        """
-        sym = symbol.replace("/", "")
-        interval = timeframe_to_minutes(timeframe)
-        params: Dict[str, Any] = {
-            "symbol": sym,
-            "interval": str(interval),
-            "limit": limit,
-        }
-        if since:
-            # Bybit expects 'from' in seconds
-            params["from"] = int(since / 1000)
-
-        url = f"{self.base_url}/public/linear/kline"
-        resp = requests.get(url, params=params, timeout=(5, 15))
-        resp.raise_for_status()
-        data = resp.json()
-        if data.get("ret_code") != 0 or "result" not in data:
-            raise RuntimeError(f"Invalid kline response: {data}")
-
-        klines = []
-        for entry in data["result"]:
-            ts = entry.get("open_time")
-            if ts is None:
-                continue
-            klines.append([
-                int(ts) * 1000,
-                float(entry["open"]),
-                float(entry["high"]),
-                float(entry["low"]),
-                float(entry["close"]),
-                float(entry["volume"]),
-            ])
-        return klines
-
+    # ──────────────────────────────────────────────────────────────────────
+    # Public API (backwards-compatible names)
+    # ──────────────────────────────────────────────────────────────────────
     def update_klines(
         self,
         symbol: str,
         timeframe: str,
-        klines: Optional[List[list]] = None
+        klines: Optional[List[list]] = None,
+        category: Optional[str] = None,
+        since: Optional[datetime] = None,
+        until: Optional[datetime] = None,
     ) -> bool:
         """
-        Append or create OHLCV data for a given symbol/timeframe:
-        - In test_mode with no klines: generate mock data.
-        - In live mode with no klines: fetch from API since last timestamp.
-        Saves merged data to Parquet.
-        Returns True on success.
+        Append/create OHLCV data for symbol/timeframe.
+
+        Back-compat:
+        - If klines provided -> write/merge them.
+        - Else -> fetch from Bybit v5 since last_ts-3*tf to now, paginate, dedupe.
         """
-        fname = self._get_filename(symbol, timeframe)
-        os.makedirs(os.path.dirname(fname), exist_ok=True)
-
-        # Test mode: mock data if none provided
-        if self.test_mode and klines is None:
-            klines = self._generate_mock_klines(periods=100, timeframe=timeframe)
-
-        # Live mode: fetch if none provided
-        if not self.test_mode and klines is None:
-            try:
-                if os.path.exists(fname):
-                    existing = self._load_data(fname)
-                    since_ts = int(existing.index[-1].timestamp() * 1000)
-                else:
-                    existing = pd.DataFrame()
-                    since_ts = None
-                klines = self.fetch_recent_klines(symbol, timeframe, since=since_ts)
-            except Exception as e:
-                logger.error(f"Failed to fetch recent klines: {e}", exc_info=True)
-                return False
-
-        if not klines:
-            logger.warning("No new klines to update.")
-            return False
-
-        # Load existing if present
-        existing = pd.DataFrame()
-        if os.path.exists(fname):
-            try:
-                existing = self._load_data(fname)
-            except Exception:
-                logger.exception("Failed to load existing data, overwriting.")
-
-        # Process and merge
-        new_df = self._process_data(klines)
-        combined = pd.concat([existing, new_df])
-        combined = combined[~combined.index.duplicated(keep="last")]
-        combined.sort_index(inplace=True)
-
-        # Save
         try:
-            self._save_data(combined, fname)
+            self._validate_tf(timeframe)
+            category = (category or self.DEFAULT_CATEGORY).lower()
+
+            if klines:
+                # direct write path (e.g., from a custom fetcher)
+                new_df = self._process_data(klines)
+                self._write_partition_df(symbol, timeframe, new_df)
+                # update last_ts meta
+                if not new_df.empty:
+                    last_ts = int(new_df.index[-1].value // 10**6)
+                    meta = self._load_meta(symbol, timeframe)
+                    if meta.get("last_ts") is None or last_ts > int(meta["last_ts"]):
+                        meta["last_ts"] = last_ts
+                        self._save_meta(symbol, timeframe, meta)
+                return True
+
+            # live fetch path
+            now_utc = datetime.now(timezone.utc)
+            if until is None:
+                until = now_utc
+
+            last_ts = self.last_timestamp(symbol, timeframe)
+            tf_ms = self.TF_MAP[timeframe]
+            if since is None:
+                if last_ts is None:
+                    # first boot pull: ~120d 15m, ~30d 5m (tunable)
+                    days = 120 if timeframe == "15m" else 30
+                    since = now_utc - timedelta(days=days)
+                else:
+                    since = _ms_to_utc(last_ts - (3 * tf_ms))
+
+            rows, parts = self._fetch_and_persist(
+                symbol=symbol,
+                timeframe=timeframe,
+                category=category,
+                start=since,
+                end=until,
+            )
+            logger.info(f"[{symbol} {timeframe}] added rows={rows}, partitions={parts}")
             return True
-        except Exception:
-            logger.exception("Failed to save updated data.")
+        except Exception as e:
+            logger.exception(f"update_klines failed: {e}")
             return False
 
     def load_historical_data(self, symbol: str, timeframe: str) -> pd.DataFrame:
         """
-        Load OHLCV data from Parquet, with caching.
-        Raises FileNotFoundError if missing.
+        Load *all* OHLCV for symbol/timeframe from partitioned parquet (cached).
         """
-        key = f"{symbol}_{timeframe}_{'test' if self.test_mode else 'prod'}"
+        key = f"{symbol}_{timeframe}_all"
         if key in self.cache:
             return self.cache[key]
-
-        fname = self._get_filename(symbol, timeframe)
-        if not os.path.exists(fname):
-            raise FileNotFoundError(f"No historical data at {fname}")
-
-        try:
-            df = self._load_data(fname)
-        except Exception as e:
-            logger.exception(f"Error loading historical data: {e}")
-            raise
-
+        df = self._read_all(symbol, timeframe)
         self.cache[key] = df
         return df
 
-    def _process_data(self, raw: List[list]) -> pd.DataFrame:
+    def load_window(
+        self,
+        symbol: str,
+        timeframe: str,
+        lookback: int = 500,
+        end_time: Optional[datetime] = None,
+    ) -> pd.DataFrame:
         """
-        Convert raw OHLCV lists to a UTC DatetimeIndex DataFrame.
+        Load a rolling window of bars (deduped, sorted).
         """
-        cols = ["timestamp", "open", "high", "low", "close", "volume"]
-        df = pd.DataFrame(raw, columns=cols)
-        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
-        df.set_index("timestamp", inplace=True)
-        df = df[~df.index.duplicated(keep="last")]
-        df.sort_index(inplace=True)
-        return df.astype(float)
+        self._validate_tf(timeframe)
+        end_time = end_time or datetime.now(timezone.utc)
+        tf_ms = self.TF_MAP[timeframe]
+        start_time = end_time - timedelta(milliseconds=lookback * tf_ms)
+        df = self._read_range(symbol, timeframe, start_time, end_time)
+        return self._finalize_df(df)
 
-    def _save_data(self, df: pd.DataFrame, path: str):
+    def last_timestamp(self, symbol: str, timeframe: str) -> Optional[int]:
         """
-        Write to Parquet (tz-naive), raising on failure.
+        Return last stored candle timestamp in ms, or None if no data.
         """
-        try:
-            tmp = df.copy()
+        meta = self._load_meta(symbol, timeframe)
+        ts = meta.get("last_ts")
+        if ts is not None:
+            return int(ts)
+        tail = self._read_tail(symbol, timeframe, 1)
+        if tail is None or tail.empty:
+            return None
+        return int(tail.index[-1].value // 10**6)
+
+    def has_gap(self, symbol: str, timeframe: str) -> bool:
+        """
+        Quick gap detector on last ~220 bars.
+        """
+        self._validate_tf(timeframe)
+        tf_ms = self.TF_MAP[timeframe]
+        df = self.load_window(symbol, timeframe, lookback=220)
+        if df.empty:
+            return False
+        diffs = df.index.to_series().diff().dropna().view("i8") // 10**6
+        return (diffs != tf_ms).any()
+
+    # Hook for WebSocket adapter to push *finalized* bars
+    def upsert_bar(self, symbol: str, timeframe: str, bar: Dict[str, Any], category: Optional[str] = None) -> None:
+        """
+        Insert/replace one completed bar in storage.
+        bar = {timestamp(ms), open, high, low, close, volume}
+        """
+        self._validate_tf(timeframe)
+        ts = int(bar["timestamp"])
+        tf_ms = self.TF_MAP[timeframe]
+        if ts % tf_ms != 0:
+            raise ValueError(f"Bar ts {ts} not aligned to {timeframe}")
+
+        df = (
+            pd.DataFrame([bar])
+            .set_index(pd.to_datetime([ts], unit="ms", utc=True))
+            .astype({"open": float, "high": float, "low": float, "close": float, "volume": float})
+        )
+        df.index.name = "timestamp"
+        self._write_partition_df(symbol, timeframe, df)
+
+        meta = self._load_meta(symbol, timeframe)
+        if meta.get("last_ts") is None or ts > int(meta["last_ts"]):
+            meta["last_ts"] = ts
+            self._save_meta(symbol, timeframe, meta)
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Fetch & Persist
+    # ──────────────────────────────────────────────────────────────────────
+    @retry(times=3, backoff=2)
+    def _fetch_page(
+        self,
+        symbol: str,
+        timeframe: str,
+        category: str,
+        start_ms: int,
+        end_ms: int,
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetch one page of v5 klines between start_ms and end_ms (inclusive).
+        Returns list of dict bars in ascending time.
+        """
+        params: Dict[str, Any] = {
+            "category": category,
+            "symbol": symbol.replace("/", ""),
+            "interval": self.INTERVAL_MAP[timeframe],
+            "start": start_ms,
+            "end": end_ms,
+            "limit": str(self._PAGE_LIMIT),
+        }
+        resp = requests.get(
+            BYBIT_V5_KLINE,
+            params=params,
+            timeout=(self._CONNECT_TIMEOUT, self._READ_TIMEOUT),
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("retCode") != 0:
+            raise RuntimeError(f"Bybit retCode={data.get('retCode')} msg={data.get('retMsg')}")
+
+        rows = data.get("result", {}).get("list", []) or []
+        if not rows:
+            return []
+
+        # rows schema: [startTime, open, high, low, close, volume, turnover]
+        recs = []
+        for k in rows:
+            ts = int(k[0])
+            recs.append({
+                "timestamp": ts,
+                "open": float(k[1]),
+                "high": float(k[2]),
+                "low": float(k[3]),
+                "close": float(k[4]),
+                "volume": float(k[5]),
+            })
+        recs.sort(key=lambda x: x["timestamp"])
+        return recs
+
+    def _fetch_and_persist(
+        self,
+        symbol: str,
+        timeframe: str,
+        category: str,
+        start: datetime,
+        end: datetime,
+    ) -> Tuple[int, int]:
+        start_ms = _utc_ms(start)
+        end_ms = _utc_ms(end)
+        tf_ms = self.TF_MAP[timeframe]
+        if end_ms <= start_ms:
+            return 0, 0
+
+        cursor = _floor_to_tf(start_ms, tf_ms)
+        end_ms = _floor_to_tf(end_ms, tf_ms)
+
+        rows_added = 0
+        partitions_touched = set()
+
+        while cursor <= end_ms:
+            self._throttle_bucket()
+
+            # End of this page
+            page_end = min(cursor + (self._PAGE_LIMIT - 1) * tf_ms, end_ms)
+            recs = self._fetch_page(symbol, timeframe, category, cursor, page_end)
+            if not recs:
+                cursor = page_end + tf_ms
+                continue
+
+            df = (
+                pd.DataFrame(recs)
+                .drop_duplicates(subset=["timestamp"])
+                .set_index(pd.to_datetime([r["timestamp"] for r in recs], unit="ms", utc=True))
+                [["open", "high", "low", "close", "volume"]]
+            )
+            df.index.name = "timestamp"
+
+            # Alignment sanity
+            aligned = ((df.index.view('i8') // 10**6) % tf_ms == 0).all()
+            if not aligned:
+                raise RuntimeError("Fetched bars not aligned to timeframe")
+
+            touched = self._write_partition_df(symbol, timeframe, df)
+            partitions_touched |= touched
+            rows_added += len(df)
+
+            # advance cursor to next bar after last row
+            last_ts = int(df.index[-1].value // 10**6)
+            meta = self._load_meta(symbol, timeframe)
+            if meta.get("last_ts") is None or last_ts > int(meta["last_ts"]):
+                meta["last_ts"] = last_ts
+                self._save_meta(symbol, timeframe, meta)
+
+            cursor = last_ts + tf_ms
+
+        return rows_added, len(partitions_touched)
+
+    # ──────────────────────────────────────────────────────────────────────
+    # IO Layout: partitioned parquet
+    # ──────────────────────────────────────────────────────────────────────
+    def _symbol_dir(self, symbol: str, timeframe: str) -> pathlib.Path:
+        return self.data_root / self._sanitize_symbol(symbol) / timeframe
+
+    def _meta_path(self, symbol: str, timeframe: str) -> pathlib.Path:
+        return self._symbol_dir(symbol, timeframe) / "_meta.json"
+
+    def _day_path(self, symbol: str, timeframe: str, day: datetime) -> pathlib.Path:
+        return self._symbol_dir(symbol, timeframe) / f"{day.strftime('%Y-%m-%d')}.parquet"
+
+    def _write_partition_df(self, symbol: str, timeframe: str, df: pd.DataFrame) -> set:
+        """
+        Upsert DataFrame into daily partitions (dedupe + sort).
+        Returns set of touched filenames.
+        """
+        if df is None or df.empty:
+            return set()
+
+        symdir = self._symbol_dir(symbol, timeframe)
+        symdir.mkdir(parents=True, exist_ok=True)
+
+        touched = set()
+        for day, g in df.groupby(df.index.date):
+            day_dt = datetime.combine(day, datetime.min.time(), tzinfo=timezone.utc)
+            path = self._day_path(symbol, timeframe, day_dt)
+
+            if path.exists():
+                old = pd.read_parquet(path)
+                if old.index.tz is None:
+                    old.index = old.index.tz_localize(timezone.utc)
+                merged = pd.concat([old, g], axis=0)
+            else:
+                merged = g
+
+            merged = self._finalize_df(merged)
+            # write tz-naive for parquet
+            tmp = merged.copy()
             tmp.index = tmp.index.tz_localize(None)
             tmp.to_parquet(path, engine="pyarrow", compression="snappy")
-        except Exception as e:
-            logger.exception(f"Error saving data to {path}: {e}")
-            raise
+            touched.add(path.name)
 
-    def _load_data(self, path: str) -> pd.DataFrame:
-        """
-        Read Parquet into DataFrame with UTC index, raising on failure.
-        """
+        return touched
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Readers
+    # ──────────────────────────────────────────────────────────────────────
+    def _read_all(self, symbol: str, timeframe: str) -> pd.DataFrame:
+        symdir = self._symbol_dir(symbol, timeframe)
+        if not symdir.exists():
+            return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+
+        dfs = []
+        for fn in sorted(os.listdir(symdir)):
+            if not fn.endswith(".parquet"):
+                continue
+            try:
+                d = pd.read_parquet(symdir / fn)
+                if d.index.tz is None:
+                    d.index = d.index.tz_localize(timezone.utc)
+                dfs.append(d)
+            except Exception as e:
+                logger.error(f"Failed reading {symdir / fn}: {e}")
+
+        if not dfs:
+            return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+
+        df = pd.concat(dfs, axis=0)
+        return self._finalize_df(df)
+
+    def _read_range(self, symbol: str, timeframe: str, start: datetime, end: datetime) -> pd.DataFrame:
+        symdir = self._symbol_dir(symbol, timeframe)
+        if not symdir.exists():
+            return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+
+        day = datetime(start.year, start.month, start.day, tzinfo=timezone.utc)
+        end_day = datetime(end.year, end.month, end.day, tzinfo=timezone.utc)
+
+        dfs = []
+        while day <= end_day:
+            path = self._day_path(symbol, timeframe, day)
+            if path.exists():
+                try:
+                    d = pd.read_parquet(path)
+                    if d.index.tz is None:
+                        d.index = d.index.tz_localize(timezone.utc)
+                    dfs.append(d)
+                except Exception as e:
+                    logger.error(f"Failed reading {path}: {e}")
+            day += timedelta(days=1)
+
+        if not dfs:
+            return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+
+        df = pd.concat(dfs, axis=0)
+        df = df[(df.index >= start) & (df.index <= end)]
+        return self._finalize_df(df)
+
+    def _read_tail(self, symbol: str, timeframe: str, n: int) -> Optional[pd.DataFrame]:
+        symdir = self._symbol_dir(symbol, timeframe)
+        if not symdir.exists():
+            return None
+        parts = sorted([p for p in symdir.iterdir() if p.name.endswith(".parquet")])
+        if not parts:
+            return None
+        dfs = []
+        for p in parts[-2:]:
+            try:
+                d = pd.read_parquet(p)
+                if d.index.tz is None:
+                    d.index = d.index.tz_localize(timezone.utc)
+                dfs.append(d)
+            except Exception as e:
+                logger.error(f"Failed reading {p}: {e}")
+        if not dfs:
+            return None
+        df = pd.concat(dfs, axis=0)
+        df = self._finalize_df(df)
+        return df.tail(n)
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Meta
+    # ──────────────────────────────────────────────────────────────────────
+    def _load_meta(self, symbol: str, timeframe: str) -> Dict[str, Any]:
+        path = self._meta_path(symbol, timeframe)
+        key = path.as_posix()
+        if key in self._meta_cache:
+            return self._meta_cache[key]
+        if not path.exists():
+            meta = {"last_ts": None}
+            self._meta_cache[key] = meta
+            return meta
         try:
-            df = pd.read_parquet(path)
-            df.index = pd.to_datetime(df.index, utc=True)
-            return df.sort_index()
-        except Exception as e:
-            logger.exception(f"Error reading data from {path}: {e}")
-            raise
+            meta = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            meta = {"last_ts": None}
+        self._meta_cache[key] = meta
+        return meta
+
+    def _save_meta(self, symbol: str, timeframe: str, meta: Dict[str, Any]) -> None:
+        path = self._meta_path(symbol, timeframe)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(path)
+        self._meta_cache[path.as_posix()] = meta
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Internal helpers
+    # ──────────────────────────────────────────────────────────────────────
+    def _sanitize_symbol(self, symbol: str) -> str:
+        return symbol.replace("/", "_").upper()
+
+    def _meta_path(self, symbol: str, timeframe: str) -> pathlib.Path:
+        return self._symbol_dir(symbol, timeframe) / "_meta.json"
+
+    def _finalize_df(self, df: pd.DataFrame) -> pd.DataFrame:
+        if df is None or df.empty:
+            return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+        df = df[~df.index.duplicated(keep="last")].sort_index()
+        cols = ["open", "high", "low", "close", "volume"]
+        for c in cols:
+            if c not in df.columns:
+                df[c] = float("nan")
+        return df[cols].astype(float)
+
+    def _validate_tf(self, timeframe: str) -> None:
+        if timeframe not in self.TF_MAP:
+            raise ValueError(f"Unsupported timeframe: {timeframe}")
+
+    def _throttle_bucket(self) -> None:
+        t = time.time()
+        self._rate_bucket.append(t)
+        # keep last 60s
+        self._rate_bucket = [x for x in self._rate_bucket if t - x <= 60.0]
+        if len(self._rate_bucket) > self._REQS_PER_MIN_BUDGET:
+            sleep_s = 60.0 - (t - self._rate_bucket[0])
+            if sleep_s > 0:
+                time.sleep(min(sleep_s, 1.5))
