@@ -175,9 +175,17 @@ class TradingUI:
     def set_title(self, title: str):
         self.root.title(title)
 
-    def update_simulation_results(self, final_balance: float, total_points: float):
-        self.balance_var.set(f"${final_balance:,.2f}")
-        self.log(f"Simulation complete: Balance=${final_balance:,.2f}, Points={total_points:.2f}", level='SUCCESS')
+    def update_simulation_results(self, balance: float = None, points: float = None, **kwargs):
+    """
+    Accepts either (balance, points) or legacy (final_balance, total_points).
+    """
+    if balance is None:
+        balance = kwargs.get("final_balance", 0.0)
+    if points is None:
+        points = kwargs.get("total_points", 0.0)
+
+    self.balance_var.set(f"${balance:,.2f}")
+    self.log(f"Simulation complete: Balance=${balance:,.2f}, Points={points:.2f}", level='SUCCESS')
 
     def update_live_metrics(self, metrics: Dict[str, Any]):
         """
@@ -294,3 +302,4 @@ class TradingUI:
 
         # schedule next
         self.root.after(UI_REFRESH_INTERVAL, self._refresh)
+
