@@ -66,7 +66,7 @@ class SelfLearningBot:
         reward_system: RewardSystem,
         risk_manager: Optional[RiskManager],
         state_size: int,
-        action_size: int = 6,  # buy/sell/hold/close + 2 extras
+        action_size: int = 6,
         hidden_dims: List[int] = [128, 64, 32],
         batch_size: int = 64,
         gamma: float = 0.99,
@@ -111,9 +111,7 @@ class SelfLearningBot:
         self.logger = logging.getLogger(self.__class__.__name__)
 
         self.timeframe = timeframe
-        self.default_symbol = symbol  # optional default if caller doesn’t pass
-
-    # ------------------- core loop -------------------
+        self.default_symbol = symbol
 
     def select_action(self, state: np.ndarray) -> int:
         try:
@@ -150,16 +148,12 @@ class SelfLearningBot:
             nn.utils.clip_grad_norm_(self.policy_net.parameters(), 1.0)
             self.optimizer.step()
 
-            # soft update
             for t_param, p_param in zip(self.target_net.parameters(), self.policy_net.parameters()):
                 t_param.data.mul_(1.0 - self.tau).add_(self.tau * p_param.data)
         except Exception as e:
             self.error_handler.log_error(e, {"stage": "learn"})
 
     def act_and_learn(self, symbol: Optional[str], timestamp: Optional[datetime] = None):
-        """
-        Build state -> choose action -> execute via TradeExecutor -> compute reward -> learn.
-        """
         sym = symbol or self.default_symbol
         if not sym:
             self.logger.warning("act_and_learn called without symbol")
@@ -172,16 +166,13 @@ class SelfLearningBot:
             action_idx = self.select_action(state)
             action_name = self._action_to_command(action_idx)
 
-            # Price for sizing/validation
             price = self._safe_last_price(sym, state)
 
-            # Default qty is min-notional sized; risk_manager can override
             qty = None
             sl_px, tp_px = None, None
             risk_close = False
 
             if action_name in ("buy", "sell"):
-                # simple protective SL/TP suggestion (can replace with ATR/volatility later)
                 sl_mult = 0.99 if action_name == "buy" else 1.01
                 tp_mult = 1.02 if action_name == "buy" else 0.98
                 sl_px = price * sl_mult
@@ -196,10 +187,9 @@ class SelfLearningBot:
             elif action_name == "close":
                 risk_close = True
 
-            # Execute (lets TradeExecutor derive default qty from min-notional if qty None)
             tr = self.executor.execute_order(
                 sym,
-                action_name if action_name != "close" else "sell",  # close = opposite side; executor has risk_close
+                action_name if action_name != "close" else "sell",
                 quantity=qty,
                 price=price,
                 order_type="market",
@@ -208,19 +198,16 @@ class SelfLearningBot:
                 risk_close=risk_close,
             )
 
-            # Reward: raw P&L proxy + points (time/discipline)
             entry_price = float(tr.get("entry_price") or price)
             exit_price = float(tr.get("exit_price") or entry_price)
             q_used = float(tr.get("quantity") or (qty or 0.0))
-            entry_time = tr.get("timestamp") or ts
-            exit_time = tr.get("timestamp") or ts
 
             reward_raw = self.reward_system.calculate_reward(
                 entry_price=entry_price,
                 exit_price=exit_price,
                 position_size=q_used,
-                entry_time=ts if isinstance(entry_time, datetime) else ts,
-                exit_time=ts if isinstance(exit_time, datetime) else ts,
+                entry_time=ts,
+                exit_time=ts,
                 max_drawdown=0.0,
                 volatility=0.0,
                 stop_loss_triggered=False,
@@ -234,7 +221,7 @@ class SelfLearningBot:
             reward_total = float(reward_raw + reward_pts)
 
             next_state = self._get_state(sym)
-            done = tr.get("status") in ("closed",)  # basic terminal flag on full close
+            done = tr.get("status") in ("closed",)
 
             self.memory.push(state, action_idx, reward_total, next_state, done)
             self.train_steps += 1
@@ -250,8 +237,6 @@ class SelfLearningBot:
         except Exception as e:
             self.error_handler.handle(e, {"symbol": sym})
 
-    # ------------------- state builder -------------------
-
     def _get_state(self, symbol: str) -> np.ndarray:
         try:
             df = self.data_provider.load_historical_data(symbol, timeframe=self.timeframe)
@@ -261,7 +246,6 @@ class SelfLearningBot:
             self.error_handler.handle(e, {"symbol": symbol, "stage": "load_state"})
             return np.zeros(self.state_size, dtype=np.float32)
 
-        # compact features: normalized price change + SMA ratio + RSI + volume
         lookback = min(len(df), 50)
         tail = df.iloc[-lookback:].copy()
 
@@ -273,9 +257,9 @@ class SelfLearningBot:
         tail["rsi"] = TechnicalIndicators.rsi(tail["close"], window=14)
         last = tail.iloc[-1]
 
-        sma_short = float(last["sma_short"]) if last["sma_short"] else 0.0
-        sma_long = float(last["sma_long"]) if last["sma_long"] else 0.0
-        rsi_last = float(last["rsi"]) if last["rsi"] else 0.0
+        sma_short = float(last["sma_short"]) if last["sma_short"] is not None else 0.0
+        sma_long = float(last["sma_long"]) if last["sma_long"] is not None else 0.0
+        rsi_last = float(last["rsi"]) if last["rsi"] is not None else 0.0
         vol_last = float(last["volume"])
 
         features = [
@@ -294,13 +278,7 @@ class SelfLearningBot:
             state = state[: self.state_size]
         return state
 
-    # ------------------- helpers -------------------
-
     def _action_to_command(self, action_idx: int) -> str:
-        """
-        Map action index to command understood by TradeExecutor.
-        0: buy, 1: sell, 2: hold, 3: buy, 4: sell, 5: close
-        """
         mapping = {0: "buy", 1: "sell", 2: "hold", 3: "buy", 4: "sell", 5: "close"}
         return mapping.get(action_idx, "hold")
 
