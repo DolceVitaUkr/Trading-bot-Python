@@ -18,6 +18,7 @@ from modules.parameter_optimization import ParameterOptimizer
 from modules.trade_simulator import TradeSimulator
 from modules.ui import TradingUI
 from modules.runtime_state import RuntimeState
+from modules.rollout_manager import RolloutManager
 
 # ensure repo root on path
 PROJECT_ROOT = os.path.dirname(__file__)
@@ -33,14 +34,17 @@ class TradingBot:
         self.environment = config.ENVIRONMENT.lower()
         simulation = (self.environment == "simulation")
 
-        # runtime persistent state
+        # runtime persistent state + rollout manager
         self.state = RuntimeState()
+        self.rollout = RolloutManager(self.state)
         logger.info(f"Loaded runtime state (stage={self.state.get_stage()})")
 
+        # Safe-restart normalization
+        self.rollout.reconcile_on_boot()
+
         # Ensure paper wallet baseline in simulation
-        if simulation:
-            if self.state.get_paper_wallet("Crypto_Paper") == 0.0:
-                self.state.set_paper_wallet("Crypto_Paper", config.SIMULATION_START_BALANCE)
+        if simulation and self.state.get_paper_wallet("Crypto_Paper") == 0.0:
+            self.state.set_paper_wallet("Crypto_Paper", config.SIMULATION_START_BALANCE)
 
         # core components
         self.data_manager = DataManager(test_mode=simulation)
@@ -65,6 +69,7 @@ class TradingBot:
         self._loop = asyncio.get_event_loop()
 
     def _register_ui_handlers(self):
+        # Core actions
         self.ui.add_action_handler(
             "start_training",
             lambda: asyncio.run_coroutine_threadsafe(self._run_simulation(), self._loop)
@@ -83,8 +88,16 @@ class TradingBot:
             lambda: asyncio.run_coroutine_threadsafe(self._run_optimization(), self._loop)
         )
 
+        # Optional: expose stage change in UI (confirmations should be inside UI)
+        # self.ui.add_action_handler("set_stage_1", lambda: self.rollout.set_stage(1))
+        # self.ui.add_action_handler("set_stage_2", lambda: self.rollout.set_stage(2))
+        # ...
+
     async def _run_simulation(self):
         """Run a full backtest/simulation and show results in UI."""
+        # Stage guard: Crypto paper requires stage >=1 (always true unless someone set 0)
+        if not self.rollout.guard_paper("crypto", ui=self.ui):
+            return
         try:
             self._running = True
             self.state._event("simulation.start", "Backtest started")
@@ -98,13 +111,24 @@ class TradingBot:
             self._running = False
 
     async def _run_live_trading(self):
-        """Continuous live trading loop using the self-learning bot + risk checks."""
+        """
+        Continuous live trading loop using the self-learning bot + risk checks.
+        Live Crypto allowed from Stage >= 2.
+        """
+        if not self.rollout.guard_live("crypto", ui=self.ui):
+            return
+
         symbol = config.DEFAULT_SYMBOL
         interval = config.LIVE_LOOP_INTERVAL or 5
         self._running = True
 
+        # turn crypto live flag on (rollout) and record start
+        if not self.rollout.enable_crypto_live():
+            # guard already shouted
+            self._running = False
+            return
+
         self.state._event("trading.start", f"Symbol={symbol}")
-        self.state.set_domain_live("crypto", True)
 
         open_pos = self.exchange.get_position(symbol)
         if open_pos:
@@ -113,6 +137,7 @@ class TradingBot:
 
         while self._running:
             try:
+                # 1) Live data fetch
                 df = self.data_manager.load_historical_data(symbol)
                 latest = df.iloc[-1]
                 state = {
@@ -121,16 +146,16 @@ class TradingBot:
                     "wallet_balance": self.executor.get_balance(),
                 }
 
+                # 2) Learn & act
                 self.sl_bot.act_and_learn(state, datetime.now(timezone.utc))
 
+                # 3) UI metrics + persist balance
                 metrics = {
                     "balance": self.executor.get_balance(),
                     "equity": self.executor.get_balance() + self.executor.unrealized_pnl(symbol),
                     "price": state["price"]
                 }
                 self.ui.update_live_metrics(metrics)
-
-                # persist last seen balance
                 self.state.set_last_seen_balance("crypto", "spot", metrics["balance"])
 
             except (OrderExecutionError, RiskViolationError) as e:
@@ -173,7 +198,8 @@ class TradingBot:
             return
         self._running = False
         self.state._event("bot.shutdown", "")
-        self.state.set_domain_live("crypto", False)
+        # crypto domain off
+        self.rollout.disable_crypto_live()
         self.state.save()
         logger.info("Shutting down trading bot...")
         await asyncio.sleep(0.1)
