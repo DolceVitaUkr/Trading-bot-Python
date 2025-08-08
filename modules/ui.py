@@ -163,9 +163,10 @@ class TradingUI:
             balance = kwargs.get("final_balance", 0.0)
         if points is None:
             points = kwargs.get("total_points", 0.0)
-
+    
         self.balance_var.set(f"${balance:,.2f}")
         self.log(f"Simulation complete: Balance=${balance:,.2f}, Points={points:.2f}", level='SUCCESS')
+
 
     def update_live_metrics(self, metrics: Dict[str, Any]):
         bal = metrics.get("balance")
@@ -270,3 +271,4 @@ class TradingUI:
             self.log(f"Chart update failed: {e}", level='ERROR')
 
         self.root.after(UI_REFRESH_INTERVAL, self._refresh)
+
