@@ -3,44 +3,34 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
 import time
-from typing import Callable, Dict, Any, Optional
+from typing import Callable, Dict, Any
 
 import config
 
-# Safe default for UI refresh interval (ms)
 UI_REFRESH_INTERVAL = getattr(config, "UI_REFRESH_INTERVAL", 1000)
 
 
 class TradingUI:
     """
     GUI for controlling and monitoring the TradingBot.
-    - Accepts a TradingBot instance (any object with the attrs we read; missing attrs are handled gracefully).
-    - Provides buttons for Start/Stop Training and Start/Stop Trading.
-    - Displays performance metrics, logs, and a simple chart (if data available).
-    - Adds Notification Settings for Telegram cadence (paper recap interval + live alert verbosity).
     """
 
     def __init__(self, bot: Any):
         self.bot = bot
         self._action_handlers: Dict[str, Callable[[], None]] = {}
 
-        # Tk root
         self.root = tk.Tk()
         self.root.title("AI Trading Terminal")
         self.root.geometry("1600x900")
         self._configure_style()
 
-        # Layout
         self._create_status_bar()
         self._create_left_controls()
         self._create_center_chart()
         self._create_right_metrics()
         self._create_bottom_logs()
 
-        # Schedule periodic refresh
         self.root.after(UI_REFRESH_INTERVAL, self._refresh)
-
-    # ------------- UI Plumbing -------------
 
     def _configure_style(self):
         style = ttk.Style()
@@ -78,7 +68,6 @@ class TradingUI:
         frame = ttk.Labelframe(self.root, text="Controls", padding=10)
         frame.pack(side=tk.LEFT, fill=tk.Y, padx=6, pady=6)
 
-        # Start/Stop buttons
         ttk.Button(frame, text="▶ Start Training", command=lambda: self._invoke("start_training")).pack(fill=tk.X, pady=4)
         ttk.Button(frame, text="⏹ Stop Training", command=lambda: self._invoke("stop_training")).pack(fill=tk.X, pady=4)
 
@@ -89,7 +78,6 @@ class TradingUI:
 
         ttk.Separator(frame, orient='horizontal').pack(fill=tk.X, pady=10)
 
-        # Notification Settings
         notif = ttk.Labelframe(frame, text="Notification Settings", padding=8)
         notif.pack(fill=tk.X, pady=6)
 
@@ -107,11 +95,7 @@ class TradingUI:
             width=10
         ).pack(anchor=tk.W, pady=2)
 
-        ttk.Button(
-            notif,
-            text="Apply",
-            command=self._apply_notification_prefs
-        ).pack(fill=tk.X, pady=(8, 0))
+        ttk.Button(notif, text="Apply", command=self._apply_notification_prefs).pack(fill=tk.X, pady=(8, 0))
 
     def _create_center_chart(self):
         try:
@@ -163,35 +147,27 @@ class TradingUI:
         self.log_text.tag_config('SUCCESS', foreground='#00ccff')
         self.log_text.tag_config('WARN', foreground='#ffd166')
 
-    # ------------- Public UI API -------------
+    # ---------- Public UI API ----------
 
     def add_action_handler(self, name: str, callback: Callable[[], None]):
-        """
-        Register a callback for an action:
-          'start_training', 'stop_training', 'start_trading', 'stop_trading'
-        """
         self._action_handlers[name] = callback
 
     def set_title(self, title: str):
         self.root.title(title)
 
     def update_simulation_results(self, balance: float = None, points: float = None, **kwargs):
-    """
-    Accepts either (balance, points) or legacy (final_balance, total_points).
-    """
-    if balance is None:
-        balance = kwargs.get("final_balance", 0.0)
-    if points is None:
-        points = kwargs.get("total_points", 0.0)
+        """
+        Accepts either (balance, points) or legacy (final_balance, total_points).
+        """
+        if balance is None:
+            balance = kwargs.get("final_balance", 0.0)
+        if points is None:
+            points = kwargs.get("total_points", 0.0)
 
-    self.balance_var.set(f"${balance:,.2f}")
-    self.log(f"Simulation complete: Balance=${balance:,.2f}, Points={points:.2f}", level='SUCCESS')
+        self.balance_var.set(f"${balance:,.2f}")
+        self.log(f"Simulation complete: Balance=${balance:,.2f}, Points={points:.2f}", level='SUCCESS')
 
     def update_live_metrics(self, metrics: Dict[str, Any]):
-        """
-        Bot can push metrics here. Keys supported (optional):
-          balance, equity, price, symbol, timeframe
-        """
         bal = metrics.get("balance")
         if bal is not None:
             self.balance_var.set(f"${bal:,.2f}")
@@ -214,13 +190,12 @@ class TradingUI:
         self.log_text.see(tk.END)
 
     async def shutdown(self):
-        # nothing async yet; placeholder for future (e.g., closing streams)
         pass
 
     def run(self):
         self.root.mainloop()
 
-    # ------------- Internals -------------
+    # ---------- Internals ----------
 
     def _invoke(self, action: str):
         cb = self._action_handlers.get(action)
@@ -235,9 +210,8 @@ class TradingUI:
     def _apply_notification_prefs(self):
         prefs = {
             "paper_recap_minutes": int(self.paper_interval_var.get()),
-            "live_alert_level": self.live_alert_var.get(),  # "quiet" | "normal" | "verbose"
+            "live_alert_level": self.live_alert_var.get(),
         }
-        # If bot exposes a hook, call it
         if hasattr(self.bot, "apply_notification_prefs") and callable(getattr(self.bot, "apply_notification_prefs")):
             try:
                 self.bot.apply_notification_prefs(prefs)
@@ -248,10 +222,8 @@ class TradingUI:
             self.log("Bot has no 'apply_notification_prefs' hook (skipped).", level='WARN')
 
     def _refresh(self):
-        # Clock
         self.time_label.config(text=time.strftime('%H:%M:%S'))
 
-        # Connection / mode
         is_conn = bool(getattr(self.bot, "is_connected", False))
         self.conn_label.config(text=f"⚡ {'Connected' if is_conn else 'Disconnected'}")
 
@@ -260,14 +232,12 @@ class TradingUI:
         mode = "Training" if is_training else "Live" if is_trading else "Idle"
         self.mode_label.config(text=f"Mode: {mode}")
 
-        # Heartbeat
         hb_ts = getattr(self.bot, "last_heartbeat", None)
         if hb_ts:
             self.heartbeat_label.config(text=f"Heartbeat: {time.strftime('%H:%M:%S', time.localtime(hb_ts))}")
         else:
             self.heartbeat_label.config(text="Heartbeat: --")
 
-        # Metrics pull (fallback if bot doesn’t push)
         bal = getattr(self.bot, "current_balance", None)
         if bal is not None:
             self.balance_var.set(f"${bal:,.2f}")
@@ -284,7 +254,6 @@ class TradingUI:
         if tf:
             self.tf_var.set(tf)
 
-        # Chart: best effort (optional)
         try:
             dm = getattr(self.bot, "data_manager", None)
             sym = getattr(self.bot, "current_symbol", None)
@@ -300,6 +269,4 @@ class TradingUI:
         except Exception as e:
             self.log(f"Chart update failed: {e}", level='ERROR')
 
-        # schedule next
         self.root.after(UI_REFRESH_INTERVAL, self._refresh)
-
