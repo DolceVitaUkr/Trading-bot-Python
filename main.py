@@ -17,6 +17,7 @@ from modules.error_handler import ErrorHandler, OrderExecutionError, RiskViolati
 from modules.parameter_optimization import ParameterOptimizer
 from modules.trade_simulator import TradeSimulator
 from modules.ui import TradingUI
+from modules.runtime_state import RuntimeState
 
 # ensure repo root on path
 PROJECT_ROOT = os.path.dirname(__file__)
@@ -25,24 +26,34 @@ if PROJECT_ROOT not in sys.path:
 
 logger = logging.getLogger(__name__)
 
+
 class TradingBot:
     def __init__(self):
         # load config
         self.environment = config.ENVIRONMENT.lower()
         simulation = (self.environment == "simulation")
 
+        # runtime persistent state
+        self.state = RuntimeState()
+        logger.info(f"Loaded runtime state (stage={self.state.get_stage()})")
+
+        # Ensure paper wallet baseline in simulation
+        if simulation:
+            if self.state.get_paper_wallet("Crypto_Paper") == 0.0:
+                self.state.set_paper_wallet("Crypto_Paper", config.SIMULATION_START_BALANCE)
+
         # core components
         self.data_manager = DataManager(test_mode=simulation)
-        self.exchange      = ExchangeAPI()
-        self.executor      = TradeExecutor(simulation_mode=simulation)
+        self.exchange = ExchangeAPI()
+        self.executor = TradeExecutor(simulation_mode=simulation)
         self.error_handler = ErrorHandler()
-        self.pair_manager  = PairManager()
-        self.simulator     = TradeSimulator(data_provider=self.data_manager)
-        self.optimizer     = ParameterOptimizer()
-        self.sl_bot        = SelfLearningBot(
+        self.pair_manager = PairManager()
+        self.simulator = TradeSimulator(data_provider=self.data_manager)
+        self.optimizer = ParameterOptimizer()
+        self.sl_bot = SelfLearningBot(
             data_provider=self.data_manager,
             error_handler=self.error_handler,
-            training=(self.environment=="simulation")
+            training=simulation
         )
 
         # UI
@@ -51,22 +62,35 @@ class TradingBot:
 
         # internal state
         self._running = False
-        self._loop    = asyncio.get_event_loop()
+        self._loop = asyncio.get_event_loop()
 
     def _register_ui_handlers(self):
-        # Map UI actions to our methods
-        self.ui.add_action_handler("start_training", lambda: asyncio.run_coroutine_threadsafe(self._run_simulation(), self._loop))
-        self.ui.add_action_handler("stop_training",  lambda: self._stop())
-        self.ui.add_action_handler("start_trading", lambda: asyncio.run_coroutine_threadsafe(self._run_live_trading(), self._loop))
-        self.ui.add_action_handler("stop_trading",  lambda: self._shutdown())
-        self.ui.add_action_handler("optimize",      lambda: asyncio.run_coroutine_threadsafe(self._run_optimization(), self._loop))
+        self.ui.add_action_handler(
+            "start_training",
+            lambda: asyncio.run_coroutine_threadsafe(self._run_simulation(), self._loop)
+        )
+        self.ui.add_action_handler("stop_training", lambda: self._stop())
+        self.ui.add_action_handler(
+            "start_trading",
+            lambda: asyncio.run_coroutine_threadsafe(self._run_live_trading(), self._loop)
+        )
+        self.ui.add_action_handler(
+            "stop_trading",
+            lambda: asyncio.run_coroutine_threadsafe(self._shutdown(), self._loop)
+        )
+        self.ui.add_action_handler(
+            "optimize",
+            lambda: asyncio.run_coroutine_threadsafe(self._run_optimization(), self._loop)
+        )
 
     async def _run_simulation(self):
         """Run a full backtest/simulation and show results in UI."""
         try:
             self._running = True
+            self.state._event("simulation.start", "Backtest started")
             balance, points = await self.simulator.run()
-            # inform UI
+            self.state._event("simulation.end", f"Balance={balance}, Points={points}")
+            self.state.save()
             self.ui.update_simulation_results(final_balance=balance, total_points=points)
         except Exception as e:
             self.error_handler.handle(e)
@@ -75,74 +99,71 @@ class TradingBot:
 
     async def _run_live_trading(self):
         """Continuous live trading loop using the self-learning bot + risk checks."""
-        symbol = config.DEFAULT_SYMBOL  # e.g. "BTC/USDT"
-        interval = config.LIVE_LOOP_INTERVAL or 5  # seconds
-
+        symbol = config.DEFAULT_SYMBOL
+        interval = config.LIVE_LOOP_INTERVAL or 5
         self._running = True
-        # ensure we don’t reopen existing positions
+
+        self.state._event("trading.start", f"Symbol={symbol}")
+        self.state.set_domain_live("crypto", True)
+
         open_pos = self.exchange.get_position(symbol)
         if open_pos:
             logger.info(f"Resuming with open position: {open_pos}")
+            self.state.upsert_open_position("crypto", symbol, open_pos)
 
         while self._running:
             try:
-                # 1) Fetch latest data, compute state
                 df = self.data_manager.load_historical_data(symbol)
                 latest = df.iloc[-1]
                 state = {
-                    "symbol":        symbol,
-                    "price":         latest["close"],
-                    "wallet_balance": self.executor.get_balance(),  # implement in TradeExecutor
-                    # add any other features you need, e.g. indicators
+                    "symbol": symbol,
+                    "price": latest["close"],
+                    "wallet_balance": self.executor.get_balance(),
                 }
 
-                # 2) Let the RL agent act & learn
                 self.sl_bot.act_and_learn(state, datetime.now(timezone.utc))
 
-                # 3) Update UI metrics
                 metrics = {
                     "balance": self.executor.get_balance(),
-                    "equity":  self.executor.get_balance() + self.executor.unrealized_pnl(symbol),
-                    "price":   state["price"]
+                    "equity": self.executor.get_balance() + self.executor.unrealized_pnl(symbol),
+                    "price": state["price"]
                 }
                 self.ui.update_live_metrics(metrics)
 
+                # persist last seen balance
+                self.state.set_last_seen_balance("crypto", "spot", metrics["balance"])
+
             except (OrderExecutionError, RiskViolationError) as e:
-                # critical – shutdown
                 self.error_handler.handle(e)
                 await self._shutdown()
                 break
-
             except Exception as e:
-                # log but keep going
                 self.error_handler.handle(e)
 
-            # pause before next tick
             await asyncio.sleep(interval)
 
     async def _run_optimization(self):
-        """Run parameter optimization with a default objective and show results."""
+        """Run parameter optimization and show results."""
         def default_objective(params):
-            # You’ll need to define how to evaluate a param set:
-            # e.g., run a short simulation and return final return_pct
-            self.simulator.reset()  # if you implement a reset
+            self.simulator.reset()
             self.simulator.strategy.update_params(params)
             result = asyncio.get_event_loop().run_until_complete(self.simulator.run())
             return result.return_pct
 
         try:
+            self.state._event("optimization.start", "")
             best_params = self.optimizer.run(default_objective)
+            self.state._event("optimization.end", f"Best={best_params}")
+            self.state.save()
             self.ui.update_optimization_results(best_params)
         except Exception as e:
             self.error_handler.handle(e)
 
     def run(self):
-        """Start the UI (which will kick off asyncio tasks via handlers)."""
-        # 1) Setup shutdown on SIGINT/SIGTERM
+        """Start the UI."""
         for sig in (signal.SIGINT, signal.SIGTERM):
             signal.signal(sig, lambda *_: asyncio.ensure_future(self._shutdown()))
 
-        # 2) Start UI (this blocks until window closes)
         self.ui.set_title(f"Trading Bot ({self.environment.title()})")
         self.ui.run()
 
@@ -151,20 +172,23 @@ class TradingBot:
         if not self._running:
             return
         self._running = False
+        self.state._event("bot.shutdown", "")
+        self.state.set_domain_live("crypto", False)
+        self.state.save()
         logger.info("Shutting down trading bot...")
-        # give live loop a chance to exit
         await asyncio.sleep(0.1)
-        # close async components if any
         await self.ui.shutdown()
-        await self.exchange.close()  # implement close() if you have websockets
+        await self.exchange.close()
         logger.info("Shutdown complete.")
 
     def _stop(self):
         """Stop training or live trading without closing UI."""
         self._running = False
+        self.state._event("bot.stop", "")
+        self.state.save()
+
 
 if __name__ == "__main__":
-    # configure root logger
     logging.basicConfig(
         level=config.LOG_LEVEL,
         format="%(asctime)s [%(levelname)s] %(message)s",
