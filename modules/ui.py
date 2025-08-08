@@ -2,14 +2,10 @@
 
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
-import threading
 import time
-from matplotlib.figure import Figure
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from typing import Callable, Dict, Any
+from typing import Callable, Dict, Any, Optional
 
 import config
-from main import TradingBot  # assume TradingBot is defined in main.py
 
 # Safe default for UI refresh interval (ms)
 UI_REFRESH_INTERVAL = getattr(config, "UI_REFRESH_INTERVAL", 1000)
@@ -18,124 +14,207 @@ UI_REFRESH_INTERVAL = getattr(config, "UI_REFRESH_INTERVAL", 1000)
 class TradingUI:
     """
     GUI for controlling and monitoring the TradingBot.
-    - Accepts a TradingBot instance to drive core logic.
+    - Accepts a TradingBot instance (any object with the attrs we read; missing attrs are handled gracefully).
     - Provides buttons for Start/Stop Training and Start/Stop Trading.
-    - Displays performance metrics, logs, and real-time charts.
+    - Displays performance metrics, logs, and a simple chart (if data available).
+    - Adds Notification Settings for Telegram cadence (paper recap interval + live alert verbosity).
     """
 
-    def __init__(self, bot: TradingBot):
+    def __init__(self, bot: Any):
         self.bot = bot
         self._action_handlers: Dict[str, Callable[[], None]] = {}
 
-        # Initialize main window
+        # Tk root
         self.root = tk.Tk()
-        self.root.title("AI Trading Terminal v2.0")
+        self.root.title("AI Trading Terminal")
         self.root.geometry("1600x900")
         self._configure_style()
 
-        # Build UI
+        # Layout
         self._create_status_bar()
-        self._create_control_panel()
-        self._create_chart_panel()
-        self._create_metrics_panel()
-        self._create_log_panel()
+        self._create_left_controls()
+        self._create_center_chart()
+        self._create_right_metrics()
+        self._create_bottom_logs()
 
         # Schedule periodic refresh
         self.root.after(UI_REFRESH_INTERVAL, self._refresh)
 
+    # ------------- UI Plumbing -------------
+
     def _configure_style(self):
         style = ttk.Style()
-        style.theme_use('clam')
+        try:
+            style.theme_use('clam')
+        except Exception:
+            pass
         style.configure('.', background='#1e1e1e', foreground='white')
+        style.configure('TLabel', background='#1e1e1e', foreground='white')
+        style.configure('TFrame', background='#1e1e1e')
+        style.configure('TLabelframe', background='#1e1e1e', foreground='white')
+        style.configure('TLabelframe.Label', background='#1e1e1e', foreground='white')
+        style.configure('TButton', background='#2a2a2a', foreground='white')
         style.configure('TNotebook', background='#2d2d2d')
         style.configure('TNotebook.Tab', background='#2d2d2d', foreground='white')
         style.map('TNotebook.Tab', background=[('selected', '#3e3e3e')])
 
     def _create_status_bar(self):
         frame = ttk.Frame(self.root)
-        frame.pack(side=tk.TOP, fill=tk.X)
+        frame.pack(side=tk.TOP, fill=tk.X, padx=6, pady=4)
+
         self.conn_label = ttk.Label(frame, text="⚡ Disconnected")
         self.conn_label.pack(side=tk.LEFT, padx=10)
-        self.mode_label = ttk.Label(frame, text="Mode: N/A")
+
+        self.mode_label = ttk.Label(frame, text="Mode: Idle")
         self.mode_label.pack(side=tk.LEFT, padx=10)
+
+        self.heartbeat_label = ttk.Label(frame, text="Heartbeat: --")
+        self.heartbeat_label.pack(side=tk.LEFT, padx=10)
+
         self.time_label = ttk.Label(frame, text=time.strftime('%H:%M:%S'))
         self.time_label.pack(side=tk.RIGHT, padx=10)
 
-    def _create_control_panel(self):
-        frame = ttk.LabelFrame(self.root, text="Controls", padding=10)
-        frame.pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=5)
+    def _create_left_controls(self):
+        frame = ttk.Labelframe(self.root, text="Controls", padding=10)
+        frame.pack(side=tk.LEFT, fill=tk.Y, padx=6, pady=6)
 
-        btn_start_train = ttk.Button(frame, text="▶ Start Training", command=lambda: self._invoke("start_training"))
-        btn_start_train.pack(fill=tk.X, pady=2)
-        btn_stop_train = ttk.Button(frame, text="⏹ Stop Training", command=lambda: self._invoke("stop_training"))
-        btn_stop_train.pack(fill=tk.X, pady=2)
+        # Start/Stop buttons
+        ttk.Button(frame, text="▶ Start Training", command=lambda: self._invoke("start_training")).pack(fill=tk.X, pady=4)
+        ttk.Button(frame, text="⏹ Stop Training", command=lambda: self._invoke("stop_training")).pack(fill=tk.X, pady=4)
 
-        btn_start_live = ttk.Button(frame, text="▶ Start Trading", command=lambda: self._invoke("start_trading"))
-        btn_start_live.pack(fill=tk.X, pady=10)
-        btn_stop_live = ttk.Button(frame, text="⏹ Stop Trading", command=lambda: self._invoke("stop_trading"))
-        btn_stop_live.pack(fill=tk.X, pady=2)
+        ttk.Separator(frame, orient='horizontal').pack(fill=tk.X, pady=6)
 
-    def _create_chart_panel(self):
-        frame = ttk.LabelFrame(self.root, text="Price Chart")
-        frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
+        ttk.Button(frame, text="▶ Start Trading", command=lambda: self._invoke("start_trading")).pack(fill=tk.X, pady=8)
+        ttk.Button(frame, text="⏹ Stop Trading", command=lambda: self._invoke("stop_trading")).pack(fill=tk.X, pady=4)
+
+        ttk.Separator(frame, orient='horizontal').pack(fill=tk.X, pady=10)
+
+        # Notification Settings
+        notif = ttk.Labelframe(frame, text="Notification Settings", padding=8)
+        notif.pack(fill=tk.X, pady=6)
+
+        ttk.Label(notif, text="Paper recap (min):").pack(anchor=tk.W)
+        self.paper_interval_var = tk.IntVar(value=getattr(config, "TELEGRAM_PAPER_RECAP_MIN", 60))
+        tk.Spinbox(notif, from_=5, to=240, increment=5, textvariable=self.paper_interval_var, width=6).pack(anchor=tk.W, pady=2)
+
+        ttk.Label(notif, text="Live alerts:").pack(anchor=tk.W, pady=(6, 0))
+        self.live_alert_var = tk.StringVar(value=getattr(config, "TELEGRAM_LIVE_ALERT_LEVEL", "normal"))
+        ttk.Combobox(
+            notif,
+            textvariable=self.live_alert_var,
+            values=["quiet", "normal", "verbose"],
+            state="readonly",
+            width=10
+        ).pack(anchor=tk.W, pady=2)
+
+        ttk.Button(
+            notif,
+            text="Apply",
+            command=self._apply_notification_prefs
+        ).pack(fill=tk.X, pady=(8, 0))
+
+    def _create_center_chart(self):
+        try:
+            from matplotlib.figure import Figure
+            from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+        except Exception:
+            self.ax = None
+            self.chart_canvas = None
+            frame = ttk.Labelframe(self.root, text="Price Chart (matplotlib not available)", padding=10)
+            frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=6, pady=6)
+            return
+
+        frame = ttk.Labelframe(self.root, text="Price Chart")
+        frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=6, pady=6)
+
         fig = Figure(figsize=(8, 5), dpi=100)
         self.ax = fig.add_subplot(111)
+        self.ax.grid(True, alpha=0.2)
         self.chart_canvas = FigureCanvasTkAgg(fig, master=frame)
         self.chart_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-    def _create_metrics_panel(self):
-        frame = ttk.LabelFrame(self.root, text="Metrics", padding=10)
-        frame.pack(side=tk.RIGHT, fill=tk.Y, padx=5, pady=5)
+    def _create_right_metrics(self):
+        frame = ttk.Labelframe(self.root, text="Metrics", padding=10)
+        frame.pack(side=tk.RIGHT, fill=tk.Y, padx=6, pady=6)
 
         ttk.Label(frame, text="Wallet Balance:").pack(anchor=tk.W)
         self.balance_var = tk.StringVar(value="$0.00")
         ttk.Label(frame, textvariable=self.balance_var).pack(anchor=tk.W, pady=2)
 
-        ttk.Label(frame, text="Simulation Points:").pack(anchor=tk.W, pady=(10,0))
-        self.points_var = tk.StringVar(value="0")
-        ttk.Label(frame, textvariable=self.points_var).pack(anchor=tk.W, pady=2)
-
-        ttk.Label(frame, text="Portfolio Value:").pack(anchor=tk.W, pady=(10,0))
+        ttk.Label(frame, text="Portfolio Value:").pack(anchor=tk.W, pady=(10, 0))
         self.value_var = tk.StringVar(value="$0.00")
         ttk.Label(frame, textvariable=self.value_var).pack(anchor=tk.W, pady=2)
 
-    def _create_log_panel(self):
-        frame = ttk.LabelFrame(self.root, text="Logs")
-        frame.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=5)
-        self.log_text = scrolledtext.ScrolledText(frame, height=8, bg='#2d2d2d', fg='white')
+        ttk.Label(frame, text="Current Symbol:").pack(anchor=tk.W, pady=(10, 0))
+        self.symbol_var = tk.StringVar(value="N/A")
+        ttk.Label(frame, textvariable=self.symbol_var).pack(anchor=tk.W, pady=2)
+
+        ttk.Label(frame, text="Timeframe:").pack(anchor=tk.W, pady=(10, 0))
+        self.tf_var = tk.StringVar(value="N/A")
+        ttk.Label(frame, textvariable=self.tf_var).pack(anchor=tk.W, pady=2)
+
+    def _create_bottom_logs(self):
+        frame = ttk.Labelframe(self.root, text="Logs")
+        frame.pack(side=tk.BOTTOM, fill=tk.X, padx=6, pady=6)
+        self.log_text = scrolledtext.ScrolledText(frame, height=10, bg='#2d2d2d', fg='white')
         self.log_text.pack(fill=tk.BOTH, expand=True)
-        # configure tags
         self.log_text.tag_config('INFO', foreground='#00ff99')
         self.log_text.tag_config('ERROR', foreground='#ff3300')
         self.log_text.tag_config('SUCCESS', foreground='#00ccff')
+        self.log_text.tag_config('WARN', foreground='#ffd166')
+
+    # ------------- Public UI API -------------
 
     def add_action_handler(self, name: str, callback: Callable[[], None]):
         """
-        Register a callback for a named UI action.
-        Supported names: 'start_training', 'stop_training', 'start_trading', 'stop_trading'
+        Register a callback for an action:
+          'start_training', 'stop_training', 'start_trading', 'stop_trading'
         """
         self._action_handlers[name] = callback
 
-    def update_simulation_results(self, balance: float, points: float):
+    def set_title(self, title: str):
+        self.root.title(title)
+
+    def update_simulation_results(self, final_balance: float, total_points: float):
+        self.balance_var.set(f"${final_balance:,.2f}")
+        self.log(f"Simulation complete: Balance=${final_balance:,.2f}, Points={total_points:.2f}", level='SUCCESS')
+
+    def update_live_metrics(self, metrics: Dict[str, Any]):
         """
-        Display final simulation results.
+        Bot can push metrics here. Keys supported (optional):
+          balance, equity, price, symbol, timeframe
         """
-        self.balance_var.set(f"${balance:,.2f}")
-        self.points_var.set(f"{points:.2f}")
-        self.log(f"Simulation complete: Balance=${balance:,.2f}, Points={points:.2f}", level='SUCCESS')
+        bal = metrics.get("balance")
+        if bal is not None:
+            self.balance_var.set(f"${bal:,.2f}")
+        eq = metrics.get("equity")
+        if eq is not None:
+            self.value_var.set(f"${eq:,.2f}")
+        sym = metrics.get("symbol")
+        if sym:
+            self.symbol_var.set(sym)
+        tf = metrics.get("timeframe")
+        if tf:
+            self.tf_var.set(tf)
 
     def log(self, message: str, level: str = 'INFO'):
-        """
-        Append a log message to the log panel.
-        """
         ts = time.strftime('%H:%M:%S')
-        self.log_text.insert(tk.END, f"{ts} - {message}\n", level)
+        tag = level.upper()
+        if tag not in ('INFO', 'ERROR', 'SUCCESS', 'WARN'):
+            tag = 'INFO'
+        self.log_text.insert(tk.END, f"{ts} - {message}\n", tag)
         self.log_text.see(tk.END)
 
+    async def shutdown(self):
+        # nothing async yet; placeholder for future (e.g., closing streams)
+        pass
+
+    def run(self):
+        self.root.mainloop()
+
+    # ------------- Internals -------------
+
     def _invoke(self, action: str):
-        """
-        Invoke a registered action handler.
-        """
         cb = self._action_handlers.get(action)
         if not cb:
             messagebox.showwarning("Not implemented", f"No handler for '{action}'")
@@ -143,41 +222,75 @@ class TradingUI:
         try:
             cb()
         except Exception as e:
-            self.log(f"Error in action '{action}': {e}", level='ERROR')
+            self.log(f"Action '{action}' failed: {e}", level='ERROR')
+
+    def _apply_notification_prefs(self):
+        prefs = {
+            "paper_recap_minutes": int(self.paper_interval_var.get()),
+            "live_alert_level": self.live_alert_var.get(),  # "quiet" | "normal" | "verbose"
+        }
+        # If bot exposes a hook, call it
+        if hasattr(self.bot, "apply_notification_prefs") and callable(getattr(self.bot, "apply_notification_prefs")):
+            try:
+                self.bot.apply_notification_prefs(prefs)
+                self.log(f"Notification prefs applied: {prefs}", level='SUCCESS')
+            except Exception as e:
+                self.log(f"Failed to apply notification prefs: {e}", level='ERROR')
+        else:
+            self.log("Bot has no 'apply_notification_prefs' hook (skipped).", level='WARN')
 
     def _refresh(self):
-        """
-        Periodic UI refresh: update time, chart, and live metrics.
-        """
-        # Update time
+        # Clock
         self.time_label.config(text=time.strftime('%H:%M:%S'))
 
-        # Update connection/mode status
-        conn = "Connected" if self.bot.is_connected else "Disconnected"
-        self.conn_label.config(text=f"⚡ {conn}")
-        mode = "Training" if self.bot.is_training else "Live" if self.bot.is_trading else "Idle"
+        # Connection / mode
+        is_conn = bool(getattr(self.bot, "is_connected", False))
+        self.conn_label.config(text=f"⚡ {'Connected' if is_conn else 'Disconnected'}")
+
+        is_training = bool(getattr(self.bot, "is_training", False))
+        is_trading = bool(getattr(self.bot, "is_trading", False))
+        mode = "Training" if is_training else "Live" if is_trading else "Idle"
         self.mode_label.config(text=f"Mode: {mode}")
 
-        # Update balance & portfolio value
-        bal = self.bot.current_balance
-        val = self.bot.portfolio_value
-        self.balance_var.set(f"${bal:,.2f}")
-        self.value_var.set(f"${val:,.2f}")
+        # Heartbeat
+        hb_ts = getattr(self.bot, "last_heartbeat", None)
+        if hb_ts:
+            self.heartbeat_label.config(text=f"Heartbeat: {time.strftime('%H:%M:%S', time.localtime(hb_ts))}")
+        else:
+            self.heartbeat_label.config(text="Heartbeat: --")
 
-        # Update chart with latest data
+        # Metrics pull (fallback if bot doesn’t push)
+        bal = getattr(self.bot, "current_balance", None)
+        if bal is not None:
+            self.balance_var.set(f"${bal:,.2f}")
+
+        val = getattr(self.bot, "portfolio_value", None)
+        if val is not None:
+            self.value_var.set(f"${val:,.2f}")
+
+        sym = getattr(self.bot, "current_symbol", None)
+        if sym:
+            self.symbol_var.set(sym)
+
+        tf = getattr(self.bot, "timeframe", None)
+        if tf:
+            self.tf_var.set(tf)
+
+        # Chart: best effort (optional)
         try:
-            df = self.bot.data_manager.load_historical_data(self.bot.current_symbol, self.bot.timeframe)
-            self.ax.clear()
-            self.ax.plot(df['close'])
-            self.chart_canvas.draw()
+            dm = getattr(self.bot, "data_manager", None)
+            sym = getattr(self.bot, "current_symbol", None)
+            tf = getattr(self.bot, "timeframe", None)
+            if dm and hasattr(dm, "load_historical_data") and sym and tf and getattr(self, "ax", None):
+                df = dm.load_historical_data(sym, tf)
+                if len(df) > 0:
+                    self.ax.clear()
+                    self.ax.plot(df.index, df["close"])
+                    self.ax.set_title(f"{sym} ({tf})")
+                    self.ax.grid(True, alpha=0.2)
+                    self.chart_canvas.draw()
         except Exception as e:
             self.log(f"Chart update failed: {e}", level='ERROR')
 
-        # Schedule next refresh
+        # schedule next
         self.root.after(UI_REFRESH_INTERVAL, self._refresh)
-
-    def run(self):
-        """
-        Start the Tkinter main loop.
-        """
-        self.root.mainloop()
