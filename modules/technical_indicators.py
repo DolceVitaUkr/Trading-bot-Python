@@ -284,11 +284,19 @@ def market_regime(close: List[float], short_period: int = 50, long_period: int =
 # Pandas-aware wrapper class (single definition)
 # ─────────────────────────────
 class TechnicalIndicators:
-    """
-    Static methods that return pandas Series when given a Series (preferred).
-    If given a list/array, will try to convert to a pandas Series and still
-    return a Series. Falls back to None if pandas is unavailable.
-    """
+    sma = staticmethod(sma)
+    ema = staticmethod(ema)
+    rsi = staticmethod(rsi)
+    atr = staticmethod(atr)
+    adx = staticmethod(adx)
+    cci = staticmethod(cci)
+    williams_r = staticmethod(williams_r)
+    obv = staticmethod(obv)
+    stochastic_oscillator = staticmethod(stochastic_oscillator)
+    bollinger_bands = staticmethod(bollinger_bands)
+    fibonacci_retracement = staticmethod(fibonacci_retracement)
+    market_regime = staticmethod(market_regime)
+    entropy_volatility = staticmethod(entropy_volatility)
 
     @staticmethod
     def _to_series(x):
@@ -333,3 +341,4 @@ class TechnicalIndicators:
             return 100 - (100 / (1 + rs))
         except Exception:
             return None
+
