@@ -1,166 +1,239 @@
 # modules/trade_executor.py
 
 import logging
-import asyncio
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 
 import config
 from modules.exchange import ExchangeAPI
 from modules.telegram_bot import TelegramNotifier
-from modules.risk_management import RiskManager, RiskViolationError
 from modules.trade_calculator import calculate_trade_result
+from modules.error_handler import OrderExecutionError, RiskViolationError
 
 logger = logging.getLogger(__name__)
+if not logger.handlers:
+    h = logging.StreamHandler()
+    h.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+    logger.addHandler(h)
 logger.setLevel(logging.INFO)
-handler = logging.StreamHandler()
-handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
-logger.addHandler(handler)
 
-def _send_telegram_sync(bot: TelegramNotifier, content: Any, fmt: str = 'text'):
-    """Helper to send Telegram messages synchronously when needed."""
-    try:
-        # Force sync send for critical messages
-        bot.send_message(content, format=fmt)
-    except Exception as e:
-        logger.error(f"Failed to send Telegram message: {e}", exc_info=True)
 
 class TradeExecutor:
     """
-    Abstraction over real and simulated order execution.
-    Uses ExchangeAPI under the hood, applies risk checks via RiskManager,
-    and sends Telegram notifications for each executed order.
+    Executes trades in live or simulation mode.
+
+    - Live mode: proxies to ExchangeAPI (CCXT).
+    - Simulation mode: tracks cash balance and positions, uses ExchangeAPI's
+      in-memory position logic and updates wallet P&L locally.
+    - Sends Telegram notifications for each action.
     """
 
-    def __init__(self, simulation_mode: bool = True):
-        self.simulation_mode = simulation_mode
-        # Choose live/testnet based on config and simulation flag
-        self.exchange = ExchangeAPI(
-            use_testnet=self.simulation_mode and getattr(config, "USE_TESTNET", False)
-        )
-        # TelegramNotifier: disable async in contexts where sync is needed
-        self.notifier = TelegramNotifier(disable_async=not config.ASYNC_TELEGRAM)
-        # Risk manager for position sizing and risk checks
-        self.risk_manager = RiskManager(
-            account_balance=config.SIMULATION_START_BALANCE if self.simulation_mode else config.LIVE_ACCOUNT_BALANCE,
-            max_portfolio_risk=config.MAX_PORTFOLIO_RISK
-        )
+    def __init__(self, simulation_mode: Optional[bool] = None, notifier: Optional[TelegramNotifier] = None):
+        self.simulation_mode = config.USE_SIMULATION if simulation_mode is None else simulation_mode
+        self.exchange = ExchangeAPI()
+        self.notifier = notifier or TelegramNotifier(disable_async=True)
+
+        # Paper wallet balance for simulation
+        self.fee_rate = getattr(config, "FEE_PERCENTAGE", 0.002)
+        if self.simulation_mode:
+            self._starting_balance = float(getattr(config, "SIMULATION_START_BALANCE", 1000.0))
+            self._cash_balance = self._starting_balance
+        else:
+            self._starting_balance = None
+            self._cash_balance = None  # unknown in live mode
+
+    # ---------------------------- Public API ---------------------------- #
+
+    def get_balance(self) -> float:
+        """Return current cash balance (simulation) or 0.0 in live (placeholder)."""
+        if self.simulation_mode:
+            return float(self._cash_balance)
+        # For live mode, wiring to exchange wallet/balance can be added later
+        return 0.0
+
+    def unrealized_pnl(self, symbol: str) -> float:
+        """Unrealized PnL for the given symbol in simulation."""
+        if not self.simulation_mode:
+            return 0.0
+        pos = self.exchange.positions.get(symbol)
+        if not pos:
+            return 0.0
+        # Use provided get_price (may be 0.0 if unknown in pure-sim)
+        current_price = self.exchange.get_price(symbol) or pos["entry_price"]
+        qty = float(pos["quantity"])
+        side = pos["side"]
+        if side == "long":
+            return (current_price - pos["entry_price"]) * qty
+        else:
+            return (pos["entry_price"] - current_price) * qty
+
+    def close_position(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """Close an open position at market (simulation or live)."""
+        try:
+            result = self.exchange.close_position(symbol)
+            if self.simulation_mode and result:
+                # credit or debit cash
+                pnl_data = calculate_trade_result(
+                    entry_price=result["entry_price"],
+                    exit_price=result["exit_price"],
+                    quantity=result["quantity"],
+                    fee_percentage=self.fee_rate
+                )
+                self._cash_balance += float(result["exit_price"]) * float(result["quantity"]) - pnl_data["fees"]
+                # pnl already captured in result["pnl"]; cash updated here for fees realism
+            self._notify_trade(f"Close position {symbol}: {result}")
+            return result
+        except Exception as e:
+            self._notify_alert(f"Failed to close position {symbol}: {e}")
+            raise
 
     def execute_order(
         self,
         symbol: str,
         side: str,
-        amount: Optional[float] = None,
+        quantity: Optional[float] = None,
         price: Optional[float] = None,
-        order_type: str = "limit",
-        risk_percent: Optional[float] = None
+        order_type: str = "market",
     ) -> Dict[str, Any]:
         """
-        Place a new order (or simulate it).
+        Execute a trade.
 
-        Returns a dict including:
-          - entry_price, exit_price (same for market orders)
-          - quantity
-          - pnl (for simulation when position closes)
-          - fees (simulated)
-          - timestamp
-          - status ("simulated" or exchange response status)
+        If `quantity` is None, we size to roughly MIN_TRADE_AMOUNT_USD worth:
+            quantity = MIN_TRADE_AMOUNT_USD / price
+
+        Returns a dict with keys:
+          status, symbol, side, quantity, entry_price, exit_price (sim only), profit/fees/return_pct (sim only),
+          order_id (live), timestamp
         """
-        # --- Determine quantity via risk if not provided ---
-        if amount is None:
-            if risk_percent is None:
-                risk_percent = config.DEFAULT_RISK_PERCENT
-            # Need a stop price: use default stop-loss pct
-            stop_price = self.risk_manager.calculate_stop_loss(
-                entry_price=price,
-                side=side,
-                stop_loss_pct=config.DEFAULT_STOP_LOSS_PCT
-            )
-            amount = self.risk_manager.calculate_position_size(
-                entry_price=price,
-                stop_price=stop_price,
-                risk_percent=risk_percent
-            )
-
-        # --- Enforce minimum order size ---
-        min_order = max(config.MIN_ORDER_AMOUNT, self.exchange.get_min_order_size(symbol))
-        if amount < min_order:
-            raise ValueError(f"Order size {amount:.8f} < minimum allowed {min_order:.8f}")
-
-        # --- Round price and amount to exchange precision ---
-        price_precision = self.exchange.get_price_precision(symbol)
-        amount_precision = self.exchange.get_amount_precision(symbol)
-        if price is not None:
-            price = round(price, price_precision)
-        amount = round(amount, amount_precision)
-
         side = side.lower()
-        timestamp = datetime.utcnow().isoformat()
+        timestamp = datetime.now(timezone.utc).isoformat()
 
-        msg = {
-            'symbol': symbol,
-            'side': side,
-            'amount': amount,
-            'price': price,
-            'time': timestamp
-        }
-        # --- Notify user ---
-        log_msg = f"{'SIM' if self.simulation_mode else 'LIVE'} {side.upper()} {symbol} x{amount:.8f} @ {price}"
-        logger.info(log_msg)
-        _send_telegram_sync(self.notifier, log_msg, fmt='trade')
+        # Determine a usable price when not supplied
+        if price is None:
+            price = self.exchange.get_price(symbol)
+        if not price or price <= 0:
+            raise OrderExecutionError(f"Cannot execute {side} {symbol}: missing/invalid price")
 
-        # --- Execute or simulate ---
+        # Default quantity based on USD minimum notional if not provided
+        if quantity is None:
+            min_usd = float(getattr(config, "MIN_TRADE_AMOUNT_USD", 10.0))
+            quantity = max(min_usd / float(price), 0.00000001)  # conservative floor
+
+        # ------------- Simulation path ------------- #
+        if self.simulation_mode:
+            try:
+                # Fees are charged on notional; simulate market fill
+                notional = float(price) * float(quantity)
+                fee = notional * float(self.fee_rate)
+
+                if side in ("buy", "long"):
+                    # Check cash
+                    total_cost = notional + fee
+                    if total_cost > self._cash_balance + 1e-9:
+                        raise RiskViolationError(f"Insufficient cash for buy: need {total_cost:.2f}, have {self._cash_balance:.2f}")
+                    # Submit to simulated exchange to open/increase position
+                    res = self.exchange._simulate_order(symbol, "buy", float(quantity), float(price))
+                    # Deduct cash
+                    self._cash_balance -= total_cost
+                    self._notify_trade(f"SIM BUY {symbol} x{quantity:.8f} @ {price} | fee={fee:.4f} | cash={self._cash_balance:.2f}")
+                    return {
+                        "status": "simulated",
+                        "symbol": symbol,
+                        "side": "buy",
+                        "quantity": float(res["quantity"]),
+                        "entry_price": float(res["entry_price"]),
+                        "exit_price": float(res["entry_price"]),
+                        "profit": 0.0,
+                        "fees": float(fee),
+                        "return_pct": 0.0,
+                        "timestamp": timestamp,
+                    }
+
+                elif side in ("sell", "short"):
+                    # Simulate closing or flipping via exchange
+                    res = self.exchange._simulate_order(symbol, "sell", float(quantity), float(price))
+                    if "pnl" in res:
+                        # Closed a position
+                        pnl_data = calculate_trade_result(
+                            entry_price=res["entry_price"],
+                            exit_price=res["exit_price"],
+                            quantity=res["quantity"],
+                            fee_percentage=self.fee_rate
+                        )
+                        proceeds = float(res["exit_price"]) * float(res["quantity"])
+                        self._cash_balance += proceeds - float(pnl_data["fees"])
+                        self._notify_trade(
+                            f"SIM SELL {symbol} x{res['quantity']:.8f} @ {price} | "
+                            f"pnl={pnl_data['profit']:.4f} | fee={pnl_data['fees']:.4f} | cash={self._cash_balance:.2f}"
+                        )
+                        return {
+                            "status": "simulated",
+                            "symbol": symbol,
+                            "side": "sell",
+                            "quantity": float(res["quantity"]),
+                            "entry_price": float(res["entry_price"]),
+                            "exit_price": float(res["exit_price"]),
+                            "profit": float(pnl_data["profit"]),
+                            "fees": float(pnl_data["fees"]),
+                            "return_pct": float(pnl_data["return_pct"]),
+                            "timestamp": timestamp,
+                        }
+                    else:
+                        # Opened/added short (if you decide to support shorts later)
+                        proceeds = notional - fee
+                        self._cash_balance += proceeds
+                        self._notify_trade(f"SIM SHORT {symbol} x{quantity:.8f} @ {price} | fee={fee:.4f} | cash={self._cash_balance:.2f}")
+                        return {
+                            "status": "simulated",
+                            "symbol": symbol,
+                            "side": "sell",
+                            "quantity": float(res["quantity"]),
+                            "entry_price": float(res["entry_price"]),
+                            "exit_price": float(res["entry_price"]),
+                            "profit": 0.0,
+                            "fees": float(fee),
+                            "return_pct": 0.0,
+                            "timestamp": timestamp,
+                        }
+
+            except (RiskViolationError, OrderExecutionError):
+                raise
+            except Exception as e:
+                self._notify_alert(f"Simulation error for {symbol} {side}: {e}")
+                raise
+
+        # ------------- Live path ------------- #
         try:
-            if self.simulation_mode:
-                time.sleep(config.SIMULATION_ORDER_DELAY)
-                # In sim mode, we treat this as both entry and exit at the same price for P&L calc
-                entry = price
-                exit_ = price
-                pnl_data = calculate_trade_result(entry, exit_, amount, fee_percentage=config.FEE_RATE)
-                result = {
-                    'status': 'simulated',
-                    'symbol': symbol,
-                    'side': side,
-                    'quantity': amount,
-                    'entry_price': entry,
-                    'exit_price': exit_,
-                    'profit': pnl_data['profit'],
-                    'fees': pnl_data['fees'],
-                    'return_pct': pnl_data['return_pct'],
-                    'timestamp': timestamp
-                }
-            else:
-                # Live mode: place order via exchange
-                exec_res = self.exchange.create_order(symbol, order_type, side, amount, price)
-                # Exchange may return order ID or position data; normalize keys
-                entry = exec_res.get('filled_price', exec_res.get('price', price))
-                # We don't know exit until later; set exit_price=None
-                result = {
-                    'status': exec_res.get('status', 'open'),
-                    'symbol': exec_res.get('symbol', symbol),
-                    'side': exec_res.get('side', side),
-                    'quantity': exec_res.get('amount', amount),
-                    'entry_price': entry,
-                    'exit_price': None,
-                    'profit': None,
-                    'fees': None,
-                    'return_pct': None,
-                    'order_id': exec_res.get('id'),
-                    'timestamp': timestamp
-                }
-            return result
-
-        except RiskViolationError as e:
-            # If risk check fails, notify and re-raise to trigger circuit breaker
-            err_msg = f"Risk violation for {symbol} {side}: {e}"
-            logger.critical(err_msg)
-            _send_telegram_sync(self.notifier, err_msg, fmt='alert')
-            raise
-
+            order = self.exchange.create_order(symbol, order_type, side, float(quantity), float(price))
+            self._notify_trade(f"LIVE {side.upper()} {symbol} x{quantity:.8f} @ {price} | id={order.get('id')}")
+            return {
+                "status": order.get("status", "open"),
+                "symbol": order.get("symbol", symbol),
+                "side": order.get("side", side),
+                "quantity": float(order.get("amount", quantity)),
+                "entry_price": float(order.get("price", price)),
+                "exit_price": None,
+                "profit": None,
+                "fees": None,
+                "return_pct": None,
+                "order_id": order.get("id"),
+                "timestamp": timestamp,
+            }
         except Exception as e:
-            # Log and notify unexpected errors
-            err_msg = f"Order execution failed for {symbol} {side}: {e}"
-            logger.error(err_msg, exc_info=True)
-            _send_telegram_sync(self.notifier, err_msg, fmt='alert')
-            raise
+            self._notify_alert(f"Live order failed for {symbol} {side}: {e}")
+            raise OrderExecutionError(str(e))
+
+    # ---------------------------- Internals ---------------------------- #
+
+    def _notify_trade(self, text: str):
+        try:
+            self.notifier.send_message_sync(text, format="trade")
+        except Exception as e:
+            logger.warning(f"Telegram trade notify failed: {e}")
+
+    def _notify_alert(self, text: str):
+        try:
+            self.notifier.send_message_sync({"type": "ALERT", "message": text}, format="alert")
+        except Exception as e:
+            logger.warning(f"Telegram alert notify failed: {e}")
