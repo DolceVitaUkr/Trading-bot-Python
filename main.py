@@ -1,313 +1,114 @@
 # main.py
 
-import os
-import sys
-import signal
-import asyncio
+import time
 import logging
-from datetime import datetime, timezone
-
 import config
-from modules.data_manager import DataManager
-from modules.exchange import ExchangeAPI
-from modules.self_learning import SelfLearningBot
-from modules.trade_executor import TradeExecutor
-from modules.top_pairs import PairManager
-from modules.error_handler import ErrorHandler, OrderExecutionError, RiskViolationError
-from modules.parameter_optimization import ParameterOptimizer
-from modules.trade_simulator import TradeSimulator
-from modules.ui import TradingUI
-from modules.runtime_state import RuntimeState
-from modules.rollout_manager import RolloutManager
-from modules.reward_system import RewardSystem
-from modules.risk_management import RiskManager
 
-# ensure repo root on path
-PROJECT_ROOT = os.path.dirname(__file__)
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
+from modules.telegram_bot import TelegramNotifier
+from modules.notification_manager import NotificationManager, TradeEvent
+from modules.trade_executor import TradeExecutor
+from modules.market_scanner import MarketScanner
+from modules.portfolio_manager import PortfolioManager
+from modules.strategy_loader import StrategyLoader
+from runtime_state import RuntimeState
 
 logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=config.LOG_LEVEL,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
 
 
 class TradingBot:
     def __init__(self):
-        # ────────────────────────────────────────────────────────────────────────
-        # Environment & defaults
-        # ────────────────────────────────────────────────────────────────────────
-        self.environment = config.ENVIRONMENT.lower()
-        self.simulation = (self.environment == "simulation")
-        self.timeframe = getattr(config, "PRIMARY_TIMEFRAME", "15m")
-        self.confirm_timeframe = getattr(config, "CONFIRM_TIMEFRAME", "5m")
-        self.current_symbol = getattr(config, "DEFAULT_SYMBOL", "BTC/USDT")
+        logger.info("Initializing TradingBot...")
 
-        # ────────────────────────────────────────────────────────────────────────
-        # Runtime persistent state + rollout
-        # ────────────────────────────────────────────────────────────────────────
+        # Core runtime state
         self.state = RuntimeState()
-        self.rollout = RolloutManager(self.state)
-        logger.info(f"Loaded runtime state (stage={self.state.get_stage()})")
 
-        # Safe-restart normalization
-        self.rollout.reconcile_on_boot()
-
-        # Ensure paper wallet baseline in simulation
-        if self.simulation and self.state.get_paper_wallet("Crypto_Paper") == 0.0:
-            self.state.set_paper_wallet("Crypto_Paper", config.SIMULATION_START_BALANCE)
-
-        # ────────────────────────────────────────────────────────────────────────
-        # Core components
-        # ────────────────────────────────────────────────────────────────────────
-        self.data_manager = DataManager(test_mode=self.simulation)
-        self.exchange = ExchangeAPI()  # supports get_position(), close(), reconcile_open_state()
-        self.executor = TradeExecutor(simulation_mode=self.simulation)
-        self.error_handler = ErrorHandler()
-        self.pair_manager = PairManager()
-        self.simulator = TradeSimulator()  # simple synthetic SIM logic
-        self.optimizer = ParameterOptimizer()
-
-        # RL wiring: explicit reward + risk, and fixed state size
-        reward = RewardSystem()
-        # RiskManager balance: sim uses SIMULATION_START_BALANCE; live could use a config value
-        rm_balance = config.SIMULATION_START_BALANCE if self.simulation else getattr(config, "LIVE_ACCOUNT_BALANCE", 0.0)
-        risk_mgr = RiskManager(account_balance=rm_balance)
-
-        # Choose a state vector size (SelfLearningBot builds ~5 features; we pad to 8)
-        self.state_size = int(getattr(config, "RL_STATE_SIZE", 8))
-
-        self.sl_bot = SelfLearningBot(
-            data_provider=self.data_manager,
-            error_handler=self.error_handler,
-            reward_system=reward,
-            risk_manager=risk_mgr,
-            state_size=self.state_size,
-            action_size=6,                 # buy, sell, hold, close + 2 extras
-            training=self.simulation,
-            timeframe=self.timeframe,
-            symbol=self.current_symbol,
+        # Notifier & notification manager
+        self.notifier = TelegramNotifier(disable_async=not getattr(config, "ASYNC_TELEGRAM", True))
+        self.notifications = NotificationManager(
+            notifier=self.notifier,
+            mode="paper" if getattr(config, "SIMULATION_MODE", True) else "live",
+            paper_recap_min=getattr(config, "TELEGRAM_PAPER_RECAP_MIN", 60),
+            live_alert_level=getattr(config, "TELEGRAM_LIVE_ALERT_LEVEL", "normal"),
+            heartbeat_min=getattr(config, "TELEGRAM_HEARTBEAT_MIN", 10)
         )
 
-        # ────────────────────────────────────────────────────────────────────────
-        # UI (pass the bot instance; avoid importing TradingBot inside UI to prevent circular import)
-        # ────────────────────────────────────────────────────────────────────────
-        self.ui = TradingUI(self)
-        self._register_ui_handlers()
-
-        # ────────────────────────────────────────────────────────────────────────
-        # Bot status (read by UI)
-        # ────────────────────────────────────────────────────────────────────────
-        self.is_connected = True
-        self.is_training = False
-        self.is_trading = False
-        self.current_balance = config.SIMULATION_START_BALANCE if self.simulation else 0.0
-        self.portfolio_value = self.current_balance
-
-        # internal
-        self._running = False
-        self._loop = asyncio.get_event_loop()
-
-    # ────────────────────────────────────────────────────────────────────────────
-    # UI wiring
-    # ────────────────────────────────────────────────────────────────────────────
-    def _register_ui_handlers(self):
-        self.ui.add_action_handler(
-            "start_training",
-            lambda: asyncio.run_coroutine_threadsafe(self._run_simulation(), self._loop)
-        )
-        self.ui.add_action_handler("stop_training", lambda: self._stop())
-        self.ui.add_action_handler(
-            "start_trading",
-            lambda: asyncio.run_coroutine_threadsafe(self._run_live_trading(), self._loop)
-        )
-        self.ui.add_action_handler(
-            "stop_trading",
-            lambda: asyncio.run_coroutine_threadsafe(self._shutdown(), self._loop)
-        )
-        self.ui.add_action_handler(
-            "optimize",
-            lambda: asyncio.run_coroutine_threadsafe(self._run_optimization(), self._loop)
+        # Other core components
+        self.scanner = MarketScanner()
+        self.portfolio = PortfolioManager()
+        self.strategy_loader = StrategyLoader()
+        self.executor = TradeExecutor(
+            portfolio_manager=self.portfolio,
+            notifier=self.notifications
         )
 
-    # ────────────────────────────────────────────────────────────────────────────
-    # Simulation / Backtest
-    # ────────────────────────────────────────────────────────────────────────────
-    async def _run_simulation(self):
-        """Run a simple backtest pass and push results to UI."""
-        if not self.rollout.guard_paper("crypto", ui=self.ui):
-            return
-        try:
-            self._running = True
-            self.is_training = True
-            self.state._event("simulation.start", f"symbol={self.current_symbol}, tf={self.timeframe}")
+        self.running = True
+        self.loop_delay = getattr(config, "BOT_LOOP_DELAY", 15)  # seconds
 
-            # Use DataManager to get candles for selected symbol/tf
-            df = self.data_manager.load_historical_data(self.current_symbol, self.timeframe)
-            market_data = [
-                [int(ts.value // 1_000_000), row["open"], row["high"], row["low"], row["close"], row["volume"]]
-                for ts, row in df.iterrows()
-            ]
-
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, self.simulator.run, market_data)
-
-            balance = self.simulator.wallet_balance
-            points = self.simulator.points
-            self.current_balance = balance
-            self.portfolio_value = self.simulator.portfolio_value
-
-            self.state._event("simulation.end", f"Balance={balance:.2f}, Points={points:.2f}")
-            self.state.save()
-
-            self.ui.update_simulation_results(balance=balance, points=points)
-
-        except Exception as e:
-            self.error_handler.handle(e)
-        finally:
-            self.is_training = False
-            self._running = False
-
-    # ────────────────────────────────────────────────────────────────────────────
-    # Live trading loop
-    # ────────────────────────────────────────────────────────────────────────────
-    async def _run_live_trading(self):
-        """Continuous live trading using the self-learning bot (stage-gated)."""
-        if not self.rollout.guard_live("crypto", ui=self.ui):
-            return
-
-        symbol = self.current_symbol
-        interval = getattr(config, "LIVE_LOOP_INTERVAL", 5) or 5
-
-        self._running = True
-        self.is_trading = True
-
-        if not self.rollout.enable_crypto_live():
-            self._running = False
-            self.is_trading = False
-            return
-
-        self.state._event("trading.start", f"Symbol={symbol}")
-        self.state.save()
-
-        # Attempt to resume known position
-        try:
-            open_pos = self.exchange.get_position(symbol)
-            if open_pos:
-                logger.info(f"Resuming with open position: {open_pos}")
-                self.state.upsert_open_position("crypto", symbol, open_pos)
-        except Exception as e:
-            self.error_handler.handle(e)
-
-        while self._running:
-            try:
-                # (Optional) Ensure candles are up-to-date here if you add a refresher
-                df = self.data_manager.load_historical_data(symbol, self.timeframe)
-                latest = df.iloc[-1]
-                price = float(latest["close"])
-
-                # RL agent act & learn
-                self.sl_bot.act_and_learn(symbol, datetime.now(timezone.utc))
-
-                # Update metrics
-                try:
-                    bal = self.executor.get_balance()
-                except Exception:
-                    bal = self.current_balance
-
-                eq = bal
-                try:
-                    eq += self.executor.unrealized_pnl(symbol)
-                except Exception:
-                    pass
-
-                self.current_balance = float(bal)
-                self.portfolio_value = float(eq)
-                self.state.set_last_seen_balance("crypto", "spot", self.current_balance)
-
-            except (OrderExecutionError, RiskViolationError) as e:
-                self.error_handler.handle(e)
-                await self._shutdown()
-                break
-            except Exception as e:
-                self.error_handler.handle(e)
-
-            await asyncio.sleep(interval)
-
-    # ────────────────────────────────────────────────────────────────────────────
-    # Optimization
-    # ────────────────────────────────────────────────────────────────────────────
-    async def _run_optimization(self):
-        try:
-            self.state._event("optimization.start", f"symbol={self.current_symbol}, tf={self.timeframe}")
-            loop = asyncio.get_event_loop()
-            best_params = await loop.run_in_executor(None, self.optimizer.run, self.current_symbol, self.timeframe, None)
-            self.state._event("optimization.end", f"Best={best_params}")
-            self.state.save()
-            try:
-                self.ui.log(f"Optimization complete. Best params: {best_params}", level="SUCCESS")
-            except Exception:
-                pass
-        except Exception as e:
-            self.error_handler.handle(e)
-
-    # ────────────────────────────────────────────────────────────────────────────
-    # Lifecycle
-    # ────────────────────────────────────────────────────────────────────────────
     def run(self):
-        """Start the UI (blocking)."""
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            signal.signal(sig, lambda *_: asyncio.ensure_future(self._shutdown()))
-        try:
-            if hasattr(self.ui, "set_title"):
-                self.ui.set_title(f"Trading Bot ({self.environment.title()})")
-        except Exception:
-            pass
-        self.ui.run()
+        logger.info("Starting TradingBot loop...")
+        self.notifications.notify_status("Trading bot started ✅")
 
-    async def _shutdown(self):
-        """Gracefully stop all tasks and close resources."""
-        if not self._running and not self.is_trading and not self.is_training:
-            self.state._event("bot.shutdown", "idle")
-            self.state.save()
-            return
+        while self.running:
+            try:
+                loop_start = time.time()
 
-        self._running = False
-        self.is_trading = False
-        self.is_training = False
-        self.state._event("bot.shutdown", "")
-        self.rollout.disable_crypto_live()
-        self.state.save()
+                # Scan market & get candidate trades
+                scan_results = self.scanner.scan_top_symbols()
 
-        logger.info("Shutting down trading bot...")
-        await asyncio.sleep(0.1)
+                # Execute trades
+                for trade_signal in scan_results:
+                    result = self.executor.execute_trade(trade_signal)
+                    if result:  # Trade executed
+                        trade_event = TradeEvent(
+                            symbol=result["symbol"],
+                            side=result["side"],
+                            qty=result["qty"],
+                            price=result["price"],
+                            pnl=result.get("pnl"),
+                            return_pct=result.get("return_pct"),
+                            leverage=result.get("leverage"),
+                            opened=result.get("opened"),
+                            closed=result.get("closed"),
+                            status=result.get("status"),
+                            meta=result.get("meta", {})
+                        )
+                        self.notifications.notify_trade(trade_event)
 
-        try:
-            if hasattr(self.ui, "shutdown"):
-                await self.ui.shutdown()
-        except Exception:
-            pass
+                # Update metrics snapshot for heartbeat/digest
+                self.notifications.update_metrics_snapshot(
+                    price=self.scanner.last_price,
+                    symbol=self.scanner.last_symbol,
+                    equity=self.portfolio.current_equity(),
+                    balance=self.portfolio.current_balance()
+                )
 
-        try:
-            await self.exchange.close()
-        except Exception:
-            pass
+                # Tick notifications manager (heartbeat + digest)
+                self.notifications.tick()
 
-        logger.info("Shutdown complete.")
+                # Loop delay
+                elapsed = time.time() - loop_start
+                if elapsed < self.loop_delay:
+                    time.sleep(self.loop_delay - elapsed)
 
-    def _stop(self):
-        """Stop training or live trading without closing UI."""
-        self._running = False
-        self.is_trading = False
-        self.is_training = False
-        self.state._event("bot.stop", "")
-        self.state.save()
+            except KeyboardInterrupt:
+                logger.info("Stopping TradingBot...")
+                self.running = False
+            except Exception as e:
+                logger.exception("Error in main loop: %s", e)
+                self.notifications.notify_error(f"Main loop error: {e}")
+
+        self.shutdown()
+
+    def shutdown(self):
+        logger.info("Shutting down TradingBot...")
+        self.notifications.notify_status("Trading bot stopped ❌")
+        self.notifier.graceful_shutdown()
 
 
 if __name__ == "__main__":
-    logging.basicConfig(
-        level=getattr(logging, str(config.LOG_LEVEL), logging.INFO)
-              if isinstance(config.LOG_LEVEL, str) else config.LOG_LEVEL,
-        format="%(asctime)s [%(levelname)s] %(message)s",
-        handlers=[logging.StreamHandler(sys.stdout)]
-    )
     bot = TradingBot()
     bot.run()
