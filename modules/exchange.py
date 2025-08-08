@@ -1,9 +1,8 @@
 # modules/exchange.py
 
 import time
-import math
 import logging
-from typing import List, Optional, Union, Dict, Any, Tuple
+from typing import List, Optional, Union, Dict, Any
 
 import ccxt
 import config
@@ -102,7 +101,6 @@ class ExchangeAPI:
                 "apiKey": config.BYBIT_API_KEY,
                 "secret": config.BYBIT_API_SECRET,
                 "enableRateLimit": True,
-                # optional: "options": {"defaultType": "swap"} for perps, but we will choose per call
             })
             if self.use_testnet:
                 self.client.set_sandbox_mode(True)
@@ -260,7 +258,6 @@ class ExchangeAPI:
 
         try:
             self._throttle.tick()
-            # ccxt unified: some exchanges use fetchPositions; Bybit supports it
             positions = self.client.fetch_positions(symbols=[self._resolve_symbol(symbol)] if symbol else None)
             return positions or []
         except Exception as e:
@@ -328,8 +325,8 @@ class ExchangeAPI:
 
         # Live path
         try:
-            # Bybit via CCXT supports takeProfit/stopLoss on some endpoints for swaps;
-            # for spot we’ll place base order, then separate protective orders if needed.
+            # Bybit via CCXT supports takeProfit/stopLoss for swaps on some endpoints;
+            # for spot we place base order, then separate protective orders if needed.
             order_params = dict(params)
             if attach_tp is not None:
                 order_params.setdefault("takeProfit", float(attach_tp))
@@ -381,7 +378,11 @@ class ExchangeAPI:
         if not pos:
             return
         last = self.get_price(symbol)
-        pos["unrealized_pnl"] = (last - pos["entry_price"]) * pos["quantity"] if pos["side"] == "long" else (pos["entry_price"] - last) * pos["quantity"]
+        pos["unrealized_pnl"] = (
+            (last - pos["entry_price"]) * pos["quantity"]
+            if pos["side"] == "long"
+            else (pos["entry_price"] - last) * pos["quantity"]
+        )
 
     def _append_sim_order(self, symbol: str, order: Dict[str, Any]):
         self._sim_open_orders.setdefault(symbol, []).append(order)
@@ -412,7 +413,11 @@ class ExchangeAPI:
                 return {"status": "no_position", "symbol": symbol, "time": now}
 
             qty_to_close = min(amount, pos["quantity"])
-            pnl = (fill_price - pos["entry_price"]) * qty_to_close if pos["side"] == "long" else (pos["entry_price"] - fill_price) * qty_to_close
+            pnl = (
+                (fill_price - pos["entry_price"]) * qty_to_close
+                if pos["side"] == "long"
+                else (pos["entry_price"] - fill_price) * qty_to_close
+            )
             self._sim_cash_usd += float(pnl)
 
             pos["quantity"] = round(pos["quantity"] - qty_to_close, 12)
@@ -432,7 +437,10 @@ class ExchangeAPI:
         # Opening / adding
         cost = fill_price * amount
         if cost > self._sim_cash_usd:
-            raise OrderExecutionError("Insufficient simulated cash", context={"needed": cost, "cash": self._sim_cash_usd})
+            raise OrderExecutionError(
+                "Insufficient simulated cash",
+                context={"needed": cost, "cash": self._sim_cash_usd}
+            )
 
         self._sim_cash_usd -= cost
 
@@ -514,7 +522,6 @@ class ExchangeAPI:
 
         try:
             # Live: fetch per symbol (limited loop is fine at startup)
-            # If you track a watchlist elsewhere, pass it in instead of scanning all markets
             symbols = [m for m in self.markets.keys() if m.endswith("/USDT")]
             for sym in symbols:
                 self._throttle.tick()
@@ -526,14 +533,18 @@ class ExchangeAPI:
                 open_orders = self.list_open_orders(sym)
                 summary["orders"].extend(open_orders)
 
-                # Heuristic: if we find an open position but no reduceOnly stop/limit on opposite side, attach
+                # Heuristic: if open position but no reduceOnly stop/limit on opposite side, attach
                 has_sl = any(o for o in open_orders if o.get("type") in ("stop", "stop_loss") and o.get("reduceOnly"))
                 has_tp = any(o for o in open_orders if o.get("type") in ("limit", "take_profit") and o.get("reduceOnly"))
                 if positions and (not has_sl or not has_tp):
-                    pos_qty = abs(float(positions[0].get("contracts") or positions[0].get("contractsSize") or positions[0].get("amount") or 0))
+                    pos_qty = abs(float(
+                        positions[0].get("contracts")
+                        or positions[0].get("contractsSize")
+                        or positions[0].get("amount")
+                        or 0
+                    ))
                     side = positions[0].get("side", "").lower()  # "long"|"short"
                     last = self.get_price(sym)
-                    # default 1.5x ATR etc. would be better, but we attach a basic guard if missing
                     sl = last * (0.98 if side == "long" else 1.02)
                     tp = last * (1.02 if side == "long" else 0.98)
                     try:
@@ -582,5 +593,3 @@ class ExchangeAPI:
     async def close(self):
         """For parity with ws adapters; ccxt has no persistent connection to close here."""
         return
-
-
