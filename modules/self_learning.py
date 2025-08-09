@@ -24,13 +24,10 @@ Experience = namedtuple("Experience", ["state", "action", "reward", "next_state"
 class ReplayBuffer:
     def __init__(self, capacity: int):
         self.buffer = deque(maxlen=capacity)
-
     def push(self, state, action, reward, next_state, done):
         self.buffer.append(Experience(state, action, reward, next_state, done))
-
     def sample(self, batch_size: int):
         return random.sample(self.buffer, batch_size)
-
     def __len__(self):
         return len(self.buffer)
 
@@ -42,7 +39,6 @@ class DQNetwork(nn.Module):
         self.fc2 = nn.Linear(hidden_dims[0], hidden_dims[1])
         self.fc3 = nn.Linear(hidden_dims[1], hidden_dims[2])
         self.out = nn.Linear(hidden_dims[2], output_dim)
-
     def forward(self, x):
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
@@ -52,21 +48,17 @@ class DQNetwork(nn.Module):
 
 class SelfLearningBot:
     """
-    DQN-based agent:
-      - builds compact state vector from live OHLCV + indicators
-      - epsilon-greedy action selection
-      - interacts through TradeExecutor (paper/live), with optional SL/TP
-      - stores experiences and learns with target network
+    DQN-based agent with minimal defaults to avoid breaking older wiring.
     """
 
     def __init__(
         self,
         data_provider: DataManager,
         error_handler: ErrorHandler,
-        reward_system: RewardSystem,
-        risk_manager: Optional[RiskManager],
-        state_size: int,
-        action_size: int = 6,
+        reward_system: Optional[RewardSystem] = None,
+        risk_manager: Optional[RiskManager] = None,
+        state_size: int = 5,
+        action_size: int = 6,  # buy/sell/hold/close + extras
         hidden_dims: List[int] = [128, 64, 32],
         batch_size: int = 64,
         gamma: float = 0.99,
@@ -82,7 +74,7 @@ class SelfLearningBot:
     ):
         self.data_provider = data_provider
         self.error_handler = error_handler
-        self.reward_system = reward_system
+        self.reward_system = reward_system or RewardSystem()
         self.risk_manager = risk_manager
 
         self.state_size = state_size
@@ -288,3 +280,4 @@ class SelfLearningBot:
             return float(df["close"].iloc[-1])
         except Exception:
             return float(state[0]) if state.size > 0 else 0.0
+
