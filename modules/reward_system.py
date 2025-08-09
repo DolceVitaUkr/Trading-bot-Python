@@ -88,3 +88,29 @@ class RewardSystem:
         except Exception as e:
             logger.error(f"calculate_reward error: {e}")
             return 0.0
+from datetime import datetime
+
+def calculate_points(
+    *,
+    profit: float,
+    entry_time: datetime,
+    exit_time: datetime,
+    stop_loss_triggered: bool,
+    risk_adjusted: bool = False,
+    trade_type: str = "scalp",
+    max_drawdown_pct: float = 0.0
+) -> float:
+    """
+    Back-compat wrapper:
+      - `profit` is interpreted as **percentage** (e.g., 1.2 = +1.2%)
+      - hours_held derived from entry/exit
+      - ignores `risk_adjusted` flag (kept for signature compatibility)
+    """
+    hours_held = max(0.0, (exit_time - entry_time).total_seconds() / 3600.0)
+    rs = RewardSystem(trade_type=trade_type)
+    return rs.calculate_points(
+        profit_pct=float(profit),
+        hours_held=float(hours_held),
+        stop_loss_triggered=bool(stop_loss_triggered),
+        max_drawdown_pct=float(max_drawdown_pct),
+    )
