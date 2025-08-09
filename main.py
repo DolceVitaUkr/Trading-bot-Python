@@ -6,6 +6,8 @@ import signal
 import asyncio
 import logging
 import time
+import threading
+from typing import Dict, Any
 from datetime import datetime, timezone
 
 import config
@@ -18,7 +20,7 @@ from modules.error_handler import ErrorHandler, OrderExecutionError, RiskViolati
 from modules.trade_simulator import TradeSimulator
 from modules.ui import TradingUI
 from state.runtime_state import RuntimeState
-from modules.notification_manager import NotificationManager, TradeEvent
+from modules.notification_manager import NotificationManager
 from modules.telegram_bot import TelegramNotifier
 
 PROJECT_ROOT = os.path.dirname(__file__)
@@ -30,11 +32,13 @@ logger = logging.getLogger(__name__)
 
 class TradingBot:
     def __init__(self):
+        # --- environment ---
         self.environment = config.ENVIRONMENT.lower()
         self.simulation = (self.environment == "simulation")
         self.timeframe = getattr(config, "PRIMARY_TIMEFRAME", "15m")
         self.current_symbol = getattr(config, "DEFAULT_SYMBOL", "BTC/USDT")
 
+        # --- state & core modules ---
         self.state = RuntimeState()
         self.data_manager = DataManager(test_mode=self.simulation)
         self.exchange = ExchangeAPI()
@@ -42,7 +46,8 @@ class TradingBot:
         self.error_handler = ErrorHandler()
         self.pair_manager = PairManager()
         self.simulator = TradeSimulator()
-        # simple reward/risk stubs if you have them; else pass None and bot will size by default notional
+
+        # reward/risk are optional
         try:
             from modules.reward_system import RewardSystem
             from modules.risk_management import RiskManager
@@ -62,7 +67,7 @@ class TradingBot:
             symbol=self.current_symbol,
         )
 
-        # Notifier + notification policy
+        # --- notifications ---
         self.notifier = TelegramNotifier(disable_async=not getattr(config, "ASYNC_TELEGRAM", True))
         self.notifications = NotificationManager(
             notifier=self.notifier,
@@ -71,11 +76,10 @@ class TradingBot:
             heartbeat_minutes=getattr(config, "TELEGRAM_HEARTBEAT_MIN", 10),
         )
 
-        # UI
+        # --- UI ---
         self.ui = TradingUI(self)
-        self._register_ui_handlers()
 
-        # UI-visible flags
+        # --- UI-visible flags ---
         self.is_connected = True
         self.is_training = False
         self.is_trading = False
@@ -83,34 +87,63 @@ class TradingBot:
         self.portfolio_value = self.current_balance
         self.last_heartbeat = None
 
+        # --- lifecycle flags ---
         self._running = False
-        self._loop = asyncio.get_event_loop()
+
+        # --- background asyncio loop for bot tasks ---
+        self._loop = asyncio.new_event_loop()
+        self._loop_thread = threading.Thread(target=self._loop.run_forever, name="bot-asyncio", daemon=True)
+        self._loop_thread.start()
+
+        # after loop exists, register UI actions that schedule work on it
+        self._register_ui_handlers()
 
     # ----- UI hooking -----
-
     def _register_ui_handlers(self):
-        self.ui.add_action_handler("start_training", lambda: asyncio.run_coroutine_threadsafe(self._run_simulation(), self._loop))
-        self.ui.add_action_handler("stop_training", lambda: self._stop())
-        self.ui.add_action_handler("start_trading", lambda: asyncio.run_coroutine_threadsafe(self._run_live_trading(), self._loop))
-        self.ui.add_action_handler("stop_trading", lambda: asyncio.run_coroutine_threadsafe(self._shutdown(), self._loop))
+        self.ui.add_action_handler(
+            "start_training",
+            lambda: asyncio.run_coroutine_threadsafe(self._run_simulation(), self._loop)
+        )
+        self.ui.add_action_handler(
+            "stop_training",
+            self._stop
+        )
+        self.ui.add_action_handler(
+            "start_trading",
+            lambda: asyncio.run_coroutine_threadsafe(self._run_live_trading(), self._loop)
+        )
+        self.ui.add_action_handler(
+            "stop_trading",
+            lambda: asyncio.run_coroutine_threadsafe(self._shutdown(), self._loop)
+        )
 
     def apply_notification_prefs(self, prefs: Dict[str, Any]):
         self.notifications.apply_prefs(prefs)
 
     # ----- simulation -----
-
     async def _run_simulation(self):
         try:
             self._running = True
             self.is_training = True
             df = self.data_manager.load_historical_data(self.current_symbol, self.timeframe)
-            market_data = [[int(ts.value // 1_000_000), r["open"], r["high"], r["low"], r["close"], r["volume"]] for ts, r in df.iterrows()]
+            if df is None or len(df) == 0:
+                self.notifications.notify_status("No historical data available for simulation.", "info")
+                return
+
+            # Convert to [ms, o, h, l, c, v]
+            market_data = []
+            for ts, r in df.iterrows():
+                # pandas Timestamp .value is ns since epoch
+                ms = int(int(getattr(ts, "value", 0)) // 1_000_000)
+                market_data.append([ms, r["open"], r["high"], r["low"], r["close"], r["volume"]])
+
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, self.simulator.run, market_data)
-            balance = self.simulator.wallet_balance
-            points = self.simulator.points
+
+            balance = float(getattr(self.simulator, "wallet_balance", self.current_balance))
+            points = float(getattr(self.simulator, "points", 0.0))
             self.current_balance = balance
-            self.portfolio_value = self.simulator.portfolio_value
+            self.portfolio_value = float(getattr(self.simulator, "portfolio_value", balance))
             self.ui.update_simulation_results(final_balance=balance, total_points=points)
             self.notifications.notify_status(f"Simulation complete. Balance={balance:.2f}, Points={points:.2f}")
         except Exception as e:
@@ -120,10 +153,9 @@ class TradingBot:
             self._running = False
 
     # ----- live loop -----
-
     async def _run_live_trading(self):
         symbol = self.current_symbol
-        interval = getattr(config, "LIVE_LOOP_INTERVAL", 5) or 5
+        interval = float(getattr(config, "LIVE_LOOP_INTERVAL", 5) or 5)
         self._running = True
         self.is_trading = True
         self.notifications.notify_status("Live trading loop started ✅")
@@ -131,9 +163,10 @@ class TradingBot:
         while self._running:
             try:
                 df = self.data_manager.load_historical_data(symbol, self.timeframe)
-                if len(df) == 0:
+                if df is None or len(df) == 0:
                     await asyncio.sleep(interval)
                     continue
+
                 latest = df.iloc[-1]
                 price = float(latest["close"])
 
@@ -141,14 +174,14 @@ class TradingBot:
                 self.sl_bot.act_and_learn(symbol, datetime.now(timezone.utc))
 
                 # metrics → UI + notifications snapshot
-                bal = self.executor.get_balance()
+                bal = float(self.executor.get_balance())
                 eq = bal
                 try:
-                    eq += self.executor.unrealized_pnl(symbol)
+                    eq += float(self.executor.unrealized_pnl(symbol))
                 except Exception:
                     pass
-                self.current_balance = float(bal)
-                self.portfolio_value = float(eq)
+                self.current_balance = bal
+                self.portfolio_value = eq
 
                 self.notifications.update_metrics_snapshot(
                     price=price,
@@ -169,34 +202,46 @@ class TradingBot:
             await asyncio.sleep(interval)
 
     # ----- lifecycle -----
-
     def run(self):
+        # OS signals → schedule shutdown on our background loop
         for sig in (signal.SIGINT, signal.SIGTERM):
-            signal.signal(sig, lambda *_: asyncio.ensure_future(self._shutdown()))
+            signal.signal(sig, lambda *_: self._loop.call_soon_threadsafe(asyncio.create_task, self._shutdown()))
+
         try:
             if hasattr(self.ui, "set_title"):
                 self.ui.set_title(f"Trading Bot ({self.environment.title()})")
         except Exception:
             pass
+
         self.ui.run()
 
     async def _shutdown(self):
-        if not self._running and not self.is_trading and not self.is_training:
+        if not (self._running or self.is_trading or self.is_training):
             return
         self._running = False
         self.is_trading = False
         self.is_training = False
         self.notifications.notify_status("Trading bot stopping…")
+
+        # let UI settle
         await asyncio.sleep(0.1)
         try:
             if hasattr(self.ui, "shutdown"):
-                await self.ui.shutdown()
+                maybe_coro = self.ui.shutdown()
+                if asyncio.iscoroutine(maybe_coro):
+                    await maybe_coro
         except Exception:
             pass
+
         try:
-            await self.exchange.close()
+            maybe_close = getattr(self.exchange, "close", None)
+            if callable(maybe_close):
+                res = maybe_close()
+                if asyncio.iscoroutine(res):
+                    await res
         except Exception:
             pass
+
         self.notifications.notify_status("Trading bot stopped ❌")
         self.notifier.graceful_shutdown()
 
