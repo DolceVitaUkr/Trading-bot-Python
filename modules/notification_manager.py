@@ -1,8 +1,6 @@
-# modules/notification_manager.py
-
 import time
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from modules.telegram_bot import TelegramNotifier
 
 logger = logging.getLogger(__name__)
@@ -34,7 +32,7 @@ class NotificationManager:
         self.heartbeat_minutes = int(heartbeat_minutes)
 
         # rolling buffers
-        self._paper_events: list[Dict[str, Any]] = []
+        self._paper_events: List[Dict[str, Any]] = []
         self._last_paper_flush = 0.0
         self._last_heartbeat = 0.0
 
@@ -120,7 +118,7 @@ class NotificationManager:
             self._paper_events.clear()
             self._last_paper_flush = now
 
-    def _fmt_paper_recap(self, events: list[Dict[str, Any]]) -> str:
+    def _fmt_paper_recap(self, events: List[Dict[str, Any]]) -> str:
         n = len(events)
         realized = [e for e in events if e.get("closed")]
         p_count = len(realized)
