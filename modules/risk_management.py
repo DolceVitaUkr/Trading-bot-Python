@@ -1,8 +1,7 @@
 # modules/risk_management.py
-
 import logging
 from dataclasses import dataclass, asdict
-from typing import Dict, Optional, Literal
+from typing import Dict, Optional, Literal, Tuple
 
 import config
 from modules.error_handler import RiskViolationError
@@ -56,32 +55,43 @@ class RiskManager:
         # Balances & caps
         self.account_balance = float(account_balance)
 
-        # Pull defaults from config if not provided
+        # --- Map to your config keys ---
+        # Use KPI_TARGETS.max_drawdown if provided, else fallback 0.15
+        kpis = getattr(config, "KPI_TARGETS", {})
         self.max_drawdown_limit = (
             max_drawdown_limit
             if max_drawdown_limit is not None
-            else getattr(config, "MAX_DRAWDOWN_LIMIT", 0.15)
+            else float(kpis.get("max_drawdown", 0.15))
         )
+
+        # Pick domain caps from RISK_CAPS based on exchange profile
+        caps_map = getattr(config, "RISK_CAPS", {}) or {}
+        profile = str(getattr(config, "EXCHANGE_PROFILE", "spot")).lower()
+        domain_key = "perp" if "perp" in profile else "crypto_spot"
+        domain_caps = caps_map.get(domain_key, {"per_pair_pct": 0.15, "portfolio_concurrent_pct": 0.30})
+
         self.per_pair_cap_pct = (
             per_pair_cap_pct
             if per_pair_cap_pct is not None
-            else getattr(config, "EXPOSURE_CAPS", {}).get("per_pair_pct", 0.15)
+            else float(domain_caps.get("per_pair_pct", 0.15))
         )
         self.portfolio_cap_pct = (
             portfolio_cap_pct
             if portfolio_cap_pct is not None
-            else getattr(config, "EXPOSURE_CAPS", {}).get("portfolio_concurrent_pct", 0.30)
+            else float(domain_caps.get("portfolio_concurrent_pct", 0.30))
         )
+
+        # Base risk per trade: map from TRADE_SIZE_PERCENT by default
         self.base_risk_per_trade_pct = (
             base_risk_per_trade_pct
             if base_risk_per_trade_pct is not None
-            else getattr(config, "BASE_RISK_PCT", 0.05)
+            else float(getattr(config, "TRADE_SIZE_PERCENT", 0.05))
         )
 
         # Behavior knobs
-        self.min_rr = min_rr
-        self.atr_mult_sl = atr_mult_sl
-        self.atr_mult_tp = atr_mult_tp
+        self.min_rr = float(min_rr)
+        self.atr_mult_sl = float(atr_mult_sl)
+        self.atr_mult_tp = float(atr_mult_tp)
 
         # State
         self.open_positions: Dict[str, PositionRisk] = {}
@@ -89,9 +99,9 @@ class RiskManager:
         self.current_equity = self.account_balance
 
         # Hard guardrails from config
-        self.min_trade_usd = getattr(config, "MIN_TRADE_AMOUNT_USD", 10.0)
-        self.max_leverage = getattr(config, "MAX_LEVERAGE", 3)  # conservative default
-        self.fee_rate = getattr(config, "FEE_PERCENTAGE", 0.002)  # taker default
+        self.min_trade_usd = float(getattr(config, "MIN_TRADE_AMOUNT_USD", 10.0))
+        self.max_leverage = float(getattr(config, "MAX_LEVERAGE", 3))  # optional in config; fallback 3
+        self.fee_rate = float(getattr(config, "FEE_PERCENTAGE", 0.002))  # taker default
 
     # ────────────────────────────────────────────────────────────────────────────
     # Equity / Drawdown
@@ -124,7 +134,7 @@ class RiskManager:
         entry_price: float,
         atr: float,
         rr: Optional[float] = None,
-    ) -> tuple[float, float]:
+    ) -> Tuple[float, float]:
         """
         Compute SL and TP using ATR bands and R:R.
         """
@@ -348,7 +358,7 @@ class RiskManager:
         risk_pct: float,
         rr: float,
         regime: Optional[Literal["trend", "range"]],
-    ) -> tuple[float, float]:
+    ) -> Tuple[float, float]:
         """
         Adjust risk and RR by regime:
           - In trend: slightly reduce exploration & widen SL → higher RR target
