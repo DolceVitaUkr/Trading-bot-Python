@@ -1,5 +1,3 @@
-# modules/telegram_bot.py
-
 import os
 import asyncio
 import threading
@@ -34,13 +32,19 @@ class TelegramNotifier:
 
     def __init__(self, disable_async: bool = False):
         token = os.getenv("TELEGRAM_BOT_TOKEN", config.TELEGRAM_BOT_TOKEN)
-        chat_id = os.getenv("TELEGRAM_CHAT_ID", str(config.TELEGRAM_CHAT_ID))
+        chat_id_env = os.getenv("TELEGRAM_CHAT_ID", str(config.TELEGRAM_CHAT_ID))
 
-        if not token or not chat_id:
+        if not token or not chat_id_env:
             raise ValueError("Telegram bot token and chat ID must be set in config or environment")
 
+        # allow numeric or string chat ids (channels/usernames)
+        try:
+            chat_id: Union[int, str] = int(chat_id_env)
+        except (TypeError, ValueError):
+            chat_id = chat_id_env.strip()
+
         self._bot = Bot(token=token)
-        self._chat_id = int(chat_id)
+        self._chat_id = chat_id
         self._disable_async = bool(disable_async)
 
         # Async infra
@@ -145,8 +149,8 @@ class TelegramNotifier:
             self._thread.join(timeout=2)
         try:
             # Close underlying HTTP session if present (best-effort).
-            sess = getattr(self._bot, "session", None)
-            if sess:
+            sess = getattr(self._bot, "session", None) or getattr(self._bot, "request", None)
+            if hasattr(sess, "close"):
                 sess.close()
         except Exception:
             pass
@@ -166,7 +170,6 @@ class TelegramNotifier:
                 )
                 if asyncio.iscoroutine(maybe_coro):
                     await maybe_coro
-                # v13 blocking returns Message; v20+ returns coroutine awaited above
                 return
             except RetryAfter as e:
                 delay = getattr(e, "retry_after", 1)
