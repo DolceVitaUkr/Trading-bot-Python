@@ -106,7 +106,8 @@ class TradeSimulator:
         result = self.executor.execute_order(self.symbol, "buy", quantity=qty, price=price)
         self.wallet_balance = self.executor.get_balance()
         entry_time = datetime.fromtimestamp(timestamp / 1000)
-        self._entry_info[self.symbol] = {"price": price, "time": entry_time}
+        # store qty for profit % calculation on exit
+        self._entry_info[self.symbol] = {"price": price, "qty": float(result.get("quantity", qty)), "time": entry_time}
 
         self.trade_history.append({**result, "timestamp": timestamp})
         self._summary_events.append(
@@ -119,8 +120,12 @@ class TradeSimulator:
         entry = self._entry_info.pop(self.symbol)
         pnl = result.get("profit", 0.0)
 
+        # Convert PnL to percentage of entry notional for points
+        notional = max(1e-12, entry["price"] * entry["qty"])
+        profit_pct = (pnl / notional) * 100.0
+
         points = calculate_points(
-            profit=pnl,
+            profit=profit_pct,
             entry_time=entry["time"],
             exit_time=datetime.fromtimestamp(timestamp / 1000),
             stop_loss_triggered=False,
@@ -145,3 +150,4 @@ class TradeSimulator:
             f"Portfolio:     ${self.portfolio_value:.2f}\n"
             f"Trades:\n- " + "\n- ".join(self._summary_events)
         )
+
