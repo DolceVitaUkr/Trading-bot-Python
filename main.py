@@ -66,10 +66,9 @@ class TradingBot:
         self.notifier = TelegramNotifier(disable_async=not getattr(config, "ASYNC_TELEGRAM", True))
         self.notifications = NotificationManager(
             notifier=self.notifier,
-            mode="paper" if self.simulation else "live",
-            paper_recap_min=getattr(config, "TELEGRAM_PAPER_RECAP_MIN", 60),
+            paper_recap_minutes=getattr(config, "TELEGRAM_PAPER_RECAP_MIN", 60),
             live_alert_level=getattr(config, "TELEGRAM_LIVE_ALERT_LEVEL", "normal"),
-            heartbeat_min=getattr(config, "TELEGRAM_HEARTBEAT_MIN", 10),
+            heartbeat_minutes=getattr(config, "TELEGRAM_HEARTBEAT_MIN", 10),
         )
 
         # UI
@@ -216,3 +215,4 @@ if __name__ == "__main__":
     )
     bot = TradingBot()
     bot.run()
+
