@@ -18,22 +18,15 @@ from utils.utilities import ensure_directory, retry
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 handler = logging.StreamHandler()
-handler.setFormatter(
-    logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-)
+handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
 if not any(isinstance(h, logging.StreamHandler) for h in logger.handlers):
     logger.addHandler(handler)
 
 # Bybit v5 market kline endpoint (public)
-BYBIT_V5_KLINE = (getattr(config, "BYBIT_BASE_URL", "https://api.bybit.com").rstrip("/")
-                  + "/v5/market/kline")
+BYBIT_V5_KLINE = (getattr(config, "BYBIT_BASE_URL", "https://api.bybit.com").rstrip("/") + "/v5/market/kline")
 
 
-# ────────────────────────────────────────────────────────────────────────────────
-# Helpers
-# ────────────────────────────────────────────────────────────────────────────────
 def timeframe_to_minutes(tf: str) -> int:
-    """Convert timeframe string like '5m','1h','1d','1w' to minutes."""
     unit_map = {"m": 1, "h": 60, "d": 1440, "w": 10080}
     unit = tf[-1]
     num = int(tf[:-1])
@@ -54,20 +47,11 @@ def _floor_to_tf(ts: int, tf_ms: int) -> int:
     return ts - (ts % tf_ms)
 
 
-# ────────────────────────────────────────────────────────────────────────────────
-# DataManager
-# ────────────────────────────────────────────────────────────────────────────────
 class DataManager:
     """
-    Historical OHLCV manager (no mocks; uses live Bybit HTTP):
-    - Fetches v5 klines for spot/perp
-    - Writes partitioned parquet by day:
-        {HISTORICAL_DATA_PATH}/{SYMBOL}/{TF}/YYYY-MM-DD.parquet
-    - Dedupes, sorts, gap-fills (safe after restarts)
-    - Exposes readers: load_historical_data/load_window/load_all/last_timestamp
-    - WebSocket-ready: upsert_bar() accepts finalized bars
-
-    Supported TF (initial): '5m', '15m'. Extend TF_MAP and INTERVAL_MAP to add more.
+    Historical OHLCV manager for Bybit v5 (HTTP).
+    Partitioned parquet by day:
+      {HISTORICAL_DATA_PATH}/{SYMBOL}/{TF}/YYYY-MM-DD.parquet
     """
 
     TF_MAP = {
@@ -75,7 +59,6 @@ class DataManager:
         "15m": 15 * 60 * 1000,
     }
 
-    # Bybit v5 interval strings
     INTERVAL_MAP = {
         "5m": "5",
         "15m": "15",
@@ -83,16 +66,12 @@ class DataManager:
 
     DEFAULT_CATEGORY = "spot"  # "spot" or "linear"/"inverse"
 
-    # HTTP limits/budgets
     _CONNECT_TIMEOUT = 3.05
     _READ_TIMEOUT = 10.0
     _REQS_PER_MIN_BUDGET = 40
     _PAGE_LIMIT = 1000  # v5 max rows/page
 
     def __init__(self, test_mode: bool = False):
-        """
-        test_mode kept only for signature compatibility; it does nothing (no mocks).
-        """
         self.data_folder = config.HISTORICAL_DATA_PATH
         ensure_directory(self.data_folder)
         self.data_root = pathlib.Path(self.data_folder)
@@ -101,9 +80,8 @@ class DataManager:
         self._rate_bucket: List[float] = []
         self._meta_cache: Dict[str, Dict[str, Any]] = {}
 
-    # ──────────────────────────────────────────────────────────────────────
-    # Public API (backwards-compatible names)
-    # ──────────────────────────────────────────────────────────────────────
+    # ---------------- Public API ---------------- #
+
     def update_klines(
         self,
         symbol: str,
@@ -113,22 +91,13 @@ class DataManager:
         since: Optional[datetime] = None,
         until: Optional[datetime] = None,
     ) -> bool:
-        """
-        Append/create OHLCV data for symbol/timeframe.
-
-        Back-compat:
-        - If klines provided -> write/merge them.
-        - Else -> fetch from Bybit v5 since last_ts-3*tf to now, paginate, dedupe.
-        """
         try:
             self._validate_tf(timeframe)
             category = (category or self.DEFAULT_CATEGORY).lower()
 
             if klines:
-                # direct write path (e.g., from a custom fetcher)
                 new_df = self._process_data(klines)
                 self._write_partition_df(symbol, timeframe, new_df)
-                # update last_ts meta
                 if not new_df.empty:
                     last_ts = int(new_df.index[-1].value // 10**6)
                     meta = self._load_meta(symbol, timeframe)
@@ -137,7 +106,6 @@ class DataManager:
                         self._save_meta(symbol, timeframe, meta)
                 return True
 
-            # live fetch path
             now_utc = datetime.now(timezone.utc)
             if until is None:
                 until = now_utc
@@ -146,7 +114,6 @@ class DataManager:
             tf_ms = self.TF_MAP[timeframe]
             if since is None:
                 if last_ts is None:
-                    # first boot pull: ~120d 15m, ~30d 5m (tunable)
                     days = 120 if timeframe == "15m" else 30
                     since = now_utc - timedelta(days=days)
                 else:
@@ -166,9 +133,6 @@ class DataManager:
             return False
 
     def load_historical_data(self, symbol: str, timeframe: str) -> pd.DataFrame:
-        """
-        Load *all* OHLCV for symbol/timeframe from partitioned parquet (cached).
-        """
         key = f"{symbol}_{timeframe}_all"
         if key in self.cache:
             return self.cache[key]
@@ -183,9 +147,6 @@ class DataManager:
         lookback: int = 500,
         end_time: Optional[datetime] = None,
     ) -> pd.DataFrame:
-        """
-        Load a rolling window of bars (deduped, sorted).
-        """
         self._validate_tf(timeframe)
         end_time = end_time or datetime.now(timezone.utc)
         tf_ms = self.TF_MAP[timeframe]
@@ -194,9 +155,6 @@ class DataManager:
         return self._finalize_df(df)
 
     def last_timestamp(self, symbol: str, timeframe: str) -> Optional[int]:
-        """
-        Return last stored candle timestamp in ms, or None if no data.
-        """
         meta = self._load_meta(symbol, timeframe)
         ts = meta.get("last_ts")
         if ts is not None:
@@ -207,9 +165,6 @@ class DataManager:
         return int(tail.index[-1].value // 10**6)
 
     def has_gap(self, symbol: str, timeframe: str) -> bool:
-        """
-        Quick gap detector on last ~220 bars.
-        """
         self._validate_tf(timeframe)
         tf_ms = self.TF_MAP[timeframe]
         df = self.load_window(symbol, timeframe, lookback=220)
@@ -218,12 +173,7 @@ class DataManager:
         diffs = df.index.to_series().diff().dropna().view("i8") // 10**6
         return (diffs != tf_ms).any()
 
-    # Hook for WebSocket adapter to push *finalized* bars
     def upsert_bar(self, symbol: str, timeframe: str, bar: Dict[str, Any], category: Optional[str] = None) -> None:
-        """
-        Insert/replace one completed bar in storage.
-        bar = {timestamp(ms), open, high, low, close, volume}
-        """
         self._validate_tf(timeframe)
         ts = int(bar["timestamp"])
         tf_ms = self.TF_MAP[timeframe]
@@ -243,9 +193,8 @@ class DataManager:
             meta["last_ts"] = ts
             self._save_meta(symbol, timeframe, meta)
 
-    # ──────────────────────────────────────────────────────────────────────
-    # Fetch & Persist
-    # ──────────────────────────────────────────────────────────────────────
+    # ---------------- Fetch & Persist ---------------- #
+
     @retry(times=3, backoff=2)
     def _fetch_page(
         self,
@@ -255,10 +204,6 @@ class DataManager:
         start_ms: int,
         end_ms: int,
     ) -> List[Dict[str, Any]]:
-        """
-        Fetch one page of v5 klines between start_ms and end_ms (inclusive).
-        Returns list of dict bars in ascending time.
-        """
         params: Dict[str, Any] = {
             "category": category,
             "symbol": symbol.replace("/", ""),
@@ -281,7 +226,6 @@ class DataManager:
         if not rows:
             return []
 
-        # rows schema: [startTime, open, high, low, close, volume, turnover]
         recs = []
         for k in rows:
             ts = int(k[0])
@@ -318,8 +262,6 @@ class DataManager:
 
         while cursor <= end_ms:
             self._throttle_bucket()
-
-            # End of this page
             page_end = min(cursor + (self._PAGE_LIMIT - 1) * tf_ms, end_ms)
             recs = self._fetch_page(symbol, timeframe, category, cursor, page_end)
             if not recs:
@@ -334,7 +276,6 @@ class DataManager:
             )
             df.index.name = "timestamp"
 
-            # Alignment sanity
             aligned = ((df.index.view('i8') // 10**6) % tf_ms == 0).all()
             if not aligned:
                 raise RuntimeError("Fetched bars not aligned to timeframe")
@@ -343,7 +284,6 @@ class DataManager:
             partitions_touched |= touched
             rows_added += len(df)
 
-            # advance cursor to next bar after last row
             last_ts = int(df.index[-1].value // 10**6)
             meta = self._load_meta(symbol, timeframe)
             if meta.get("last_ts") is None or last_ts > int(meta["last_ts"]):
@@ -354,9 +294,8 @@ class DataManager:
 
         return rows_added, len(partitions_touched)
 
-    # ──────────────────────────────────────────────────────────────────────
-    # IO Layout: partitioned parquet
-    # ──────────────────────────────────────────────────────────────────────
+    # ---------------- IO Layout: partitioned parquet ---------------- #
+
     def _symbol_dir(self, symbol: str, timeframe: str) -> pathlib.Path:
         return self.data_root / self._sanitize_symbol(symbol) / timeframe
 
@@ -367,10 +306,6 @@ class DataManager:
         return self._symbol_dir(symbol, timeframe) / f"{day.strftime('%Y-%m-%d')}.parquet"
 
     def _write_partition_df(self, symbol: str, timeframe: str, df: pd.DataFrame) -> set:
-        """
-        Upsert DataFrame into daily partitions (dedupe + sort).
-        Returns set of touched filenames.
-        """
         if df is None or df.empty:
             return set()
 
@@ -391,7 +326,6 @@ class DataManager:
                 merged = g
 
             merged = self._finalize_df(merged)
-            # write tz-naive for parquet
             tmp = merged.copy()
             tmp.index = tmp.index.tz_localize(None)
             tmp.to_parquet(path, engine="pyarrow", compression="snappy")
@@ -399,9 +333,8 @@ class DataManager:
 
         return touched
 
-    # ──────────────────────────────────────────────────────────────────────
-    # Readers
-    # ──────────────────────────────────────────────────────────────────────
+    # ---------------- Readers ---------------- #
+
     def _read_all(self, symbol: str, timeframe: str) -> pd.DataFrame:
         symdir = self._symbol_dir(symbol, timeframe)
         if not symdir.exists():
@@ -475,9 +408,8 @@ class DataManager:
         df = self._finalize_df(df)
         return df.tail(n)
 
-    # ──────────────────────────────────────────────────────────────────────
-    # Meta
-    # ──────────────────────────────────────────────────────────────────────
+    # ---------------- Meta ---------------- #
+
     def _load_meta(self, symbol: str, timeframe: str) -> Dict[str, Any]:
         path = self._meta_path(symbol, timeframe)
         key = path.as_posix()
@@ -502,14 +434,10 @@ class DataManager:
         tmp.replace(path)
         self._meta_cache[path.as_posix()] = meta
 
-    # ──────────────────────────────────────────────────────────────────────
-    # Internal helpers
-    # ──────────────────────────────────────────────────────────────────────
+    # ---------------- Internals ---------------- #
+
     def _sanitize_symbol(self, symbol: str) -> str:
         return symbol.replace("/", "_").upper()
-
-    def _meta_path(self, symbol: str, timeframe: str) -> pathlib.Path:
-        return self._symbol_dir(symbol, timeframe) / "_meta.json"
 
     def _finalize_df(self, df: pd.DataFrame) -> pd.DataFrame:
         if df is None or df.empty:
@@ -528,9 +456,18 @@ class DataManager:
     def _throttle_bucket(self) -> None:
         t = time.time()
         self._rate_bucket.append(t)
-        # keep last 60s
         self._rate_bucket = [x for x in self._rate_bucket if t - x <= 60.0]
         if len(self._rate_bucket) > self._REQS_PER_MIN_BUDGET:
             sleep_s = 60.0 - (t - self._rate_bucket[0])
             if sleep_s > 0:
                 time.sleep(min(sleep_s, 1.5))
+
+    # Small helper to convert raw klines -> DataFrame (used when klines passed in)
+    def _process_data(self, klines: List[list]) -> pd.DataFrame:
+        # Expect rows like [ts, open, high, low, close, volume]
+        if not klines:
+            return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+        df = pd.DataFrame(klines, columns=["timestamp", "open", "high", "low", "close", "volume"])
+        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
+        df.set_index("timestamp", inplace=True)
+        return self._finalize_df(df)
