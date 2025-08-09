@@ -1,6 +1,9 @@
-# modules/config.py
 import os
 from typing import Literal
+from dotenv import load_dotenv
+
+# Load .env if present
+load_dotenv()
 
 # ────────────────────────────────────────────────────────────────────────────────
 # Environment & Mode
@@ -30,19 +33,32 @@ LOG_FILE  = os.getenv("LOG_FILE", "bot.log")                # path to write log 
 # ────────────────────────────────────────────────────────────────────────────────
 # Bybit API Credentials
 # ────────────────────────────────────────────────────────────────────────────────
-# For real trading (MAINNET)
+# Env var names must be exactly these:
+#   BYBIT_API_KEY, BYBIT_API_SECRET
+#   SIMULATION_BYBIT_API_KEY, SIMULATION_BYBIT_API_SECRET
 BYBIT_API_KEY = os.getenv("BYBIT_API_KEY", "I2CQH3mXhPLIuWtS2W")
 BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET", "YmV6jkihwZDTFyIaiOarho1tzRr2QZ9xuNBv")
 
 # For simulation trading (TESTNET)
-SIMULATION_BYBIT_API_KEY = "ELdo9O5wuzDwyoVYDY"
-SIMULATION_BYBIT_API_SECRET = "g2MHBRpVyjAw7ITdmz2RT6cg8rRFIZGqtDrG"
+SIMULATION_BYBIT_API_KEY = os.getenv("SIMULATION_BYBIT_API_KEY", "ELdo9O5wuzDwyoVYDY")
+SIMULATION_BYBIT_API_SECRET = os.getenv("SIMULATION_BYBIT_API_SECRET", "g2MHBRpVyjAw7ITdmz2RT6cg8rRFIZGqtDrG")
+
 
 # ────────────────────────────────────────────────────────────────────────────────
 # Telegram Bot for Notifications
 # ────────────────────────────────────────────────────────────────────────────────
+# Env var names:
+#   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "7611295732:AAHazYz46ynfueYthvQXvQRA9bYlxihEf1c")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "380533508")
+
+# Async sending for Telegram notifier
+ASYNC_TELEGRAM = os.getenv("ASYNC_TELEGRAM", "true").lower() in {"1", "true", "yes", "on"}
+
+# Notification policy
+TELEGRAM_PAPER_RECAP_MIN = int(os.getenv("TELEGRAM_PAPER_RECAP_MIN", "60"))
+TELEGRAM_LIVE_ALERT_LEVEL = os.getenv("TELEGRAM_LIVE_ALERT_LEVEL", "normal")  # quiet|normal|verbose
+TELEGRAM_HEARTBEAT_MIN = int(os.getenv("TELEGRAM_HEARTBEAT_MIN", "10"))
 
 # ────────────────────────────────────────────────────────────────────────────────
 # Paths & Intervals
@@ -55,7 +71,7 @@ SIMULATION_ORDER_DELAY = float(os.getenv("SIMULATION_ORDER_DELAY", "0.5"))  # se
 # ────────────────────────────────────────────────────────────────────────────────
 # Trading Defaults
 # ────────────────────────────────────────────────────────────────────────────────
-DEFAULT_SYMBOL         = os.getenv("DEFAULT_SYMBOL", "BTC/USDT")
+DEFAULT_SYMBOL           = os.getenv("DEFAULT_SYMBOL", "BTC/USDT")
 SIMULATION_START_BALANCE = float(os.getenv("SIMULATION_START_BALANCE", "1000.0"))
 
 # Risk sizing per trade (domain-specific handled in RISK_CAPS below)
@@ -138,4 +154,10 @@ EA_GENERATIONS        = int(os.getenv("EA_GENERATIONS", "10"))
 # ────────────────────────────────────────────────────────────────────────────────
 # Misc / Backwards Compat
 # ────────────────────────────────────────────────────────────────────────────────
-USE_TESTNET      = USE_SIMULATION   # legacy alias
+USE_TESTNET = USE_SIMULATION  # legacy alias
+
+
+
+
+
+
