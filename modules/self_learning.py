@@ -1,22 +1,27 @@
 # modules/self_learning.py
-
 import random
 import numpy as np
 from collections import deque, namedtuple
 from typing import List, Dict, Optional
 from datetime import datetime, timezone
+import logging
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-import logging
 
 from modules.data_manager import DataManager
 from modules.error_handler import ErrorHandler
-from modules.reward_system import RewardSystem, calculate_points
+from modules.reward_system import RewardSystem
 from modules.trade_executor import TradeExecutor
 from modules.technical_indicators import TechnicalIndicators
 from modules.risk_management import RiskManager, RiskViolationError
+
+try:
+    import pandas as pd
+except Exception:  # very unlikely, but guard NaN checks
+    pd = None  # type: ignore
 
 Experience = namedtuple("Experience", ["state", "action", "reward", "next_state", "done"])
 
@@ -35,10 +40,11 @@ class ReplayBuffer:
 class DQNetwork(nn.Module):
     def __init__(self, input_dim: int, hidden_dims: List[int], output_dim: int):
         super().__init__()
-        self.fc1 = nn.Linear(input_dim, hidden_dims[0])
-        self.fc2 = nn.Linear(hidden_dims[0], hidden_dims[1])
-        self.fc3 = nn.Linear(hidden_dims[1], hidden_dims[2])
-        self.out = nn.Linear(hidden_dims[2], output_dim)
+        h1, h2, h3 = hidden_dims
+        self.fc1 = nn.Linear(input_dim, h1)
+        self.fc2 = nn.Linear(h1, h2)
+        self.fc3 = nn.Linear(h2, h3)
+        self.out = nn.Linear(h3, output_dim)
     def forward(self, x):
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
@@ -69,7 +75,7 @@ class SelfLearningBot:
         memory_size: int = 100_000,
         tau: float = 0.005,
         training: bool = True,
-        timeframe: str = "1h",
+        timeframe: str = "15m",
         symbol: Optional[str] = None,
     ):
         self.data_provider = data_provider
@@ -140,6 +146,7 @@ class SelfLearningBot:
             nn.utils.clip_grad_norm_(self.policy_net.parameters(), 1.0)
             self.optimizer.step()
 
+            # Soft update target net
             for t_param, p_param in zip(self.target_net.parameters(), self.policy_net.parameters()):
                 t_param.data.mul_(1.0 - self.tau).add_(self.tau * p_param.data)
         except Exception as e:
@@ -165,17 +172,36 @@ class SelfLearningBot:
             risk_close = False
 
             if action_name in ("buy", "sell"):
-                sl_mult = 0.99 if action_name == "buy" else 1.01
-                tp_mult = 1.02 if action_name == "buy" else 0.98
+                is_buy = action_name == "buy"
+                side_str = "long" if is_buy else "short"
+
+                # initial SL/TP (will be refined by RiskManager if wired)
+                sl_mult = 0.99 if is_buy else 1.01
                 sl_px = price * sl_mult
-                tp_px = price * tp_mult
 
                 if self.risk_manager:
                     try:
-                        qty = self.risk_manager.calculate_position_size(entry_price=price, stop_price=sl_px)
+                        pos = self.risk_manager.calculate_position_size(
+                            symbol=sym,
+                            side=side_str,
+                            entry_price=price,
+                            stop_price=sl_px,
+                            atr=None,
+                            rr=None,
+                            regime=None,
+                        )
+                        qty = float(pos.position_size)
+                        sl_px = float(pos.stop_loss)
+                        tp_px = float(pos.take_profit)
                     except RiskViolationError as re:
                         self.logger.info(f"Risk blocked order: {re}")
                         return
+                else:
+                    # naive qty: 5% notional
+                    notional = price * 0.05
+                    qty = max(1e-6, notional / max(price, 1e-9))
+                    tp_px = price * (1.02 if is_buy else 0.98)
+
             elif action_name == "close":
                 risk_close = True
 
@@ -194,7 +220,7 @@ class SelfLearningBot:
             exit_price = float(tr.get("exit_price") or entry_price)
             q_used = float(tr.get("quantity") or (qty or 0.0))
 
-            reward_raw = self.reward_system.calculate_reward(
+            reward_score = self.reward_system.calculate_reward(
                 entry_price=entry_price,
                 exit_price=exit_price,
                 position_size=q_used,
@@ -204,22 +230,15 @@ class SelfLearningBot:
                 volatility=0.0,
                 stop_loss_triggered=False,
             )
-            reward_pts = calculate_points(
-                profit=reward_raw,
-                entry_time=ts,
-                exit_time=ts,
-                stop_loss_triggered=False,
-            )
-            reward_total = float(reward_raw + reward_pts)
 
             next_state = self._get_state(sym)
             done = tr.get("status") in ("closed",)
 
-            self.memory.push(state, action_idx, reward_total, next_state, done)
+            self.memory.push(state, action_idx, float(reward_score), next_state, done)
             self.train_steps += 1
             self.logger.info(
                 f"Step {self.train_steps} {sym} | action={action_name} qty={q_used:.8f} "
-                f"reward={reward_total:.4f} eps={self.epsilon:.4f}"
+                f"reward={float(reward_score):.4f} eps={self.epsilon:.4f}"
             )
 
             if self.training:
@@ -242,22 +261,29 @@ class SelfLearningBot:
         tail = df.iloc[-lookback:].copy()
 
         prices = tail["close"].to_numpy()
-        norm_price = float(prices[-1] / prices[0]) if prices[0] else 0.0
+        base = prices[0] if len(prices) else 0.0
+        norm_price = float(prices[-1] / base) if base else 0.0
 
         tail["sma_short"] = TechnicalIndicators.sma(tail["close"], window=10)
         tail["sma_long"] = TechnicalIndicators.sma(tail["close"], window=50)
         tail["rsi"] = TechnicalIndicators.rsi(tail["close"], window=14)
         last = tail.iloc[-1]
 
-        sma_short = float(last["sma_short"]) if last["sma_short"] is not None else 0.0
-        sma_long = float(last["sma_long"]) if last["sma_long"] is not None else 0.0
-        rsi_last = float(last["rsi"]) if last["rsi"] is not None else 0.0
-        vol_last = float(last["volume"])
+        def safe_val(x) -> float:
+            if pd is not None and hasattr(pd, "isna") and pd.isna(x):
+                return 0.0
+            return float(x) if x is not None else 0.0
+
+        sma_short = safe_val(last.get("sma_short"))
+        sma_long = safe_val(last.get("sma_long"))
+        rsi_last = safe_val(last.get("rsi"))
+        vol_last = safe_val(last.get("volume"))
+        px_last = prices[-1] if len(prices) else 0.0
 
         features = [
             norm_price,
-            (sma_short / prices[-1]) if prices[-1] else 0.0,
-            (sma_long / prices[-1]) if prices[-1] else 0.0,
+            (sma_short / px_last) if px_last else 0.0,
+            (sma_long / px_last) if px_last else 0.0,
             rsi_last / 100.0,
             vol_last,
         ]
@@ -271,13 +297,16 @@ class SelfLearningBot:
         return state
 
     def _action_to_command(self, action_idx: int) -> str:
+        # 0: buy, 1: sell, 2: hold, 3: buy (add), 4: sell (add), 5: close
         mapping = {0: "buy", 1: "sell", 2: "hold", 3: "buy", 4: "sell", 5: "close"}
         return mapping.get(action_idx, "hold")
 
     def _safe_last_price(self, symbol: str, state: np.ndarray) -> float:
         try:
             df = self.data_provider.load_historical_data(symbol, timeframe=self.timeframe)
-            return float(df["close"].iloc[-1])
+            if not df.empty:
+                return float(df["close"].iloc[-1])
         except Exception:
-            return float(state[0]) if state.size > 0 else 0.0
-
+            pass
+        # fallback: 1.0 (neutral) if state has normalized price feature
+        return 1.0
