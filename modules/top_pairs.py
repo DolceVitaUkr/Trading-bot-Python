@@ -1,108 +1,159 @@
 # modules/top_pairs.py
 
+import time
 import logging
-from typing import List, Tuple, Optional, Dict
+from dataclasses import dataclass
+from typing import List, Dict, Optional, Tuple
 
 import ccxt
-
-import config
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:
     h = logging.StreamHandler()
     h.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
     logger.addHandler(h)
-logger.setLevel(getattr(logging, str(getattr(config, "LOG_LEVEL", "INFO")), logging.INFO)
-                if isinstance(getattr(config, "LOG_LEVEL", "INFO"), str) else getattr(config, "LOG_LEVEL", logging.INFO))
+logger.setLevel(logging.INFO)
 
 
-class TopPairsProvider:
+@dataclass
+class PairStats:
+    symbol: str
+    base: str
+    quote: str
+    volume_usd_24h: float
+    price_change_24h_pct: float
+    ask: Optional[float]
+    bid: Optional[float]
+
+
+class TopPairs:
     """
-    Rank Bybit symbols by 24h quote volume, filtered to USDT-quoted spot (default).
-    Falls back to baseVolume*last if quoteVolume is missing.
+    Fetch and rank top liquid Bybit spot pairs (default quote=USDT).
+    Public-only; no API key required.
 
-    Usage:
-        tp = TopPairsProvider()
-        pairs = tp.get_top_pairs(quote="USDT", limit=20, min_24h_usdt=5e6)
-
-    Return format:
-        [
-          {"symbol": "BTC/USDT", "quoteVolume": 123456789.0, "last": 68000.5},
-          ...
-        ]
+    - Uses ccxt's unified tickers where possible.
+    - Filters by quote, status (active), and reasonable price/volume presence.
+    - Caches results for `ttl_sec` to avoid hammering REST.
     """
 
-    def __init__(self, exchange: Optional[ccxt.Exchange] = None):
-        self.exchange = exchange or self._make_exchange()
-        self.exchange.load_markets()
-
-    def _make_exchange(self) -> ccxt.Exchange:
-        is_sim = getattr(config, "USE_SIMULATION", True)
-        api_key = config.SIMULATION_BYBIT_API_KEY if is_sim else config.BYBIT_API_KEY
-        secret = config.SIMULATION_BYBIT_API_SECRET if is_sim else config.BYBIT_API_SECRET
-
-        default_type = "spot"
-        if config.EXCHANGE_PROFILE in ("perp", "spot+perp"):
-            default_type = "linear"
-
-        ex = ccxt.bybit({
-            "apiKey": api_key,
-            "secret": secret,
-            "enableRateLimit": True,
-            "options": {
-                "defaultType": default_type,
-                "adjustForTimeDifference": True
-            }
-        })
-        if is_sim:
-            ex.set_sandbox_mode(True)
-        return ex
-
-    def get_top_pairs(
+    def __init__(
         self,
+        exchange: Optional[ccxt.Exchange] = None,
         *,
         quote: str = "USDT",
-        limit: int = 20,
-        min_24h_usdt: float = 5_000_000.0,
-        spot_only: bool = True
-    ) -> List[Dict]:
-        """
-        Return top symbols sorted by 24h quote volume (USDT), with filters.
-        """
-        # Fetch tickers in one shot
+        min_volume_usd_24h: float = 200_000,  # tune as you like
+        ttl_sec: int = 60 * 60,               # refresh every 60 minutes by default
+        max_pairs: int = 15
+    ):
+        self.exchange = exchange or ccxt.bybit({"enableRateLimit": True})
+        self.quote = quote.upper()
+        self.min_volume_usd_24h = float(min_volume_usd_24h)
+        self.ttl_sec = int(ttl_sec)
+        self.max_pairs = int(max_pairs)
+
+        self._cache_ts: float = 0.0
+        self._cache: List[PairStats] = []
+
+    def _spot_markets(self) -> Dict[str, Dict]:
+        # Load markets once (ccxt caches internally too)
+        self.exchange.load_markets()
+        # Prefer spot markets; fall back to anything that looks like spot
+        return {
+            s: m for s, m in self.exchange.markets.items()
+            if m.get("spot") and m.get("active", True)
+        }
+
+    def _as_pair_stats(
+        self, symbol: str, t: Dict, mkt: Dict
+    ) -> Optional[PairStats]:
+        # t is a unified ticker dict from ccxt
+        # We’ll compute a simple USD-ish volume:
+        # ccxt often has `quoteVolume` ~ 24h volume in quote currency
+        quote_vol = t.get("quoteVolume") or 0.0
+        ask = t.get("ask")
+        bid = t.get("bid")
+        last = t.get("last") or (ask if ask else bid)
+        # Some markets report only baseVolume; try to estimate quoteVol
+        if (not quote_vol or quote_vol == 0.0) and last and t.get("baseVolume"):
+            quote_vol = float(t["baseVolume"]) * float(last)
+
+        # Use 24h change if present, else compute from open/last
+        chg_pct = 0.0
+        if t.get("percentage") is not None:
+            chg_pct = float(t["percentage"])
+        else:
+            open_ = t.get("open")
+            if open_ and open_ > 0 and last:
+                chg_pct = (float(last) - float(open_)) / float(open_) * 100.0
+
+        base = mkt.get("base")
+        quote = mkt.get("quote")
+
+        vol_usd = float(quote_vol) if (quote and quote.upper() == "USDT") else float(quote_vol)
+
+        return PairStats(
+            symbol=symbol,
+            base=base,
+            quote=quote,
+            volume_usd_24h=vol_usd,
+            price_change_24h_pct=float(chg_pct),
+            ask=float(ask) if ask else None,
+            bid=float(bid) if bid else None,
+        )
+
+    def _refresh_cache(self) -> None:
         try:
-            tickers = self.exchange.fetch_tickers()
+            mkts = self._spot_markets()
+            # Filter to preferred quote
+            spot_symbols = [s for s, m in mkts.items() if m.get("quote", "").upper() == self.quote]
+            if not spot_symbols:
+                logger.warning(f"No active spot symbols with quote={self.quote}")
+                self._cache = []
+                self._cache_ts = time.time()
+                return
+
+            tickers = self.exchange.fetch_tickers(spot_symbols)
+            stats: List[PairStats] = []
+            for sym in spot_symbols:
+                t = tickers.get(sym)
+                if not t:
+                    continue
+                ps = self._as_pair_stats(sym, t, mkts[sym])
+                if not ps:
+                    continue
+                # Basic sanity gating
+                if ps.volume_usd_24h is None or ps.volume_usd_24h < self.min_volume_usd_24h:
+                    continue
+                stats.append(ps)
+
+            # Rank primarily by liquidity, then by positive momentum
+            stats.sort(key=lambda x: (x.volume_usd_24h, x.price_change_24h_pct), reverse=True)
+            self._cache = stats[: self.max_pairs]
+            self._cache_ts = time.time()
+            logger.info(f"[TopPairs] Cached {len(self._cache)} pairs for quote={self.quote}")
         except Exception as e:
-            logger.warning(f"[TopPairs] fetch_tickers failed: {e}")
-            return []
+            logger.warning(f"[TopPairs] refresh failed: {e}")
+            # Don’t nuke old cache on transient failures — just update the timestamp to avoid hot loops
+            self._cache_ts = time.time()
 
-        # Load markets mapping to filter spot / quote
-        markets = self.exchange.markets
+    def get_top_pairs(self, *, force: bool = False) -> List[str]:
+        """
+        Return a list of top symbols like 'BTC/USDT', sorted by liquidity & 24h change.
+        Cached for ttl_sec to keep REST usage low.
+        """
+        if force or (time.time() - self._cache_ts) > self.ttl_sec or not self._cache:
+            self._refresh_cache()
+        return [p.symbol for p in self._cache]
 
-        ranked: List[Tuple[str, float, float]] = []  # (symbol, qvol, last)
-        for sym, t in tickers.items():
-            mkt = markets.get(sym)
-            if not mkt:
-                continue
+    def get_top_pairs_with_stats(self, *, force: bool = False) -> List[PairStats]:
+        if force or (time.time() - self._cache_ts) > self.ttl_sec or not self._cache:
+            self._refresh_cache()
+        return list(self._cache)
 
-            if spot_only and not mkt.get("spot", False):
-                continue
-
-            if str(mkt.get("quote", "")).upper() != quote.upper():
-                continue
-
-            last = float(t.get("last") or t.get("close") or 0.0)
-            qvol = t.get("quoteVolume")
-            if qvol is None:
-                # fallback: baseVolume * last
-                base = float(t.get("baseVolume") or 0.0)
-                qvol = base * last
-            qvol = float(qvol or 0.0)
-
-            if qvol >= float(min_24h_usdt):
-                ranked.append((sym, qvol, last))
-
-        ranked.sort(key=lambda x: x[1], reverse=True)
-        top = ranked[:limit]
-
-        return [{"symbol": s, "quoteVolume": v, "last": p} for (s, v, p) in top]
+    @staticmethod
+    def normalize_symbol(symbol: str) -> str:
+        """Keep ccxt/Bybit spot format: 'BTC/USDT'."""
+        if "/" not in symbol and symbol.upper().endswith("USDT"):
+            base = symbol[:-4]
+            return f"{base}/USDT"
+        return symbol
