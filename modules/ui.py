@@ -3,7 +3,9 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
 import time
-from typing import Callable, Dict, Any, Optional, List, Tuple
+from typing import Callable, Dict, Any, Optional, List
+from collections import deque
+from datetime import datetime
 
 import config
 
@@ -12,23 +14,21 @@ UI_REFRESH_INTERVAL = getattr(config, "UI_REFRESH_INTERVAL", 1000)
 
 class TradingUI:
     """
-    GUI for controlling and monitoring the TradingBot.
-
-    Changes:
-      - Three matplotlib charts: Wallet Balance, Virtual Portfolio Value, Reward Points
-      - Buttons change color when pressed (to show last action)
-      - Simple series appenders to update charts efficiently
+    Reworked UI:
+      - Three charts (Wallet, Virtual Wallet, Reward Points)
+      - Buttons change color/disabled state on press
+      - Same public API as before (add_action_handler, update_* methods, log, run)
     """
 
     def __init__(self, bot: Any):
         self.bot = bot
         self._action_handlers: Dict[str, Callable[[], None]] = {}
-        self._last_pressed_btn: Optional[ttk.Button] = None
-        self._all_buttons: List[ttk.Button] = []
 
-        self._wallet_points: List[Tuple[float, float]] = []     # (epoch_s, value)
-        self._virtual_points: List[Tuple[float, float]] = []    # (epoch_s, value)
-        self._reward_points: List[Tuple[float, float]] = []     # (epoch_s, value)
+        # Simple in-memory time series (last 500 points)
+        self.max_points = 500
+        self.ts_wallet = deque(maxlen=self.max_points)   # (t, val)
+        self.ts_virtual = deque(maxlen=self.max_points)  # (t, val)
+        self.ts_points = deque(maxlen=self.max_points)   # (t, val)
 
         self.root = tk.Tk()
         self.root.title("AI Trading Terminal")
@@ -37,11 +37,15 @@ class TradingUI:
 
         self._create_status_bar()
         self._create_left_controls()
-        self._create_center_charts()  # triple charts
+        self._create_center_charts()
         self._create_right_metrics()
         self._create_bottom_logs()
 
         self.root.after(UI_REFRESH_INTERVAL, self._refresh)
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Layout & Style
+    # ─────────────────────────────────────────────────────────────────────
 
     def _configure_style(self):
         style = ttk.Style()
@@ -57,7 +61,12 @@ class TradingUI:
         style.configure('TButton', background='#2a2a2a', foreground='white')
         style.map('TButton',
                   background=[('active', '#3a3a3a')],
-                  foreground=[('disabled', '#888888')])
+                  relief=[('pressed', 'sunken')])
+
+        # Button styles for on/off states
+        style.configure('Active.TButton', background='#1f6feb', foreground='white')   # blue
+        style.configure('Stop.TButton',   background='#d73a49', foreground='white')   # red
+        style.configure('Idle.TButton',   background='#2a2a2a', foreground='white')   # default
 
     def _create_status_bar(self):
         frame = ttk.Frame(self.root)
@@ -75,46 +84,28 @@ class TradingUI:
         self.time_label = ttk.Label(frame, text=time.strftime('%H:%M:%S'))
         self.time_label.pack(side=tk.RIGHT, padx=10)
 
-    def _btn(self, parent, text, action) -> ttk.Button:
-        b = ttk.Button(parent, text=text, command=lambda: self._on_button(action))
-        self._all_buttons.append(b)
-        return b
-
-    def _on_button(self, action: str):
-        # visual feedback
-        for b in self._all_buttons:
-            b.configure(style='TButton')
-        caller = None
-        try:
-            # find the widget that triggered this call (simplest: set color of last pressed)
-            # ttk doesn't pass the widget automatically, so we color all same and then color the focused one
-            caller = self.root.focus_displayof()
-        except Exception:
-            pass
-        # color the *intended* button by scanning by text (robust enough for this UI)
-        for b in self._all_buttons:
-            if b.cget("text").lower().find(action.split("_")[1]) >= 0:
-                # create a custom style on the fly
-                hot = ttk.Style()
-                hot.configure('Hot.TButton', background='#0059b3', foreground='white')
-                b.configure(style='Hot.TButton')
-                self._last_pressed_btn = b
-                break
-
-        # invoke
-        self._invoke(action)
-
     def _create_left_controls(self):
         frame = ttk.Labelframe(self.root, text="Controls", padding=10)
         frame.pack(side=tk.LEFT, fill=tk.Y, padx=6, pady=6)
 
-        self._btn(frame, "▶ Start Training", "start_training").pack(fill=tk.X, pady=4)
-        self._btn(frame, "⏹ Stop Training", "stop_training").pack(fill=tk.X, pady=4)
+        # Buttons with persistent references to change styles later
+        self.btn_start_training = ttk.Button(frame, text="▶ Start Training",
+                                             command=lambda: self._on_button("start_training", "training"))
+        self.btn_stop_training = ttk.Button(frame, text="⏹ Stop Training",
+                                            command=lambda: self._on_button("stop_training", "idle"))
+
+        self.btn_start_trading = ttk.Button(frame, text="▶ Start Trading",
+                                            command=lambda: self._on_button("start_trading", "trading"))
+        self.btn_stop_trading = ttk.Button(frame, text="⏹ Stop Trading",
+                                           command=lambda: self._on_button("stop_trading", "idle"))
+
+        self.btn_start_training.pack(fill=tk.X, pady=4)
+        self.btn_stop_training.pack(fill=tk.X, pady=4)
 
         ttk.Separator(frame, orient='horizontal').pack(fill=tk.X, pady=6)
 
-        self._btn(frame, "▶ Start Trading", "start_trading").pack(fill=tk.X, pady=8)
-        self._btn(frame, "⏹ Stop Trading", "stop_trading").pack(fill=tk.X, pady=4)
+        self.btn_start_trading.pack(fill=tk.X, pady=8)
+        self.btn_stop_trading.pack(fill=tk.X, pady=4)
 
         ttk.Separator(frame, orient='horizontal').pack(fill=tk.X, pady=10)
 
@@ -138,13 +129,13 @@ class TradingUI:
         ttk.Button(notif, text="Apply", command=self._apply_notification_prefs).pack(fill=tk.X, pady=(8, 0))
 
     def _create_center_charts(self):
+        # Try to set up matplotlib
         try:
             from matplotlib.figure import Figure
             from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
         except Exception:
-            self.wallet_ax = None
-            self.virtual_ax = None
-            self.rewards_ax = None
+            self.wallet_ax = self.virtual_ax = self.points_ax = None
+            self.chart_canvas = None
             frame = ttk.Labelframe(self.root, text="Charts (matplotlib not available)", padding=10)
             frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=6, pady=6)
             return
@@ -152,26 +143,23 @@ class TradingUI:
         frame = ttk.Labelframe(self.root, text="Performance Charts")
         frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=6, pady=6)
 
-        # Wallet Balance
-        fig1 = Figure(figsize=(5, 3), dpi=100)
-        self.wallet_ax = fig1.add_subplot(111)
-        self.wallet_ax.grid(True, alpha=0.2)
-        self.wallet_canvas = FigureCanvasTkAgg(fig1, master=frame)
-        self.wallet_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        fig = Figure(figsize=(10, 6), dpi=100)
 
-        # Virtual Portfolio Value
-        fig2 = Figure(figsize=(5, 3), dpi=100)
-        self.virtual_ax = fig2.add_subplot(111)
-        self.virtual_ax.grid(True, alpha=0.2)
-        self.virtual_canvas = FigureCanvasTkAgg(fig2, master=frame)
-        self.virtual_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        # Three separate axes stacked vertically
+        self.wallet_ax = fig.add_subplot(311)
+        self.virtual_ax = fig.add_subplot(312)
+        self.points_ax = fig.add_subplot(313)
 
-        # Reward Points
-        fig3 = Figure(figsize=(5, 3), dpi=100)
-        self.rewards_ax = fig3.add_subplot(111)
-        self.rewards_ax.grid(True, alpha=0.2)
-        self.rewards_canvas = FigureCanvasTkAgg(fig3, master=frame)
-        self.rewards_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        for ax, title in [
+            (self.wallet_ax, "Wallet Balance ($)"),
+            (self.virtual_ax, "Virtual Wallet ($)"),
+            (self.points_ax, "Reward Points"),
+        ]:
+            ax.grid(True, alpha=0.2)
+            ax.set_title(title)
+
+        self.chart_canvas = FigureCanvasTkAgg(fig, master=frame)
+        self.chart_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
     def _create_right_metrics(self):
         frame = ttk.Labelframe(self.root, text="Metrics", padding=10)
@@ -190,7 +178,7 @@ class TradingUI:
         ttk.Label(frame, textvariable=self.symbol_var).pack(anchor=tk.W, pady=2)
 
         ttk.Label(frame, text="Timeframe:").pack(anchor=tk.W, pady=(10, 0))
-        self.tf_var = tk.StringVar(value="5m / 15m")
+        self.tf_var = tk.StringVar(value="N/A")
         ttk.Label(frame, textvariable=self.tf_var).pack(anchor=tk.W, pady=2)
 
     def _create_bottom_logs(self):
@@ -203,7 +191,9 @@ class TradingUI:
         self.log_text.tag_config('SUCCESS', foreground='#00ccff')
         self.log_text.tag_config('WARN', foreground='#ffd166')
 
-    # ---------- Public UI API ----------
+    # ─────────────────────────────────────────────────────────────────────
+    # Public UI API (same names as before)
+    # ─────────────────────────────────────────────────────────────────────
 
     def add_action_handler(self, name: str, callback: Callable[[], None]):
         self._action_handlers[name] = callback
@@ -214,7 +204,7 @@ class TradingUI:
     def update_simulation_results(self, balance: float = None, points: float = None, **kwargs):
         """
         Accepts either (balance, points) or legacy (final_balance, total_points).
-        Also appends the points to chart series.
+        Also appends to charts.
         """
         if balance is None:
             balance = kwargs.get("final_balance", 0.0)
@@ -222,37 +212,30 @@ class TradingUI:
             points = kwargs.get("total_points", 0.0)
 
         self.balance_var.set(f"${balance:,.2f}")
-        self.append_wallet_point(balance)
-        self.append_reward_point(points)
-        self.log(f"Simulation: Balance=${balance:,.2f}, Points={points:.2f}", level='SUCCESS')
+        self._append_virtual(balance)
+        self._append_points(points)
+        self._redraw_charts()
+        self.log(f"Simulation complete: Balance=${balance:,.2f}, Points={points:.2f}", level='SUCCESS')
 
     def update_live_metrics(self, metrics: Dict[str, Any]):
         bal = metrics.get("balance")
         if bal is not None:
             self.balance_var.set(f"${bal:,.2f}")
-            self.append_wallet_point(float(bal))
+            self._append_wallet(float(bal))
+
         eq = metrics.get("equity")
         if eq is not None:
             self.value_var.set(f"${eq:,.2f}")
-            self.append_virtual_point(float(eq))
+
         sym = metrics.get("symbol")
         if sym:
             self.symbol_var.set(sym)
+
         tf = metrics.get("timeframe")
         if tf:
             self.tf_var.set(tf)
 
-    def append_wallet_point(self, value: float):
-        self._wallet_points.append((time.time(), value))
-        self._wallet_points = self._wallet_points[-500:]  # keep last N for UI
-
-    def append_virtual_point(self, value: float):
-        self._virtual_points.append((time.time(), value))
-        self._virtual_points = self._virtual_points[-500:]
-
-    def append_reward_point(self, total_points: float):
-        self._reward_points.append((time.time(), total_points))
-        self._reward_points = self._reward_points[-500:]
+        self._redraw_charts()
 
     def log(self, message: str, level: str = 'INFO'):
         ts = time.strftime('%H:%M:%S')
@@ -268,7 +251,9 @@ class TradingUI:
     def run(self):
         self.root.mainloop()
 
-    # ---------- Internals ----------
+    # ─────────────────────────────────────────────────────────────────────
+    # Internals
+    # ─────────────────────────────────────────────────────────────────────
 
     def _invoke(self, action: str):
         cb = self._action_handlers.get(action)
@@ -295,8 +280,10 @@ class TradingUI:
             self.log("Bot has no 'apply_notification_prefs' hook (skipped).", level='WARN')
 
     def _refresh(self):
+        # Clock
         self.time_label.config(text=time.strftime('%H:%M:%S'))
 
+        # Connection & Mode hints from bot (if available)
         is_conn = bool(getattr(self.bot, "is_connected", False))
         self.conn_label.config(text=f"⚡ {'Connected' if is_conn else 'Disconnected'}")
 
@@ -311,38 +298,69 @@ class TradingUI:
         else:
             self.heartbeat_label.config(text="Heartbeat: --")
 
-        # redraw charts
-        try:
-            if self.wallet_ax:
-                self.wallet_ax.clear()
-                self.wallet_ax.grid(True, alpha=0.2)
-                if self._wallet_points:
-                    xs = [p[0] for p in self._wallet_points]
-                    ys = [p[1] for p in self._wallet_points]
-                    self.wallet_ax.plot(xs, ys)
-                self.wallet_ax.set_title("Wallet Balance")
-                self.wallet_canvas.draw()
-
-            if self.virtual_ax:
-                self.virtual_ax.clear()
-                self.virtual_ax.grid(True, alpha=0.2)
-                if self._virtual_points:
-                    xs = [p[0] for p in self._virtual_points]
-                    ys = [p[1] for p in self._virtual_points]
-                    self.virtual_ax.plot(xs, ys)
-                self.virtual_ax.set_title("Virtual Portfolio Value")
-                self.virtual_canvas.draw()
-
-            if self.rewards_ax:
-                self.rewards_ax.clear()
-                self.rewards_ax.grid(True, alpha=0.2)
-                if self._reward_points:
-                    xs = [p[0] for p in self._reward_points]
-                    ys = [p[1] for p in self._reward_points]
-                    self.rewards_ax.plot(xs, ys)
-                self.rewards_ax.set_title("Reward Points")
-                self.rewards_canvas.draw()
-        except Exception as e:
-            self.log(f"Chart update failed: {e}", level='ERROR')
+        # Lightweight chart keeps redrawing occasionally
+        self._redraw_charts()
 
         self.root.after(UI_REFRESH_INTERVAL, self._refresh)
+
+    def _on_button(self, action: str, state: str):
+        """Change button styles to reflect current state and invoke action."""
+        # Visual state
+        if action == "start_training":
+            self._set_button_states(active=self.btn_start_training)
+        elif action == "stop_training":
+            self._set_button_states(active=None)
+        elif action == "start_trading":
+            self._set_button_states(active=self.btn_start_trading)
+        elif action == "stop_trading":
+            self._set_button_states(active=None)
+
+        self._invoke(action)
+
+    def _set_button_states(self, active: Optional[ttk.Button]):
+        # Reset styles
+        for b in [self.btn_start_training, self.btn_stop_training, self.btn_start_trading, self.btn_stop_trading]:
+            b.configure(style='Idle.TButton')
+            b.state(["!disabled"])
+
+        if active is self.btn_start_training:
+            self.btn_start_training.configure(style='Active.TButton')
+            self.btn_start_trading.configure(style='Idle.TButton')
+        elif active is self.btn_start_trading:
+            self.btn_start_trading.configure(style='Active.TButton')
+            self.btn_start_training.configure(style='Idle.TButton')
+        else:
+            # Stop pressed -> highlight stop
+            self.btn_stop_training.configure(style='Stop.TButton')
+            self.btn_stop_trading.configure(style='Stop.TButton')
+
+    # --- Chart helpers ---
+
+    def _append_wallet(self, value: float):
+        self.ts_wallet.append((time.time(), float(value)))
+
+    def _append_virtual(self, value: float):
+        self.ts_virtual.append((time.time(), float(value)))
+
+    def _append_points(self, value: float):
+        self.ts_points.append((time.time(), float(value)))
+
+    def _redraw_charts(self):
+        if not all([self.wallet_ax, self.virtual_ax, self.points_ax, self.chart_canvas]):
+            return
+
+        def plot_series(ax, series: deque, ylabel: str):
+            ax.clear()
+            ax.grid(True, alpha=0.2)
+            ax.set_title(ylabel)
+            if series:
+                xs = [datetime.fromtimestamp(t) for t, _ in series]
+                ys = [v for _, v in series]
+                ax.plot(xs, ys)
+            # Keep labels light-weight to avoid CPU spike
+
+        plot_series(self.wallet_ax, self.ts_wallet, "Wallet Balance ($)")
+        plot_series(self.virtual_ax, self.ts_virtual, "Virtual Wallet ($)")
+        plot_series(self.points_ax, self.ts_points, "Reward Points")
+
+        self.chart_canvas.draw_idle()
