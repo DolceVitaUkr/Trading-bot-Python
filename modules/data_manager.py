@@ -1,457 +1,323 @@
 # modules/data_manager.py
 
+import asyncio
+import csv
+import gzip
+import io
+import logging
 import os
 import time
-import json
-import math
-import gzip
-import queue
-import atexit
-import signal
-import threading
+from collections import defaultdict
 from datetime import datetime, timezone
-from typing import List, Dict, Optional, Tuple, Any
+from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
+import websockets
 
 import config
-from utils.utilities import ensure_directory, retry, utc_now, format_timestamp
+from modules.exchange import ExchangeAPI, normalize_symbol
+from utils.utilities import ensure_directory, retry
 
-try:
-    import requests
-except Exception:
-    requests = None
-
-try:
-    import websockets
-    import asyncio
-except Exception:
-    websockets = None
-    asyncio = None
+logger = logging.getLogger(__name__)
+if not logger.handlers:
+    h = logging.StreamHandler()
+    h.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+    logger.addHandler(h)
+logger.setLevel(getattr(logging, str(getattr(config, "LOG_LEVEL", "INFO")), logging.INFO)
+                if isinstance(getattr(config, "LOG_LEVEL", "INFO"), str) else getattr(config, "LOG_LEVEL", logging.INFO))
 
 
-BYBIT_API = "https://api.bybit.com"
-WS_PUBLIC = "wss://stream.bybit.com/v5/public/spot"  # change to linear if using futures
+# ────────────────────────────────────────────────────────────────────────────────
+# DataManager: persistent OHLCV store + Bybit WS backfill/append
+# ────────────────────────────────────────────────────────────────────────────────
 
-# Map internal timeframe -> Bybit interval string
-INTERVAL_MAP = {
-    "5m": "5",
-    "15m": "15",
+TIMEFRAME_MINUTES = {
+    "5m": 5,
+    "15m": 15,
 }
 
-DEFAULT_CATEGORY = getattr(config, "BYBIT_CATEGORY", "spot")  # "spot" or "linear"
-DATA_ROOT = getattr(config, "DATA_ROOT", "./data/bybit")
-BACKFILL_BARS_5M = int(getattr(config, "BACKFILL_BARS_5M", 10000))   # ~34 days
-BACKFILL_BARS_15M = int(getattr(config, "BACKFILL_BARS_15M", 8000))  # ~83 days
-REST_PAGE_LIMIT = 900  # stay under Bybit max 1000
-TOP_PAIRS_COUNT = int(getattr(config, "TOP_PAIRS_COUNT", 10))
-TOP_PAIRS_REFRESH_MIN = int(getattr(config, "TOP_PAIRS_REFRESH_MIN", 60))
-REQUEST_SLEEP = float(getattr(config, "REQUEST_SLEEP", 0.15))  # polite pacing
+KLINE_BACKFILL_HOURS = int(os.getenv("KLINE_BACKFILL_HOURS", "72")) if "KLINE_BACKFILL_HOURS" in os.environ else 72
 
 
-def _now_ms() -> int:
-    return int(time.time() * 1000)
-
-
-def _to_ms(dt: datetime) -> int:
-    return int(dt.timestamp() * 1000)
-
-
-def normalize_symbol_for_rest(sym: str) -> str:
-    """BTC/USDT -> BTCUSDT"""
-    return sym.replace("/", "").upper()
-
-
-def pretty_symbol(sym: str) -> str:
-    """BTCUSDT -> BTC/USDT"""
-    if "/" in sym:
-        return sym.upper()
-    if sym.endswith("USDT"):
-        return f"{sym[:-4]}/USDT"
-    return sym.upper()
-
-
-def _tf_path(timeframe: str) -> str:
-    return os.path.join(DATA_ROOT, timeframe)
-
-
-def _file_path(symbol: str, timeframe: str) -> str:
-    ensure_directory(_tf_path(timeframe))
-    return os.path.join(_tf_path(timeframe), f"{normalize_symbol_for_rest(symbol)}.parquet")
-
-
-def _sleep_polite():
-    time.sleep(REQUEST_SLEEP)
+def _csv_path(symbol: str, timeframe: str) -> str:
+    base = getattr(config, "HISTORICAL_DATA_PATH", "historical_data")
+    sym = normalize_symbol(symbol)
+    return os.path.join(base, sym, f"{timeframe}.csv")
 
 
 class DataManager:
     """
-    Bybit market data manager:
-      - Parquet storage per symbol/timeframe
-      - REST backfill (<=900/page) + incremental sync
-      - WebSocket append on CLOSED candle
-      - Top pairs hourly refresh with 24h volume rank and 2h/24h change (spike watch)
+    Responsibilities:
+      - Keep per-symbol, per-timeframe CSV of OHLCV with headers: ts,open,high,low,close,volume
+      - On load: append-only style; backfill only missing bars (limit<=900 per request)
+      - WebSocket: subscribe to kline 5m/15m; append closed bars (confirm tick 'confirm' flag)
+      - Top pairs refresh every N minutes
     """
 
-    def __init__(self, category: str = DEFAULT_CATEGORY, timeframes: Optional[List[str]] = None):
-        self.category = category
-        self.timeframes = timeframes or ["15m", "5m"]
+    def __init__(self, exchange: Optional[ExchangeAPI] = None):
+        self.exchange = exchange or ExchangeAPI()
+        self._ws_task: Optional[asyncio.Task] = None
+        self._ws_symbols: List[str] = []
+        self._ws_intervals: List[str] = []
+        self._stop_ws = asyncio.Event()
 
-        self._stop = threading.Event()
-        self._ws_thread: Optional[threading.Thread] = None
-        self._ws_symbols: List[str] = []  # normalized REST style (BTCUSDT)
-        self._ws_connected = False
+        # in-memory last-known closed candle timestamp by (symbol,timeframe)
+        self._last_ts: Dict[Tuple[str, str], int] = {}
 
-        self._top_pairs_cache: List[str] = []
-        self._top_pairs_ts: float = 0.0
-        self._spike_state: Dict[str, Dict[str, float]] = {}  # symbol -> last pct changes snapshot
+        # debounce map to avoid frequent backfill while WS is alive
+        self._last_backfill_wallclock: Dict[Tuple[str, str], float] = defaultdict(lambda: 0.0)
 
-        # in-process queue for closed candles from WS
-        self._ws_queue: "queue.Queue[Tuple[str, str, dict]]" = queue.Queue()
-
-        atexit.register(self.shutdown)
-        try:
-            signal.signal(signal.SIGINT, lambda *_: self.shutdown())
-        except Exception:
-            pass
-
-    # ─────────────────────────────────────────────────────────────────────
+    # ───────────────────────────────
     # Public API
-    # ─────────────────────────────────────────────────────────────────────
+    # ───────────────────────────────
 
-    def start_ws(self, symbols: List[str]) -> None:
+    @retry(max_attempts=3, delay=1.5, backoff=2.0)
+    def load_historical_data(self, symbol: str, timeframe: str = "5m") -> pd.DataFrame:
         """
-        Start WebSocket (if available) to receive kline CLOSE events and append to Parquet.
-        `symbols` should be pretty style (BTC/USDT). We'll normalize internally.
+        Return DataFrame indexed by datetime (UTC), columns: [open,high,low,close,volume]
         """
-        if websockets is None or asyncio is None:
-            # websockets lib not available; fallback to REST only
-            return
-        rest_syms = [normalize_symbol_for_rest(s) for s in symbols]
-        self._ws_symbols = sorted(set(rest_syms))
-        if self._ws_thread and self._ws_thread.is_alive():
-            # already running; update subs by restarting
-            self.stop_ws()
-        self._ws_thread = threading.Thread(target=self._ws_worker, daemon=True)
-        self._ws_thread.start()
+        path = _csv_path(symbol, timeframe)
+        if not os.path.exists(path):
+            # ensure directory and create empty file with header
+            ensure_directory(os.path.dirname(path))
+            with open(path, "w", newline="", encoding="utf-8") as f:
+                w = csv.writer(f)
+                w.writerow(["ts", "open", "high", "low", "close", "volume"])
 
-    def stop_ws(self) -> None:
-        self._stop.set()
-        if self._ws_thread and self._ws_thread.is_alive():
-            self._ws_thread.join(timeout=5)
-        self._stop.clear()
-
-    def shutdown(self):
-        self.stop_ws()
-
-    def load_historical_data(self, symbol: str, timeframe: str) -> pd.DataFrame:
-        """
-        Return a DataFrame with columns: open, high, low, close, volume (index = datetime UTC).
-        Ensures local Parquet exists & is fresh up to near-now (by REST incremental if WS not running).
-        """
-        assert timeframe in INTERVAL_MAP, f"Unsupported timeframe: {timeframe}"
-        path = _file_path(symbol, timeframe)
-
-        if os.path.exists(path):
-            df = pd.read_parquet(path)
-        else:
-            df = pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
-            df.index.name = "timestamp"
-
-        # Incremental sync (REST) to fill gaps
-        latest_ts = int(df.index[-1].timestamp() * 1000) if not df.empty else None
-        needed_bars = BACKFILL_BARS_5M if timeframe == "5m" else BACKFILL_BARS_15M
-        self._sync_rest(symbol, timeframe, latest_ts=latest_ts, min_total=needed_bars)
-
-        # Reload
-        if os.path.exists(path):
-            df = pd.read_parquet(path)
-        return df
-
-    def ensure_symbols_ready(self, symbols: List[str]) -> None:
-        """
-        Make sure local data exists and is up-to-date for each symbol/timeframe.
-        Keeps initial backfill manageable & then incremental.
-        """
-        for sym in symbols:
-            for tf in self.timeframes:
-                try:
-                    self.load_historical_data(sym, tf)
-                except Exception:
-                    # don't crash whole loop
-                    pass
-
-    def get_top_pairs(self) -> List[str]:
-        """
-        Return cached Top Pairs list (pretty style symbols), refreshing hourly by 24h volume & pct change.
-        """
-        now = time.time()
-        if not self._top_pairs_cache or (now - self._top_pairs_ts) >= TOP_PAIRS_REFRESH_MIN * 60:
-            pairs = self._refresh_top_pairs()
-            self._top_pairs_cache = pairs
-            self._top_pairs_ts = now
-        return self._top_pairs_cache[:]
-
-    # ─────────────────────────────────────────────────────────────────────
-    # Internals: REST Backfill & Incremental
-    # ─────────────────────────────────────────────────────────────────────
-
-    def _sync_rest(self, symbol: str, timeframe: str, latest_ts: Optional[int], min_total: int) -> None:
-        """
-        Ensure we have at least `min_total` bars and up to latest-1 closed bar, pulling only missing pages.
-        """
-        path = _file_path(symbol, timeframe)
-        rest_sym = normalize_symbol_for_rest(symbol)
-        interval = INTERVAL_MAP[timeframe]
-
-        existing = pd.DataFrame()
-        if os.path.exists(path):
-            existing = pd.read_parquet(path)
-
-        have = len(existing)
-        now_ms = _now_ms()
-        tf_ms = int(INTERVAL_MAP[timeframe]) * 60 * 1000
-        last_wanted_end = now_ms - tf_ms  # last fully closed bar end
-
-        # Determine starting point
-        if latest_ts is None or have == 0:
-            # fresh backfill: request min_total in pages backward from last_wanted_end
-            required = min_total
-            end = last_wanted_end
-            frames = []
-            while required > 0:
-                limit = min(REST_PAGE_LIMIT, required)
-                start = end - limit * tf_ms
-                chunk = self._fetch_klines(rest_sym, interval, start, end)
-                if chunk.empty:
-                    break
-                frames.append(chunk)
-                required -= len(chunk)
-                end = int(chunk.index[0].timestamp() * 1000)  # page backward
-                _sleep_polite()
-            if frames:
-                newdf = pd.concat(frames, axis=0).sort_index()
-            else:
-                newdf = pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
-                newdf.index.name = "timestamp"
-            # write
-            if not newdf.empty:
-                newdf = newdf[~newdf.index.duplicated(keep="last")]
-                newdf.to_parquet(path)
-            return
-
-        # incremental forward
-        start = latest_ts + tf_ms
-        if start > last_wanted_end:
-            return  # already up-to-date
-
-        frames = []
-        while start <= last_wanted_end:
-            # fetch a page forward
-            limit = min(REST_PAGE_LIMIT, math.ceil((last_wanted_end - start) / tf_ms))
-            end = start + limit * tf_ms
-            chunk = self._fetch_klines(rest_sym, interval, start, end)
-            if chunk.empty:
-                break
-            frames.append(chunk)
-            start = int(chunk.index[-1].timestamp() * 1000) + tf_ms
-            _sleep_polite()
-
-        if frames:
-            add = pd.concat(frames, axis=0).sort_index()
-            add = add[~add.index.duplicated(keep="last")]
-            combined = pd.concat([existing, add], axis=0).sort_index()
-            combined = combined[~combined.index.duplicated(keep="last")]
-            combined.to_parquet(path)
-
-    @retry(max_attempts=5, delay=0.3, backoff=1.8)
-    def _fetch_klines(self, symbol_rest: str, interval: str, start: int, end: int) -> pd.DataFrame:
-        """
-        Fetch klines from Bybit /v5/market/kline within [start, end), respecting limit 900/page.
-        """
-        if requests is None:
-            raise RuntimeError("requests library not available")
-        url = f"{BYBIT_API}/v5/market/kline"
-        params = {
-            "category": self.category,
-            "symbol": symbol_rest,
-            "interval": interval,
-            "start": start,
-            "end": end,
-            "limit": REST_PAGE_LIMIT,
-        }
-        resp = requests.get(url, params=params, timeout=15)
-        if resp.status_code != 200:
-            raise RuntimeError(f"Bybit kline error {resp.status_code}: {resp.text}")
-        data = resp.json()
-        if str(data.get("retCode")) != "0":
-            raise RuntimeError(f"Bybit kline retCode={data.get('retCode')} msg={data.get('retMsg')}")
-        rows = data.get("result", {}).get("list", []) or []
-        # rows are typically newest first; normalize to oldest->newest
-        rows.sort(key=lambda x: int(x[0]))
-        # Bybit v5 list cols: startTime, open, high, low, close, volume, turnover
-        records = []
-        for r in rows:
-            ts = int(r[0])
-            records.append({
-                "timestamp": datetime.fromtimestamp(ts / 1000, tz=timezone.utc),
-                "open": float(r[1]),
-                "high": float(r[2]),
-                "low": float(r[3]),
-                "close": float(r[4]),
-                "volume": float(r[5]),
-            })
-        df = pd.DataFrame.from_records(records)
+        df = pd.read_csv(path)
         if df.empty:
-            df = pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
-        df.set_index("timestamp", inplace=True)
+            return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+
+        df = df.drop_duplicates(subset=["ts"]).sort_values("ts")
+        df.index = pd.to_datetime(df["ts"], unit="ms", utc=True)
+        df = df[["open", "high", "low", "close", "volume"]].astype(float)
         return df
 
-    # ─────────────────────────────────────────────────────────────────────
-    # WebSocket handling
-    # ─────────────────────────────────────────────────────────────────────
-
-    def _ws_worker(self):
+    def backfill_missing(
+        self,
+        symbol: str,
+        timeframe: str = "5m",
+        hours: int = KLINE_BACKFILL_HOURS,
+        max_chunk: int = 900,
+    ) -> int:
         """
-        Run WebSocket listener in a thread, push CLOSED candles into queue, and writer loop appends to parquet.
+        Append only missing bars. Uses ccxt.fetch_ohlcv (limit<=900).
+        Returns number of appended bars.
         """
-        self._ws_connected = False
+        path = _csv_path(symbol, timeframe)
+        ensure_directory(os.path.dirname(path))
+        tf_minutes = TIMEFRAME_MINUTES.get(timeframe)
+        if not tf_minutes:
+            raise ValueError("Unsupported timeframe; use '5m' or '15m'.")
 
-        def writer_loop():
-            while not self._stop.is_set():
-                try:
-                    sym_rest, tf, payload = self._ws_queue.get(timeout=0.5)
-                except queue.Empty:
-                    continue
-                try:
-                    ts_ms = int(payload["start"])
-                    # process only on confirm close
-                    if not payload.get("confirm"):
-                        continue
-                    df = pd.DataFrame([{
-                        "timestamp": datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc),
-                        "open": float(payload["open"]),
-                        "high": float(payload["high"]),
-                        "low": float(payload["low"]),
-                        "close": float(payload["close"]),
-                        "volume": float(payload["volume"]),
-                    }]).set_index("timestamp")
-                    path = _file_path(pretty_symbol(sym_rest), tf)
-                    # append
-                    if os.path.exists(path):
-                        cur = pd.read_parquet(path)
-                        merged = pd.concat([cur, df], axis=0).sort_index()
-                        merged = merged[~merged.index.duplicated(keep="last")]
-                        merged.to_parquet(path)
-                    else:
-                        df.to_parquet(path)
-                except Exception:
-                    # swallow in writer to keep loop alive
-                    pass
+        # Determine last timestamp in file
+        last_ts = None
+        if os.path.exists(path) and os.path.getsize(path) > 0:
+            try:
+                # Read last few lines quickly
+                with open(path, "rb") as f:
+                    f.seek(max(f.seek(0, 2) - 2048, 0))
+                    tail = f.read().decode("utf-8", errors="ignore")
+                *_, last_line = [ln for ln in tail.splitlines() if ln.strip()]
+                if last_line and last_line.replace(",", "").strip() != "tsopehighlowclosevolume":
+                    parts = last_line.split(",")
+                    if parts and parts[0].isdigit():
+                        last_ts = int(parts[0])
+            except Exception:
+                last_ts = None
 
-        writer = threading.Thread(target=writer_loop, daemon=True)
-        writer.start()
+        now_ms = int(time.time() * 1000)
+        since_ms = now_ms - int(hours * 3600 * 1000)
+        if last_ts:
+            # Shift since to last_ts + one bar
+            since_ms = max(since_ms, last_ts + tf_minutes * 60 * 1000)
 
-        if websockets is None or asyncio is None:
+        appended = 0
+        if since_ms >= now_ms - tf_minutes * 60 * 1000:
+            # Nothing to fetch
+            return 0
+
+        # Fetch in one chunk (bounded by limit)
+        data = self.exchange.fetch_klines(symbol, timeframe=timeframe, since_ms=since_ms, limit=max_chunk)
+        if not data:
+            return 0
+
+        # Append
+        new_rows = []
+        for ts, o, h, l, c, v in data:
+            if last_ts and ts <= last_ts:
+                continue
+            new_rows.append([ts, o, h, l, c, v])
+
+        if not new_rows:
+            return 0
+
+        file_exists = os.path.exists(path) and os.path.getsize(path) > 0
+        with open(path, "a", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            if not file_exists:
+                w.writerow(["ts", "open", "high", "low", "close", "volume"])
+            w.writerows(new_rows)
+
+        self._last_ts[(normalize_symbol(symbol), timeframe)] = new_rows[-1][0]
+        appended = len(new_rows)
+        logger.info(f"[Data] Backfilled {appended} bars for {normalize_symbol(symbol)} {timeframe}")
+        return appended
+
+    async def start_ws(self, symbols: List[str], intervals: List[str]) -> None:
+        """
+        Launch a WS reader for Bybit spot klines and append CLOSED candles to CSV.
+        Re-runnable; will restart on disconnect.
+        """
+        self._ws_symbols = [normalize_symbol(s) for s in symbols]
+        self._ws_intervals = intervals[:]
+        self._stop_ws.clear()
+
+        if self._ws_task and not self._ws_task.done():
+            # already running
             return
 
-        async def ws_main():
-            self._ws_connected = True
-            try:
-                async with websockets.connect(WS_PUBLIC, ping_interval=20, ping_timeout=20) as ws:
-                    # subscribe to klines for requested symbols on 5 and 15
-                    topics = []
-                    for sym in self._ws_symbols:
-                        for tf in self.timeframes:
-                            interval = INTERVAL_MAP[tf]
-                            topics.append(f"kline.{interval}.{sym}")
-                    sub = {"op": "subscribe", "args": topics}
-                    await ws.send(json.dumps(sub))
+        self._ws_task = asyncio.create_task(self._ws_loop())
 
-                    while not self._stop.is_set():
-                        try:
-                            msg = await asyncio.wait_for(ws.recv(), timeout=5)
-                        except asyncio.TimeoutError:
-                            # keep-alive: Bybit will ping/pong automatically, continue
+    async def stop_ws(self) -> None:
+        self._stop_ws.set()
+        if self._ws_task:
+            try:
+                await asyncio.wait_for(self._ws_task, timeout=5)
+            except Exception:
+                pass
+
+    # ───────────────────────────────
+    # Top pairs refresh
+    # ───────────────────────────────
+
+    def fetch_top_pairs(self, max_pairs: int = None) -> List[str]:
+        max_pairs = max_pairs or int(getattr(config, "MAX_SIMULATION_PAIRS", 5))
+        return self.exchange.fetch_top_pairs(max_pairs=max_pairs)
+
+    # ───────────────────────────────
+    # Internals
+    # ───────────────────────────────
+
+    async def _ws_loop(self) -> None:
+        url = ExchangeAPI.ws_public_endpoint_spot()
+        subs = []
+        for tf in self._ws_intervals:
+            minutes = TIMEFRAME_MINUTES.get(tf)
+            if not minutes:
+                continue
+            for s in self._ws_symbols:
+                subs.append({"topic": f"kline.{minutes}.{s}"})
+
+        if not subs:
+            logger.warning("WS loop started with no subscriptions.")
+            return
+
+        while not self._stop_ws.is_set():
+            try:
+                async with websockets.connect(url, ping_interval=20, ping_timeout=20) as ws:
+                    # subscribe
+                    sub_msg = {
+                        "op": "subscribe",
+                        "args": [x["topic"] for x in subs],
+                    }
+                    await ws.send(json.dumps(sub_msg))
+                    logger.info(f"[WS] Subscribed to {len(subs)} topics on {url}")
+
+                    # read loop
+                    while not self._stop_ws.is_set():
+                        raw = await asyncio.wait_for(ws.recv(), timeout=60)
+                        if isinstance(raw, (bytes, bytearray)):
+                            raw = raw.decode("utf-8", errors="ignore")
+                        msg = json.loads(raw)
+
+                        # heartbeat / info messages
+                        if "type" in msg and msg["type"] in ("welcome", "pong"):
                             continue
-                        data = json.loads(msg)
-                        # kline format: {"topic":"kline.5.BTCUSDT","data":[{...}],"type":"snapshot/update"}
-                        topic = data.get("topic", "")
+                        if "success" in msg and msg.get("op") == "subscribe":
+                            continue
+
+                        topic = msg.get("topic") or ""
+                        data = msg.get("data")
+                        if not topic or not data:
+                            continue
+
                         if not topic.startswith("kline."):
                             continue
-                        parts = topic.split(".")
-                        if len(parts) != 3:
+
+                        # topic format: kline.<minutes>.<symbol>
+                        try:
+                            _, minutes, symbol = topic.split(".")
+                            minutes = int(minutes)
+                        except Exception:
                             continue
-                        interval, sym_rest = parts[1], parts[2]
-                        tf = "5m" if interval == "5" else "15m" if interval == "15" else None
-                        if tf not in self.timeframes:
+                        tf = "5m" if minutes == 5 else "15m" if minutes == 15 else None
+                        if not tf:
                             continue
-                        for item in data.get("data", []):
-                            # Bybit sends both live & confirm on close; we only enqueue confirm
-                            self._ws_queue.put((sym_rest, tf, item))
-            finally:
-                self._ws_connected = False
 
-        # run the async loop
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(ws_main())
-        finally:
-            try:
-                loop.stop()
-            except Exception:
-                pass
-            try:
-                loop.close()
-            except Exception:
-                pass
+                        # Bybit WS sends a list; closed candles have "confirm": True
+                        if isinstance(data, dict):
+                            data = [data]
+                        for k in data:
+                            # field names: start, end, interval, open, high, low, close, volume, turnover, confirm
+                            if not k.get("confirm", False):
+                                # only append when candle closes
+                                continue
+                            ts_ms = int(k.get("start", 0))
+                            o = float(k.get("open", 0))
+                            h = float(k.get("high", 0))
+                            l = float(k.get("low", 0))
+                            c = float(k.get("close", 0))
+                            v = float(k.get("volume", 0))
+                            self._append_bar(symbol, tf, [ts_ms, o, h, l, c, v])
 
-    # ─────────────────────────────────────────────────────────────────────
-    # Top pairs + spike detection
-    # ─────────────────────────────────────────────────────────────────────
+            except asyncio.TimeoutError:
+                logger.info("[WS] timeout; reconnecting…")
+            except Exception as e:
+                logger.warning(f"[WS] error: {e} (reconnecting in 3s)")
+                await asyncio.sleep(3)
 
-    @retry(max_attempts=4, delay=0.4, backoff=2.0)
-    def _refresh_top_pairs(self) -> List[str]:
-        """
-        Rank USDT-quoted pairs by 24h volume; track 2h/24h change to flag spikes.
-        Returns pretty symbols list.
-        """
-        if requests is None:
-            return ["BTC/USDT", "ETH/USDT"]
+    def _append_bar(self, symbol: str, timeframe: str, row: List[Any]) -> None:
+        sym = normalize_symbol(symbol)
+        path = _csv_path(sym, timeframe)
+        ensure_directory(os.path.dirname(path))
 
-        url = f"{BYBIT_API}/v5/market/tickers"
-        params = {"category": self.category}
-        resp = requests.get(url, params=params, timeout=15)
-        if resp.status_code != 200:
-            raise RuntimeError(f"Bybit tickers error {resp.status_code}: {resp.text}")
-        data = resp.json()
-        if str(data.get("retCode")) != "0":
-            raise RuntimeError(f"Bybit tickers retCode={data.get('retCode')} msg={data.get('retMsg')}")
+        # Avoid duplicates by ts
+        ts = int(row[0])
+        last_key = (sym, timeframe)
+        last_ts = self._last_ts.get(last_key)
 
-        items = data.get("result", {}).get("list", []) or []
-        # filter USDT quote
-        usdt = [it for it in items if str(it.get("symbol", "")).upper().endswith("USDT")]
+        if last_ts and ts <= last_ts:
+            return
 
-        # parse fields
-        parsed: List[Tuple[str, float, float, float]] = []
-        for it in usdt:
-            sym = pretty_symbol(it["symbol"])
-            vol24 = float(it.get("turnover24h", it.get("volume24h", 0.0)) or 0.0)
-            chg24 = float(it.get("price24hPcnt", 0.0) or 0.0) * 100.0  # often in fraction
-            chg2h = float(it.get("usdIndexPrice2hPcnt", it.get("lastPrice2hPcnt", 0.0)) or 0.0) * 100.0
-            parsed.append((sym, vol24, chg2h, chg24))
+        # small disk write
+        file_exists = os.path.exists(path) and os.path.getsize(path) > 0
+        with open(path, "a", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            if not file_exists:
+                w.writerow(["ts", "open", "high", "low", "close", "volume"])
+            w.writerow(row)
 
-        # sort by 24h volume desc
-        parsed.sort(key=lambda x: x[1], reverse=True)
-        top = parsed[:TOP_PAIRS_COUNT]
+        self._last_ts[last_key] = ts
 
-        # spike detection vs previous snapshot
-        for sym, vol, chg2, chg24 in top:
-            last = self._spike_state.get(sym, {})
-            last2 = last.get("chg2h", 0.0)
-            last24 = last.get("chg24h", 0.0)
-            spike_2h = chg2 - last2
-            spike_24h = chg24 - last24
-            self._spike_state[sym] = {"chg2h": chg2, "chg24h": chg24, "last_spike2h": spike_2h, "last_spike24h": spike_24h}
-        return [sym for sym, *_ in top]
+    # Convenience: refresh for a list of symbols (backfill + optional ws)
+    async def ensure_ready(
+        self,
+        symbols: List[str],
+        intervals: List[str] = ("5m", "15m"),
+        backfill_hours: int = KLINE_BACKFILL_HOURS,
+        start_ws: bool = True,
+    ) -> None:
+        # backfill sequentially to respect rate limits
+        for s in symbols:
+            for tf in intervals:
+                # throttle backfill per (s,tf) no more than every 2 minutes
+                key = (normalize_symbol(s), tf)
+                now = time.time()
+                if now - self._last_backfill_wallclock[key] < 120:
+                    continue
+                self.backfill_missing(s, timeframe=tf, hours=backfill_hours, max_chunk=900)
+                self._last_backfill_wallclock[key] = now
+
+        if start_ws:
+            await self.start_ws(symbols, list(intervals))
