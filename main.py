@@ -15,7 +15,7 @@ from modules.exchange import ExchangeAPI
 from modules.trade_executor import TradeExecutor
 from modules.risk_management import RiskManager
 from modules.self_learning import SelfLearningBot
-from modules.top_pairs import TopPairsManager
+from modules.top_pairs import TopPairs
 from modules.ui import TradingUI
 from modules.telegram_bot import TelegramNotifier
 from modules.reward_system import RewardSystem
@@ -222,3 +222,4 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
 
 if __name__ == "__main__":
     sys.exit(run_bot(parse_args()))
+
