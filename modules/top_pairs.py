@@ -1,15 +1,14 @@
 # modules/top_pairs.py
 
-import os
 import time
-import json
 import logging
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Literal
 
-import ccxt
+import pandas as pd
 
+from modules.exchange import ExchangeAPI
+from modules.data_manager import DataManager, VALID_TIMEFRAMES
 import config
-from utils.utilities import ensure_directory, read_json, write_json, retry
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:
@@ -20,113 +19,153 @@ logger.setLevel(getattr(logging, str(getattr(config, "LOG_LEVEL", "INFO")), logg
                 if isinstance(getattr(config, "LOG_LEVEL", "INFO"), str) else getattr(config, "LOG_LEVEL", logging.INFO))
 
 
-CACHE_FILE = os.path.join(getattr(config, "HISTORICAL_DATA_PATH", "historical_data"), "_top_pairs_cache.json")
-
-
-def _is_stable(symbol: str) -> bool:
-    s = symbol.upper().replace("/", "")
-    return any(x in s for x in ("USDC", "USDT", "BUSD", "FDUSD")) and (
-        s.startswith("USDC") or s.startswith("USDT") or s.startswith("BUSD") or s.startswith("FDUSD")
-    )
-
-
 class TopPairs:
     """
-    Finds liquid spot USDT pairs on Bybit (or chosen exchange) and caches for 60 minutes.
+    Selects top USDT pairs by 24h volume (and/or change), with spike detection.
+
+    - Refresh window: 60 minutes (configurable via constructor).
+    - Spike check:
+        * Short-term (2h): computed from recent 5m bars (~24 bars)
+        * Daily (24h): taken from ticker percentage if present; otherwise from 15m bars
+    - Returns symbols in both CCXT format ("BTC/USDT") and no-slash ("BTCUSDT").
     """
 
-    def __init__(self, exchange_id: str = "bybit", spot: bool = True, cache_minutes: int = 60):
-        self.exchange_id = exchange_id
-        self.cache_minutes = cache_minutes
-        self.spot = spot
-        self.ex = self._build_ccxt_client()
-        ensure_directory(os.path.dirname(CACHE_FILE))
+    def __init__(
+        self,
+        exchange: Optional[ExchangeAPI] = None,
+        data_manager: Optional[DataManager] = None,
+        refresh_minutes: int = 60,
+        *,
+        quote: str = "USDT",
+        min_24h_volume_usd: float = 5_000_000.0,
+        max_pairs: int = 10,
+    ):
+        self.exchange = exchange or ExchangeAPI()
+        self.dm = data_manager or DataManager(exchange=self.exchange)
+        self.refresh_seconds = max(10 * 60, int(refresh_minutes * 60))
+        self.quote = quote.upper()
+        self.min_24h_volume_usd = float(min_24h_volume_usd)
+        self.max_pairs = max_pairs
 
-    def _build_ccxt_client(self):
-        cls = getattr(ccxt, self.exchange_id)
-        if config.USE_SIMULATION:
-            api_key = getattr(config, "SIMULATION_BYBIT_API_KEY", None)
-            secret = getattr(config, "SIMULATION_BYBIT_API_SECRET", None)
-            testnet = True
-        else:
-            api_key = getattr(config, "BYBIT_API_KEY", None)
-            secret = getattr(config, "BYBIT_API_SECRET", None)
-            testnet = False
+        self._last_refresh_ts: float = 0.0
+        self._cache: List[Dict] = []
 
-        inst = cls({
-            "apiKey": api_key,
-            "secret": secret,
-            "enableRateLimit": True,
-            "options": {"defaultType": "spot" if self.spot else "swap"},
-        })
-        if hasattr(inst, "urls") and "api" in inst.urls and testnet:
-            try:
-                inst.urls["api"]["public"] = inst.urls["test"]["public"]
-                inst.urls["api"]["private"] = inst.urls["test"]["private"]
-            except Exception:
-                pass
-        return inst
+    # ─────────────────────────────
+    # Public API
+    # ─────────────────────────────
 
-    def _cache_read(self) -> Dict:
-        return read_json(CACHE_FILE, default={"updated": 0, "pairs": []})
+    def needs_refresh(self) -> bool:
+        return (time.time() - self._last_refresh_ts) >= self.refresh_seconds
 
-    def _cache_write(self, pairs: List[str]) -> None:
-        write_json(CACHE_FILE, {"updated": int(time.time()), "pairs": pairs})
-
-    def _cache_valid(self, updated_ts: int) -> bool:
-        return (time.time() - updated_ts) < (self.cache_minutes * 60)
-
-    @retry(max_attempts=3, delay=1.0, backoff=2.0)
-    def _fetch_candidates(self) -> List[Dict]:
+    def current(self) -> List[Dict]:
         """
-        Fetch tickers, return a list of dicts with symbol, baseVolume and change stats.
+        Return cached list (refresh externally by calling refresh() if needs_refresh()).
+        Each entry:
+            {
+              "symbol": "BTC/USDT",
+              "symbol_id": "BTCUSDT",
+              "vol24_usd": float,
+              "pct24": float or None,
+              "pct2h": float or None
+            }
         """
-        tickers = self.ex.fetch_tickers()
-        out: List[Dict] = []
-        for sym, t in tickers.items():
-            # spot USDT pairs only
-            if "USDT" not in sym or "/" not in sym:
-                continue
-            # Exclude pure stable/stable
-            if _is_stable(sym):
-                continue
-            vol = t.get("baseVolume") or t.get("quoteVolume")
-            change = t.get("percentage")
-            out.append({
-                "symbol": sym,
-                "volume": float(vol) if vol is not None else 0.0,
-                "change": float(change) if change is not None else 0.0,
-            })
-        return out
+        return list(self._cache)
 
-    def refresh_top_pairs(self, *, max_pairs: int = 10, min_volume: float = 0.0) -> List[str]:
+    def refresh(self) -> List[Dict]:
         """
-        Query the exchange and cache the top USDT spot pairs (exclude stables) by volume + momentum.
+        Pull fresh tickers, filter by quote & volume, compute spike metrics.
         """
         try:
-            cands = self._fetch_candidates()
+            pairs = self._select_by_volume()
+            out = []
+            for sym, vol_usd, pct24 in pairs[: self.max_pairs]:
+                pct2h = self._compute_2h_change(sym)
+                out.append({
+                    "symbol": sym,
+                    "symbol_id": self._noslash(sym),
+                    "vol24_usd": vol_usd,
+                    "pct24": pct24,
+                    "pct2h": pct2h,
+                })
+            self._cache = out
+            self._last_refresh_ts = time.time()
+            return list(self._cache)
         except Exception as e:
-            logger.warning(f"TopPairs fetch failed, using cache if available: {e}")
-            cache = self._cache_read()
-            return cache.get("pairs", [])
+            logger.warning(f"TopPairs.refresh failed: {e}")
+            return list(self._cache)
 
-        # Simple score: volume * (1 + change/100)
-        for c in cands:
-            c["score"] = max(0.0, c["volume"]) * (1.0 + (c["change"] / 100.0))
+    # ─────────────────────────────
+    # Internals
+    # ─────────────────────────────
 
-        # Filter + sort
-        filt = [c for c in cands if c["volume"] >= min_volume]
-        filt.sort(key=lambda x: x["score"], reverse=True)
-
-        pairs = [c["symbol"] for c in filt[:max_pairs]]
-        self._cache_write(pairs)
-        return pairs
-
-    def get_top_pairs(self, *, max_pairs: int = 10, min_volume: float = 0.0) -> List[str]:
+    def _select_by_volume(self) -> List[Tuple[str, float, Optional[float]]]:
         """
-        Return cached pairs if fresh (< cache_minutes); otherwise refresh.
+        Use exchange tickers to rank symbols by 24h volume in quote currency (USDT).
+        Returns list of (symbol_ccxt, vol24_usd, pct24)
         """
-        cache = self._cache_read()
-        if self._cache_valid(int(cache.get("updated", 0))) and cache.get("pairs"):
-            return cache["pairs"]
-        return self.refresh_top_pairs(max_pairs=max_pairs, min_volume=min_volume)
+        tickers = self.exchange.fetch_tickers_safely()
+        candidates: List[Tuple[str, float, Optional[float]]] = []
+
+        for sym, t in tickers.items():
+            # CCXT symbol format guard
+            if "/" not in sym:
+                continue
+            base, quote = sym.split("/")
+            if quote.upper() != self.quote:
+                continue
+
+            vol = t.get("quoteVolume") or t.get("info", {}).get("quoteVolume")
+            if vol is None:
+                # Approx with baseVolume * last price if present
+                try:
+                    vol = float(t.get("baseVolume", 0.0)) * float(t.get("last", t.get("close", 0.0) or 0.0))
+                except Exception:
+                    vol = 0.0
+            try:
+                vol = float(vol)
+            except Exception:
+                vol = 0.0
+
+            if vol < self.min_24h_volume_usd:
+                continue
+
+            # 24h change if available
+            pct = None
+            ch = t.get("percentage")
+            if ch is not None:
+                try:
+                    pct = float(ch)
+                except Exception:
+                    pct = None
+
+            candidates.append((sym, vol, pct))
+
+        # sort by 24h USD volume desc
+        candidates.sort(key=lambda r: r[1], reverse=True)
+        return candidates
+
+    def _compute_2h_change(self, symbol: str) -> Optional[float]:
+        """
+        Compute percent change over ~2 hours from 5m bars.
+        pct2h = (last_close / close_2h_ago - 1) * 100
+        """
+        try:
+            df = self.dm.load_historical_data(symbol, "5m", auto_update=True)
+            if len(df) < 24:  # 24 x 5m = 120m
+                # try fetching a bit more explicitly
+                self.dm.update_bars(symbol, "5m", bootstrap_candles=300)
+                df = self.dm.load_historical_data(symbol, "5m", auto_update=False)
+            if len(df) < 24:
+                return None
+
+            last_close = float(df["close"].iloc[-1])
+            close_2h_ago = float(df["close"].iloc[-24])
+            if close_2h_ago <= 0:
+                return None
+            return (last_close / close_2h_ago - 1.0) * 100.0
+        except Exception as e:
+            logger.debug(f"_compute_2h_change failed {symbol}: {e}")
+            return None
+
+    def _noslash(self, symbol: str) -> str:
+        return symbol.replace("/", "").replace(":", "")
