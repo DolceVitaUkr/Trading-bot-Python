@@ -1,22 +1,23 @@
 # modules/data_manager.py
 
-import asyncio
-import csv
-import gzip
-import io
-import logging
 import os
 import time
-from collections import defaultdict
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+import math
+import threading
+import logging
+from datetime import datetime, timezone, timedelta
+from typing import List, Dict, Optional, Tuple
 
 import pandas as pd
-import websockets
 
 import config
-from modules.exchange import ExchangeAPI, normalize_symbol
-from utils.utilities import ensure_directory, retry
+from utils.utilities import ensure_directory, retry, format_timestamp
+
+# Optional deps (graceful fallback if missing)
+try:
+    import ccxt  # REST (stable)
+except Exception:  # pragma: no cover
+    ccxt = None
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:
@@ -27,297 +28,267 @@ logger.setLevel(getattr(logging, str(getattr(config, "LOG_LEVEL", "INFO")), logg
                 if isinstance(getattr(config, "LOG_LEVEL", "INFO"), str) else getattr(config, "LOG_LEVEL", logging.INFO))
 
 
-# ────────────────────────────────────────────────────────────────────────────────
-# DataManager: persistent OHLCV store + Bybit WS backfill/append
-# ────────────────────────────────────────────────────────────────────────────────
-
-TIMEFRAME_MINUTES = {
-    "5m": 5,
-    "15m": 15,
-}
-
-KLINE_BACKFILL_HOURS = int(os.getenv("KLINE_BACKFILL_HOURS", "72")) if "KLINE_BACKFILL_HOURS" in os.environ else 72
+SUPPORTED_TIMEFRAMES = {"5m": 5, "15m": 15}  # minutes ⇒ integer
+MAX_BACKFILL_BARS = 900  # stay under Bybit/ccxt conservative limit
 
 
-def _csv_path(symbol: str, timeframe: str) -> str:
-    base = getattr(config, "HISTORICAL_DATA_PATH", "historical_data")
-    sym = normalize_symbol(symbol)
-    return os.path.join(base, sym, f"{timeframe}.csv")
+def normalize_symbol_for_storage(symbol: str) -> str:
+    """BTC/USDT -> BTCUSDT (safe for filenames and Bybit symbols)."""
+    return symbol.replace("/", "").upper()
+
+
+def human_symbol(symbol: str) -> str:
+    """BTCUSDT -> BTC/USDT (for UI/logs)."""
+    if "/" in symbol:
+        return symbol
+    if symbol.endswith("USDT"):
+        return f"{symbol[:-4]}/USDT"
+    return symbol
+
+
+def tf_to_ms(tf: str) -> int:
+    if tf not in SUPPORTED_TIMEFRAMES:
+        raise ValueError(f"Only {list(SUPPORTED_TIMEFRAMES)} timeframes are supported")
+    return SUPPORTED_TIMEFRAMES[tf] * 60_000
 
 
 class DataManager:
     """
-    Responsibilities:
-      - Keep per-symbol, per-timeframe CSV of OHLCV with headers: ts,open,high,low,close,volume
-      - On load: append-only style; backfill only missing bars (limit<=900 per request)
-      - WebSocket: subscribe to kline 5m/15m; append closed bars (confirm tick 'confirm' flag)
-      - Top pairs refresh every N minutes
+    Handles:
+      - Backfill (<=900 bars) via ccxt REST
+      - Lightweight incremental updates (polling) for latest bars
+      - Scheduled refresh of "top pairs" (every 60 minutes)
+      - CSV storage per symbol/timeframe, deduped by timestamp
+    Disk layout:
+      {HISTORICAL_DATA_PATH}/{SYMBOL_NO_SLASH}/{timeframe}.csv
     """
 
-    def __init__(self, exchange: Optional[ExchangeAPI] = None):
-        self.exchange = exchange or ExchangeAPI()
-        self._ws_task: Optional[asyncio.Task] = None
-        self._ws_symbols: List[str] = []
-        self._ws_intervals: List[str] = []
-        self._stop_ws = asyncio.Event()
+    def __init__(self, data_root: Optional[str] = None, exchange_profile: Optional[str] = None):
+        self.data_root = data_root or config.HISTORICAL_DATA_PATH
+        ensure_directory(self.data_root)
 
-        # in-memory last-known closed candle timestamp by (symbol,timeframe)
-        self._last_ts: Dict[Tuple[str, str], int] = {}
+        self.exchange_profile = exchange_profile or config.EXCHANGE_PROFILE
+        self.use_testnet = getattr(config, "USE_TESTNET", True)
 
-        # debounce map to avoid frequent backfill while WS is alive
-        self._last_backfill_wallclock: Dict[Tuple[str, str], float] = defaultdict(lambda: 0.0)
+        self.exchange = self._init_ccxt()
 
-    # ───────────────────────────────
+        self._top_pairs_cache: Tuple[float, List[str]] = (0.0, [])
+        self._poll_threads: Dict[Tuple[str, str], threading.Thread] = {}
+        self._poll_flags: Dict[Tuple[str, str], threading.Event] = {}
+
+    def _init_ccxt(self):
+        if ccxt is None:
+            logger.warning("ccxt not installed; data fetching is disabled.")
+            return None
+        ex = ccxt.bybit({
+            "enableRateLimit": True,
+            "options": {"defaultType": "spot"},  # we’re doing spot klines for learning
+        })
+        # Testnet only affects trading endpoints; for market data Bybit serves public endpoints.
+        # We leave it as-is so it works on either network.
+        return ex
+
+    # ─────────────────────────────────────────────────────────────────────
     # Public API
-    # ───────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────
 
-    @retry(max_attempts=3, delay=1.5, backoff=2.0)
+    def data_path(self, symbol: str, timeframe: str) -> str:
+        sym = normalize_symbol_for_storage(symbol)
+        d = os.path.join(self.data_root, sym)
+        ensure_directory(d)
+        return os.path.join(d, f"{timeframe}.csv")
+
+    @retry(max_attempts=3, delay=1.0, backoff=2.0)
     def load_historical_data(self, symbol: str, timeframe: str = "5m") -> pd.DataFrame:
         """
-        Return DataFrame indexed by datetime (UTC), columns: [open,high,low,close,volume]
+        Return local OHLCV DataFrame (UTC index).
+        Backfills (<=900) on first call; later calls read existing file.
         """
-        path = _csv_path(symbol, timeframe)
+        path = self.data_path(symbol, timeframe)
         if not os.path.exists(path):
-            # ensure directory and create empty file with header
-            ensure_directory(os.path.dirname(path))
-            with open(path, "w", newline="", encoding="utf-8") as f:
-                w = csv.writer(f)
-                w.writerow(["ts", "open", "high", "low", "close", "volume"])
+            logger.info(f"No local data for {symbol} {timeframe}; backfilling up to {MAX_BACKFILL_BARS} bars…")
+            self.backfill(symbol, timeframe, limit=MAX_BACKFILL_BARS)
 
-        df = pd.read_csv(path)
-        if df.empty:
-            return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+        try:
+            df = pd.read_csv(path)
+            if "timestamp" not in df.columns:
+                raise ValueError("CSV missing 'timestamp' column")
+            df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+            df.set_index("timestamp", inplace=True)
+            df.sort_index(inplace=True)
+            return df[["open", "high", "low", "close", "volume"]]
+        except Exception as e:
+            logger.warning(f"Failed reading {path}: {e}. Rebuilding from scratch.")
+            self.backfill(symbol, timeframe, limit=MAX_BACKFILL_BARS)
+            return self.load_historical_data(symbol, timeframe)
 
-        df = df.drop_duplicates(subset=["ts"]).sort_values("ts")
-        df.index = pd.to_datetime(df["ts"], unit="ms", utc=True)
-        df = df[["open", "high", "low", "close", "volume"]].astype(float)
-        return df
-
-    def backfill_missing(
-        self,
-        symbol: str,
-        timeframe: str = "5m",
-        hours: int = KLINE_BACKFILL_HOURS,
-        max_chunk: int = 900,
-    ) -> int:
+    def start_incremental_updates(self, symbols: List[str], timeframes: List[str] = ["5m", "15m"], interval_sec: float = 5.0) -> None:
         """
-        Append only missing bars. Uses ccxt.fetch_ohlcv (limit<=900).
-        Returns number of appended bars.
+        Starts lightweight polling threads to append only new bars.
+        One thread per (symbol, timeframe). Safe to call multiple times (idempotent).
         """
-        path = _csv_path(symbol, timeframe)
-        ensure_directory(os.path.dirname(path))
-        tf_minutes = TIMEFRAME_MINUTES.get(timeframe)
-        if not tf_minutes:
-            raise ValueError("Unsupported timeframe; use '5m' or '15m'.")
-
-        # Determine last timestamp in file
-        last_ts = None
-        if os.path.exists(path) and os.path.getsize(path) > 0:
-            try:
-                # Read last few lines quickly
-                with open(path, "rb") as f:
-                    f.seek(max(f.seek(0, 2) - 2048, 0))
-                    tail = f.read().decode("utf-8", errors="ignore")
-                *_, last_line = [ln for ln in tail.splitlines() if ln.strip()]
-                if last_line and last_line.replace(",", "").strip() != "tsopehighlowclosevolume":
-                    parts = last_line.split(",")
-                    if parts and parts[0].isdigit():
-                        last_ts = int(parts[0])
-            except Exception:
-                last_ts = None
-
-        now_ms = int(time.time() * 1000)
-        since_ms = now_ms - int(hours * 3600 * 1000)
-        if last_ts:
-            # Shift since to last_ts + one bar
-            since_ms = max(since_ms, last_ts + tf_minutes * 60 * 1000)
-
-        appended = 0
-        if since_ms >= now_ms - tf_minutes * 60 * 1000:
-            # Nothing to fetch
-            return 0
-
-        # Fetch in one chunk (bounded by limit)
-        data = self.exchange.fetch_klines(symbol, timeframe=timeframe, since_ms=since_ms, limit=max_chunk)
-        if not data:
-            return 0
-
-        # Append
-        new_rows = []
-        for ts, o, h, l, c, v in data:
-            if last_ts and ts <= last_ts:
-                continue
-            new_rows.append([ts, o, h, l, c, v])
-
-        if not new_rows:
-            return 0
-
-        file_exists = os.path.exists(path) and os.path.getsize(path) > 0
-        with open(path, "a", newline="", encoding="utf-8") as f:
-            w = csv.writer(f)
-            if not file_exists:
-                w.writerow(["ts", "open", "high", "low", "close", "volume"])
-            w.writerows(new_rows)
-
-        self._last_ts[(normalize_symbol(symbol), timeframe)] = new_rows[-1][0]
-        appended = len(new_rows)
-        logger.info(f"[Data] Backfilled {appended} bars for {normalize_symbol(symbol)} {timeframe}")
-        return appended
-
-    async def start_ws(self, symbols: List[str], intervals: List[str]) -> None:
-        """
-        Launch a WS reader for Bybit spot klines and append CLOSED candles to CSV.
-        Re-runnable; will restart on disconnect.
-        """
-        self._ws_symbols = [normalize_symbol(s) for s in symbols]
-        self._ws_intervals = intervals[:]
-        self._stop_ws.clear()
-
-        if self._ws_task and not self._ws_task.done():
-            # already running
-            return
-
-        self._ws_task = asyncio.create_task(self._ws_loop())
-
-    async def stop_ws(self) -> None:
-        self._stop_ws.set()
-        if self._ws_task:
-            try:
-                await asyncio.wait_for(self._ws_task, timeout=5)
-            except Exception:
-                pass
-
-    # ───────────────────────────────
-    # Top pairs refresh
-    # ───────────────────────────────
-
-    def fetch_top_pairs(self, max_pairs: int = None) -> List[str]:
-        max_pairs = max_pairs or int(getattr(config, "MAX_SIMULATION_PAIRS", 5))
-        return self.exchange.fetch_top_pairs(max_pairs=max_pairs)
-
-    # ───────────────────────────────
-    # Internals
-    # ───────────────────────────────
-
-    async def _ws_loop(self) -> None:
-        url = ExchangeAPI.ws_public_endpoint_spot()
-        subs = []
-        for tf in self._ws_intervals:
-            minutes = TIMEFRAME_MINUTES.get(tf)
-            if not minutes:
-                continue
-            for s in self._ws_symbols:
-                subs.append({"topic": f"kline.{minutes}.{s}"})
-
-        if not subs:
-            logger.warning("WS loop started with no subscriptions.")
-            return
-
-        while not self._stop_ws.is_set():
-            try:
-                async with websockets.connect(url, ping_interval=20, ping_timeout=20) as ws:
-                    # subscribe
-                    sub_msg = {
-                        "op": "subscribe",
-                        "args": [x["topic"] for x in subs],
-                    }
-                    await ws.send(json.dumps(sub_msg))
-                    logger.info(f"[WS] Subscribed to {len(subs)} topics on {url}")
-
-                    # read loop
-                    while not self._stop_ws.is_set():
-                        raw = await asyncio.wait_for(ws.recv(), timeout=60)
-                        if isinstance(raw, (bytes, bytearray)):
-                            raw = raw.decode("utf-8", errors="ignore")
-                        msg = json.loads(raw)
-
-                        # heartbeat / info messages
-                        if "type" in msg and msg["type"] in ("welcome", "pong"):
-                            continue
-                        if "success" in msg and msg.get("op") == "subscribe":
-                            continue
-
-                        topic = msg.get("topic") or ""
-                        data = msg.get("data")
-                        if not topic or not data:
-                            continue
-
-                        if not topic.startswith("kline."):
-                            continue
-
-                        # topic format: kline.<minutes>.<symbol>
-                        try:
-                            _, minutes, symbol = topic.split(".")
-                            minutes = int(minutes)
-                        except Exception:
-                            continue
-                        tf = "5m" if minutes == 5 else "15m" if minutes == 15 else None
-                        if not tf:
-                            continue
-
-                        # Bybit WS sends a list; closed candles have "confirm": True
-                        if isinstance(data, dict):
-                            data = [data]
-                        for k in data:
-                            # field names: start, end, interval, open, high, low, close, volume, turnover, confirm
-                            if not k.get("confirm", False):
-                                # only append when candle closes
-                                continue
-                            ts_ms = int(k.get("start", 0))
-                            o = float(k.get("open", 0))
-                            h = float(k.get("high", 0))
-                            l = float(k.get("low", 0))
-                            c = float(k.get("close", 0))
-                            v = float(k.get("volume", 0))
-                            self._append_bar(symbol, tf, [ts_ms, o, h, l, c, v])
-
-            except asyncio.TimeoutError:
-                logger.info("[WS] timeout; reconnecting…")
-            except Exception as e:
-                logger.warning(f"[WS] error: {e} (reconnecting in 3s)")
-                await asyncio.sleep(3)
-
-    def _append_bar(self, symbol: str, timeframe: str, row: List[Any]) -> None:
-        sym = normalize_symbol(symbol)
-        path = _csv_path(sym, timeframe)
-        ensure_directory(os.path.dirname(path))
-
-        # Avoid duplicates by ts
-        ts = int(row[0])
-        last_key = (sym, timeframe)
-        last_ts = self._last_ts.get(last_key)
-
-        if last_ts and ts <= last_ts:
-            return
-
-        # small disk write
-        file_exists = os.path.exists(path) and os.path.getsize(path) > 0
-        with open(path, "a", newline="", encoding="utf-8") as f:
-            w = csv.writer(f)
-            if not file_exists:
-                w.writerow(["ts", "open", "high", "low", "close", "volume"])
-            w.writerow(row)
-
-        self._last_ts[last_key] = ts
-
-    # Convenience: refresh for a list of symbols (backfill + optional ws)
-    async def ensure_ready(
-        self,
-        symbols: List[str],
-        intervals: List[str] = ("5m", "15m"),
-        backfill_hours: int = KLINE_BACKFILL_HOURS,
-        start_ws: bool = True,
-    ) -> None:
-        # backfill sequentially to respect rate limits
-        for s in symbols:
-            for tf in intervals:
-                # throttle backfill per (s,tf) no more than every 2 minutes
-                key = (normalize_symbol(s), tf)
-                now = time.time()
-                if now - self._last_backfill_wallclock[key] < 120:
+        for sym in symbols:
+            for tf in timeframes:
+                key = (sym, tf)
+                if key in self._poll_threads and self._poll_threads[key].is_alive():
                     continue
-                self.backfill_missing(s, timeframe=tf, hours=backfill_hours, max_chunk=900)
-                self._last_backfill_wallclock[key] = now
+                stop_event = threading.Event()
+                self._poll_flags[key] = stop_event
+                t = threading.Thread(target=self._poll_loop, args=(sym, tf, interval_sec, stop_event), daemon=True)
+                self._poll_threads[key] = t
+                t.start()
+                logger.info(f"Started incremental update thread for {human_symbol(sym)} {tf}")
 
-        if start_ws:
-            await self.start_ws(symbols, list(intervals))
+    def stop_incremental_updates(self):
+        for key, ev in self._poll_flags.items():
+            ev.set()
+        for key, th in list(self._poll_threads.items()):
+            th.join(timeout=2.0)
+            self._poll_threads.pop(key, None)
+        self._poll_flags.clear()
+
+    @retry(max_attempts=3, delay=1.0, backoff=2.0)
+    def backfill(self, symbol: str, timeframe: str = "5m", limit: int = MAX_BACKFILL_BARS) -> None:
+        """
+        Fetch <= limit recent bars via REST and write CSV (overwrite).
+        """
+        if self.exchange is None:
+            raise RuntimeError("ccxt not available for backfill")
+
+        if timeframe not in SUPPORTED_TIMEFRAMES:
+            raise ValueError(f"Timeframe {timeframe} not supported")
+
+        # ccxt expects symbols like 'BTC/USDT'
+        human = human_symbol(symbol)
+        tf = timeframe
+
+        # Fetch most recent window directly (Bybit/ccxt supports 'limit')
+        ohlcv = self.exchange.fetch_ohlcv(human, timeframe=tf, limit=limit)
+        df = self._ohlcv_to_df(ohlcv)
+        path = self.data_path(symbol, timeframe)
+        df.to_csv(path, index=True)
+        logger.info(f"Backfilled {len(df)} bars into {path}")
+
+    def append_latest(self, symbol: str, timeframe: str = "5m") -> int:
+        """
+        Append only new bars to CSV using REST. Returns number of new rows appended.
+        """
+        path = self.data_path(symbol, timeframe)
+        last_ts = None
+        try:
+            if os.path.exists(path):
+                tmp = pd.read_csv(path, usecols=["timestamp"], nrows=1)  # fast existence check
+                df_all = pd.read_csv(path)
+                if not df_all.empty:
+                    last_ts = pd.to_datetime(df_all["timestamp"].iloc[-1], utc=True)
+        except Exception:
+            last_ts = None
+
+        # Compute 'since' a bit before the last bar to be safe (one bar overlap)
+        if last_ts is not None:
+            since_ms = int(last_ts.timestamp() * 1000 - tf_to_ms(timeframe))
+            since_ms = max(0, since_ms)
+            limit = 200  # small page (fast)
+        else:
+            since_ms = None
+            limit = MAX_BACKFILL_BARS
+
+        if self.exchange is None:
+            logger.debug("ccxt unavailable; cannot append")
+            return 0
+
+        human = human_symbol(symbol)
+        ohlcv = self.exchange.fetch_ohlcv(human, timeframe=timeframe, since=since_ms, limit=limit)
+        df_new = self._ohlcv_to_df(ohlcv)
+        if df_new.empty:
+            return 0
+
+        # Merge-dedup by timestamp
+        if os.path.exists(path):
+            try:
+                df_old = pd.read_csv(path)
+                df_old["timestamp"] = pd.to_datetime(df_old["timestamp"], utc=True)
+                merged = pd.concat([df_old, df_new]).drop_duplicates(subset=["timestamp"]).sort_values("timestamp")
+            except Exception:
+                merged = df_new
+        else:
+            merged = df_new
+
+        # Write back (atomic-ish)
+        tmp_path = f"{path}.tmp"
+        merged.to_csv(tmp_path, index=True)
+        os.replace(tmp_path, path)
+        added = max(0, len(merged) - (len(df_old) if os.path.exists(path) else 0))
+        return added
+
+    def get_top_pairs(self, quote: str = "USDT", max_pairs: Optional[int] = None) -> List[str]:
+        """
+        Returns top symbols (by 24h quote volume, then volatility proxy) with / in name.
+        Cached for 60 minutes to avoid spamming.
+        """
+        max_pairs = max_pairs or config.MAX_SIMULATION_PAIRS
+        now = time.time()
+        cache_ts, cache_syms = self._top_pairs_cache
+        if now - cache_ts < 60 * 60 and cache_syms:
+            return cache_syms[:max_pairs]
+
+        if self.exchange is None:
+            return [config.DEFAULT_SYMBOL]
+
+        try:
+            tickers = self.exchange.fetch_tickers()
+        except Exception as e:
+            logger.warning(f"fetch_tickers failed: {e}")
+            return [config.DEFAULT_SYMBOL]
+
+        candidates: List[Tuple[str, float, float]] = []  # (symbol, volUSDT, volProxy)
+        for sym, t in tickers.items():
+            # Bybit spot symbols use format "BTC/USDT"
+            if not sym.endswith(f"/{quote}"):
+                continue
+            vol_quote = float(t.get("quoteVolume", 0) or 0.0)
+            # crude vol proxy using high/low if present
+            high = float(t.get("high", 0) or 0.0)
+            low = float(t.get("low", 0) or 0.0)
+            vol_proxy = (high - low) / high if (high and low and high > 0 and high > low) else 0.0
+            if vol_quote <= 0:
+                continue
+            candidates.append((sym, vol_quote, vol_proxy))
+
+        # Sort by volume first, then volatility proxy
+        candidates.sort(key=lambda x: (x[1], x[2]), reverse=True)
+        out = [c[0] for c in candidates[:max_pairs]]
+
+        # Cache
+        self._top_pairs_cache = (now, out)
+        return out
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Internals
+    # ─────────────────────────────────────────────────────────────────────
+
+    def _poll_loop(self, symbol: str, timeframe: str, interval_sec: float, stop_event: threading.Event):
+        """
+        Polls REST for the newest bar and appends it. Tiny and cheap.
+        """
+        path = self.data_path(symbol, timeframe)
+        logger.info(f"[poll] {human_symbol(symbol)} {timeframe} → {path}")
+        while not stop_event.is_set():
+            try:
+                added = self.append_latest(symbol, timeframe)
+                if added:
+                    logger.debug(f"[poll] {human_symbol(symbol)} {timeframe}: +{added} bars")
+            except Exception as e:
+                logger.debug(f"[poll] append failed for {symbol} {timeframe}: {e}")
+            stop_event.wait(interval_sec)
+
+    @staticmethod
+    def _ohlcv_to_df(ohlcv: List[List[float]]) -> pd.DataFrame:
+        cols = ["timestamp", "open", "high", "low", "close", "volume"]
+        if not ohlcv:
+            return pd.DataFrame(columns=cols).set_index("timestamp")
+        df = pd.DataFrame(ohlcv, columns=cols)
+        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
+        df.set_index("timestamp", inplace=True)
+        df.sort_index(inplace=True)
+        return df[["open", "high", "low", "close", "volume"]]
