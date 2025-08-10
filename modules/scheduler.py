@@ -1,97 +1,67 @@
-# modules/scheduler.py
+# scheduler.py
 
-import asyncio
-import logging
-from typing import Callable, Awaitable, Dict, Optional
-from datetime import datetime, timezone
-
-
-logger = logging.getLogger(__name__)
-if not logger.handlers:
-    h = logging.StreamHandler()
-    h.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
-    logger.addHandler(h)
-logger.setLevel(logging.INFO)
+import time
+import threading
+from dataclasses import dataclass
+from typing import Callable, Optional, Dict
 
 
+@dataclass
 class _Job:
-    def __init__(self, name: str, coro_factory: Callable[[], Awaitable[None]], interval_seconds: float):
-        self.name = name
-        self.coro_factory = coro_factory
-        self.interval_seconds = float(interval_seconds)
-        self._task: Optional[asyncio.Task] = None
-        self._cancelled = False
-
-    async def _runner(self):
-        try:
-            while not self._cancelled:
-                started = datetime.now(timezone.utc)
-                try:
-                    await self.coro_factory()
-                except asyncio.CancelledError:
-                    raise
-                except Exception as e:
-                    logger.warning(f"[scheduler] job '{self.name}' failed: {e}")
-                # Maintain steady cadence (drift-minimized)
-                elapsed = (datetime.now(timezone.utc) - started).total_seconds()
-                delay = max(0.0, self.interval_seconds - elapsed)
-                await asyncio.sleep(delay)
-        except asyncio.CancelledError:
-            pass
-
-    def start(self):
-        if self._task and not self._task.done():
-            return
-        self._cancelled = False
-        self._task = asyncio.create_task(self._runner(), name=f"scheduler:{self.name}")
-
-    def cancel(self):
-        self._cancelled = True
-        if self._task and not self._task.done():
-            self._task.cancel()
+    name: str
+    func: Callable[[], None]
+    interval: float  # seconds
+    next_run: float
 
 
-class LightweightScheduler:
+class JobScheduler:
     """
-    Minimal asyncio-based scheduler:
-      - add_job(name, coro, interval_seconds)
-      - cancel_job(name)
-      - start(), stop()
-    No external dependencies.
+    Lightweight interval scheduler.
+    - all jobs run in the same thread (this module starts that thread in main.py)
+    - each job executed sequentially; keep funcs short
     """
 
     def __init__(self):
         self._jobs: Dict[str, _Job] = {}
-        self._started = False
+        self._lock = threading.Lock()
+        self._running = False
 
-    def add_job(self, name: str, coro: Callable[[], Awaitable[None]], interval_seconds: float) -> None:
-        if name in self._jobs:
-            # replace in-place
-            self.cancel_job(name)
-        job = _Job(name=name, coro_factory=coro, interval_seconds=interval_seconds)
-        self._jobs[name] = job
-        if self._started:
-            job.start()
-        logger.info(f"[scheduler] added job '{name}' every {interval_seconds}s")
+    def every(self, *, seconds: Optional[int] = None, minutes: Optional[int] = None,
+              name: str, func: Callable[[], None]) -> None:
+        if seconds is None and minutes is None:
+            raise ValueError("Provide seconds or minutes")
+        interval = float(seconds if seconds is not None else minutes * 60)
+        now = time.time()
+        with self._lock:
+            self._jobs[name] = _Job(name=name, func=func, interval=interval, next_run=now + interval)
 
-    def cancel_job(self, name: str) -> None:
-        job = self._jobs.pop(name, None)
-        if job:
-            job.cancel()
-            logger.info(f"[scheduler] cancelled job '{name}'")
+    def cancel(self, name: str) -> None:
+        with self._lock:
+            self._jobs.pop(name, None)
 
-    def start(self) -> None:
-        if self._started:
-            return
-        self._started = True
-        for job in self._jobs.values():
-            job.start()
-        logger.info("[scheduler] started")
+    def run_pending(self) -> None:
+        now = time.time()
+        due: list[_Job] = []
+        with self._lock:
+            for j in self._jobs.values():
+                if now >= j.next_run:
+                    due.append(j)
+        for j in due:
+            try:
+                j.func()
+            finally:
+                with self._lock:
+                    j.next_run = time.time() + j.interval
+
+    def run_forever(self, tick: float = 1.0) -> None:
+        self._running = True
+        while self._running:
+            try:
+                self.run_pending()
+            except Exception:
+                # swallow; individual jobs should log
+                pass
+            time.sleep(tick)
 
     def stop(self) -> None:
-        if not self._started:
-            return
-        for name in list(self._jobs.keys()):
-            self.cancel_job(name)
-        self._started = False
-        logger.info("[scheduler] stopped")
+        self._running = False
