@@ -1,247 +1,224 @@
 # main.py
 
-import asyncio
-import signal
-import sys
 import argparse
 import logging
+import sys
+import threading
+import time
 from datetime import datetime, timezone
+from typing import Optional, Dict, Any
 
 import config
 from utils.utilities import configure_logging
-from modules.error_handler import ErrorHandler
 from modules.data_manager import DataManager
-from modules.reward_system import RewardSystem
+from modules.exchange import ExchangeAPI
+from modules.trade_executor import TradeExecutor
 from modules.risk_management import RiskManager
 from modules.self_learning import SelfLearningBot
-from modules.scheduler import LightweightScheduler
+from modules.top_pairs import TopPairsManager
 from modules.ui import TradingUI
+from modules.telegram_bot import TelegramNotifier
+from modules.reward_system import RewardSystem
+from scheduler import JobScheduler
 
 
-class AppState:
-    """Small container to expose flags the UI expects."""
-    is_connected: bool = False
-    is_training: bool = False
-    is_trading: bool = False
-    last_heartbeat: float | None = None
-    current_balance: float | None = None
-    portfolio_value: float | None = None
-    current_symbol: str | None = None
-    timeframe: str | None = None
-
-
-async def bot_tick(bot: SelfLearningBot, app_state: AppState):
-    """
-    One iteration: call bot.step(), update heartbeat + a few public metrics the UI reads.
-    """
-    bot.step()  # consumes live (incremental) data, executes in simulation, handles learning
-    now = datetime.now(timezone.utc)
-    app_state.last_heartbeat = now.timestamp()
-
-    # UI metrics
-    try:
-        bal = bot.executor.get_balance()
-    except Exception:
-        bal = None
-
-    app_state.current_balance = bal
-    # Portfolio value: best-effort — use risk manager current equity if present, else wallet
-    if bot.risk_manager:
-        try:
-            bot.risk_manager.update_equity(bal if bal is not None else 0.0)
-            app_state.portfolio_value = bot.risk_manager.current_equity
-        except Exception:
-            app_state.portfolio_value = bal
-    else:
-        app_state.portfolio_value = bal
-
-    # Expose symbol/timeframe hints for the UI header
-    try:
-        if bot.current_universe:
-            app_state.current_symbol = bot.current_universe[0]
-    except Exception:
-        pass
-    app_state.timeframe = bot.tf_entry
-
-
-def build_bot() -> tuple[SelfLearningBot, AppState, LightweightScheduler, TradingUI]:
-    # ----- logging ----- #
-    configure_logging(
-        level=getattr(config, "LOG_LEVEL", "INFO"),
-        log_file=getattr(config, "LOG_FILE", "bot.log"),
+def build_risk_manager(account_balance: float) -> RiskManager:
+    caps = config.RISK_CAPS.get(
+        "crypto_spot" if config.EXCHANGE_PROFILE == "spot" else "perp",
+        {"per_pair_pct": 0.15, "portfolio_concurrent_pct": 0.30},
     )
-    logger = logging.getLogger("main")
-
-    # ----- core objects ----- #
-    data_mgr = DataManager(
-        base_path=getattr(config, "HISTORICAL_DATA_PATH", "historical_data"),
-        # The DataManager should internally use Bybit REST+WS and perform incremental appends.
-        exchange="bybit",
-        use_websocket=True,
-    )
-    err = ErrorHandler()
-    rs = RewardSystem()
-
     rm = RiskManager(
-        account_balance=getattr(config, "SIMULATION_START_BALANCE", 1000.0),
+        account_balance=account_balance,
+        max_drawdown_limit=config.KPI_TARGETS.get("max_drawdown", 0.15),
+        per_pair_cap_pct=caps["per_pair_pct"],
+        portfolio_cap_pct=caps["portfolio_concurrent_pct"],
+        base_risk_per_trade_pct=config.TRADE_SIZE_PERCENT,
         min_rr=1.5,
         atr_mult_sl=1.5,
         atr_mult_tp=3.0,
     )
+    return rm
 
-    bot = SelfLearningBot(
-        data_provider=data_mgr,
-        error_handler=err,
-        reward_system=rs,
-        risk_manager=rm,
-        training=True,  # can be toggled by UI
-        timeframe_entry="5m",
-        timeframe_setup="15m",
-        base_symbol=getattr(config, "DEFAULT_SYMBOL", "BTC/USDT"),
+
+def run_bot(args: argparse.Namespace) -> int:
+    configure_logging(config.LOG_LEVEL, config.LOG_FILE)
+    log = logging.getLogger("main")
+    log.info("Booting Self-Learning Trading Bot…")
+
+    # Exchange + Data
+    exchange = ExchangeAPI()
+    notifier = TelegramNotifier(disable_async=not config.ASYNC_TELEGRAM)
+    dm = DataManager(
+        exchange=exchange,
+        data_path=config.HISTORICAL_DATA_PATH,
+        max_bars_per_fetch=900,
+        ws_enabled=True,         # Live WS feed for 5m/15m
+        rest_backfill=True,      # REST to backfill gaps
+        prefer_intervals=["5m", "15m"],
     )
 
-    # app state the UI reads
-    app_state = AppState()
-    app_state.is_connected = True
-    app_state.is_training = False
-    app_state.is_trading = False
-    app_state.timeframe = "5m"
+    # Wallets
+    starting_balance = float(config.SIMULATION_START_BALANCE)
+    trade_executor = TradeExecutor(
+        simulation_mode=True,  # Keep execution in simulation as requested
+        notifier=notifier,
+        notifications=None,
+    )
 
-    # Attach a couple of attrs the UI polls directly from `bot`
-    # (UI.refresh reads attributes off `bot`, so we mirror AppState on `bot` too)
-    bot.is_connected = True
-    bot.is_training = False
-    bot.is_trading = False
-    bot.last_heartbeat = None
-    bot.current_balance = None
-    bot.portfolio_value = None
-    bot.current_symbol = getattr(config, "DEFAULT_SYMBOL", "BTC/USDT")
-    bot.timeframe = "5m"
-    bot.app_state = app_state  # handy link
+    # Risk
+    risk_manager = build_risk_manager(starting_balance)
 
-    # Lightweight scheduler
-    scheduler = LightweightScheduler()
+    # Top pairs manager
+    top_pairs = TopPairsManager(
+        exchange=exchange,
+        base_quote="USDT",
+        max_pairs=config.MAX_SIMULATION_PAIRS,
+        refresh_minutes=60,   # re-scan hourly
+        exclude_leveraged=True,
+        min_24h_volume_usd=5_000_000,
+    )
+
+    # Reward system
+    reward = RewardSystem()
+
+    # Agent
+    bot = SelfLearningBot(
+        data_provider=dm,
+        error_handler=exchange.error_handler,
+        reward_system=reward,
+        risk_manager=risk_manager,
+        state_size=5,
+        action_size=6,
+        hidden_dims=[128, 64, 32],
+        batch_size=64,
+        gamma=0.99,
+        learning_rate=1e-3,
+        exploration_max=1.0,
+        exploration_min=0.05,
+        exploration_decay=0.995,
+        memory_size=100_000,
+        tau=0.005,
+        training=True,
+        timeframe="5m",                        # Primary loop on 5m
+        symbol=config.DEFAULT_SYMBOL,          # Fallback if top-pairs empty
+    )
 
     # UI
-    ui = TradingUI(bot)
+    ui = TradingUI(bot=bot)
+    ui.set_title("AI Trading Terminal (Simulation)")
+    bot.ui_hook = ui  # let the agent push UI metrics
 
-    # Wire UI handlers
+    # Expose a couple of handlers for UI buttons
     def start_training():
-        if bot.is_training:
-            logger.info("Training already running.")
-            return
-        bot.is_training = True
-        app_state.is_training = True
-        # Schedule bot tick
-        scheduler.add_job(
-            name="bot_tick",
-            coro=lambda: bot_tick(bot, app_state),
-            interval_seconds=float(getattr(config, "LIVE_LOOP_INTERVAL", 5.0)),
-        )
-        # Periodic heartbeat to reflect in the bot object for the UI
-        def _mirror_state():
-            bot.last_heartbeat = app_state.last_heartbeat
-            bot.current_balance = app_state.current_balance
-            bot.portfolio_value = app_state.portfolio_value
-            bot.current_symbol = app_state.current_symbol or bot.current_symbol
-            bot.timeframe = app_state.timeframe or bot.timeframe
-
-        scheduler.add_job(
-            name="mirror_ui_state",
-            coro=lambda: asyncio.to_thread(_mirror_state),
-            interval_seconds=2.0,
-        )
-        logger.info("Training started.")
+        bot.training = True
+        ui.log("Training started.", level="SUCCESS")
+        ui.set_button_active("start_training")
 
     def stop_training():
-        if not bot.is_training:
-            logger.info("Training not running.")
-            return
-        bot.is_training = False
-        app_state.is_training = False
-        scheduler.cancel_job("bot_tick")
-        scheduler.cancel_job("mirror_ui_state")
-        logger.info("Training stopped.")
+        bot.training = False
+        ui.log("Training stopped.", level="WARN")
+        ui.set_button_active("stop_training")
 
-    # Keep these for UI parity; they operate in sim as well
     def start_trading():
-        if bot.is_trading:
-            logger.info("Trading already running.")
-            return
-        bot.is_trading = True
-        app_state.is_trading = True
-        # In this design, “trading” shares the same bot loop as training (sim execution + learning).
-        if not bot.is_training:
-            start_training()
+        bot.training = True
+        ui.log("Trading loop (simulation) started.", level="SUCCESS")
+        ui.set_button_active("start_trading")
 
     def stop_trading():
-        if not bot.is_trading:
-            logger.info("Trading not running.")
-            return
-        bot.is_trading = False
-        app_state.is_trading = False
-        # keep training loop if user started it explicitly; otherwise stop it
-        stop_training()
+        bot.training = False
+        ui.log("Trading loop (simulation) stopped.", level="WARN")
+        ui.set_button_active("stop_trading")
 
     ui.add_action_handler("start_training", start_training)
     ui.add_action_handler("stop_training", stop_training)
     ui.add_action_handler("start_trading", start_trading)
     ui.add_action_handler("stop_trading", stop_trading)
 
-    ui.set_title("AI Trading Terminal (Simulation)")
+    # Scheduler jobs
+    scheduler = JobScheduler()
 
-    return bot, app_state, scheduler, ui
-
-
-async def main_async(args):
-    bot, app_state, scheduler, ui = build_bot()
-
-    loop = asyncio.get_running_loop()
-    stop_event = asyncio.Event()
-
-    def _handle_stop():
+    # 1) Hourly top pairs refresh (to detect spikes and changes)
+    def refresh_pairs_job():
         try:
-            scheduler.stop()
-        except Exception:
-            pass
-        stop_event.set()
+            pairs = top_pairs.get_top_pairs()  # triggers refresh if stale
+            bot.top_symbols = pairs or [config.DEFAULT_SYMBOL]
+            ui.log(f"Top pairs refreshed: {', '.join(bot.top_symbols)}", level="INFO")
+        except Exception as e:
+            ui.log(f"Top pairs refresh failed: {e}", level="ERROR")
 
-    # OS signals (ignore on Windows if unsupported)
-    for sig in (getattr(signal, "SIGINT", None), getattr(signal, "SIGTERM", None)):
-        if sig is not None:
+    scheduler.every(minutes=60, name="hourly_top_pairs", func=refresh_pairs_job)
+
+    # 2) 15m setup scan (secondary timeframe)
+    def fifteen_scan_job():
+        try:
+            symbols = getattr(bot, "top_symbols", None) or [config.DEFAULT_SYMBOL]
+            for sym in symbols:
+                dm.ensure_backfill(sym, "15m", bars=300)  # light backfill
+                # You can add setup-detection hooks here if needed
+        except Exception as e:
+            ui.log(f"15m scan error: {e}", level="ERROR")
+
+    scheduler.every(minutes=15, name="scan_15m_setup", func=fifteen_scan_job)
+
+    # 3) Heartbeat → UI metrics
+    def heartbeat_job():
+        try:
+            # live balance (if we had real, keep sim for now)
+            live_balance = trade_executor.get_balance()
+            # sim portfolio value from agent perspective
+            portfolio_val = getattr(bot, "portfolio_value", float(starting_balance))
+            reward_pts = getattr(bot.reward_system, "total_points", 0.0)
+            ui.update_live_metrics({
+                "balance": live_balance,
+                "equity": portfolio_val,
+                "symbol": bot.default_symbol or config.DEFAULT_SYMBOL,
+                "timeframe": bot.timeframe,
+            })
+            ui.update_timeseries(wallet=live_balance, vwallet=portfolio_val, points=reward_pts)
+        except Exception as e:
+            logging.getLogger("main").debug(f"Heartbeat err: {e}")
+
+    scheduler.every(seconds=max(5, int(config.LIVE_LOOP_INTERVAL)), name="heartbeat", func=heartbeat_job)
+
+    # Start scheduler thread
+    scheduler_thread = threading.Thread(target=scheduler.run_forever, daemon=True)
+    scheduler_thread.start()
+
+    # Agent background loop (5m tick loop, sim execution, live data)
+    def agent_loop():
+        last_step = 0.0
+        while True:
             try:
-                loop.add_signal_handler(sig, _handle_stop)
-            except NotImplementedError:
-                pass
+                symbols = getattr(bot, "top_symbols", None) or [config.DEFAULT_SYMBOL]
+                for sym in symbols:
+                    # Keep data fresh & light: append-only small pulls
+                    dm.pull_incremental(sym, "5m", max_new_bars=5)  # 1–5 bars each call
+                    # Act & learn using the latest state (sim execution)
+                    bot.act_and_learn(sym, timestamp=datetime.now(timezone.utc))
+                # Pace loop
+                time.sleep(max(5, float(config.LIVE_LOOP_INTERVAL)))
+            except Exception as e:
+                logging.getLogger("main").exception(f"agent_loop error: {e}")
+                time.sleep(5)
 
-    # Optionally auto-start training
-    if args.autostart:
-        # mimic clicking the UI button
-        for name, cb in ui._action_handlers.items():
-            if name == "start_training":
-                cb()
-                break
+    threading.Thread(target=agent_loop, daemon=True).start()
 
-    # Run UI in a thread to keep asyncio loop free
-    def _run_ui():
-        ui.run()
+    # Initial top pairs warmup
+    try:
+        refresh_pairs_job()
+    except Exception:
+        pass
 
-    ui_task = asyncio.to_thread(_run_ui)
-    scheduler.start()
-
-    await stop_event.wait()
-    await ui.shutdown()
+    # Start UI (blocking)
+    ui.run()
+    return 0
 
 
-def parse_args(argv: list[str]) -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Self-Learning Trading Bot (Simulation)")
-    p.add_argument("--autostart", action="store_true", help="Start training immediately")
+def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="Self-Learning AI Trading Bot")
+    p.add_argument("--mode", choices=["simulation", "production"], default=config.ENVIRONMENT)
     return p.parse_args(argv)
 
 
 if __name__ == "__main__":
-    args = parse_args(sys.argv[1:])
-    try:
-        asyncio.run(main_async(args))
-    except KeyboardInterrupt:
-        pass
+    sys.exit(run_bot(parse_args()))
