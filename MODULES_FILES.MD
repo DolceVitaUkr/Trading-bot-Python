@@ -1,94 +1,239 @@
-Modules.md
-Overview
-This project is an AI-driven simulation-first trading framework that learns from live Bybit market data (5m & 15m), executes paper trades only, tracks wallet/virtual wallet performance, and enforces centralized risk controls. It’s designed to be exchange-agnostic later (Forex supported in roadmap), but optimized for Bybit spot right now.
+Modules Overview
+This document provides a detailed breakdown of each module in the trading bot project.
+It reflects the current architecture after August 2025 updates, keeping old goals while adding new features.
 
-Module Map
-Module	Responsibility	Key Public APIs / Notes
-config.py	Central configuration + env vars	Sets environment (simulation vs production), Bybit keys (testnet/live), fee/slippage, paths, UI intervals, risk caps, telemetry.
-modules/exchange.py	Thin CCXT adapter + built-in paper engine	get_price(), get_balance(), get_min_cost(), get_amount_precision(), get_price_precision(), _simulate_order(), create_order() (live), fetch_positions() (stub for spot).
-modules/trade_executor.py	Normalized order execution	Accepts simulation_mode=True/False. In sim: routes to ExchangeAPI._simulate_order() and applies fees. Emits trade events.
-modules/trade_calculator.py	P&L math	calculate_trade_result() (basic), AdvancedTradeCalculator (leverage, interest, slippage, points).
-modules/risk_management.py	Centralized risk controls	Position sizing with caps, SL/TP calc (ATR & R:R), trailing stops, equity/drawdown gate, regime-aware tweaks.
-modules/self_learning.py	DQN agent (training loop)	Uses TradeExecutor (sim), DataManager states, epsilon-greedy actions, replay buffer, target net soft updates.
-modules/data_manager.py	Market data fetch/cache/append	REST backfill of ≤900 bars (5m/15m), incremental updates, file rotation, top-pairs refresh hourly. (Updated to use Bybit + CCXT; WS coming next batch)
-modules/technical_indicators.py	Indicators (list + pandas API)	SMA/EMA/RSI/ATR/ADX/CCI/Bollinger/etc.; pandas-aware wrapper for strategy features.
-modules/reward_system.py	Points and reward shaping	Converts profit/time/SL events to reward points.
-modules/exchange_scanner.py	(Planned) Top pairs selection	Hourly refresh, filters by liquidity/vol/volatility.
-modules/rollout_manager.py	Safety gates (staging)	Centralizes “simulation-only” vs “live” permissions + notes.
-modules/trade_simulator.py	Simple backtester on OHLCV	Replays historical candles through TradeExecutor(simulation_mode=True).
-modules/ui.py	Tkinter UI	Status, logs, 3 performance charts (Wallet, Virtual Wallet, Reward Points), color-feedback buttons, live metric panel.
-modules/error_handler.py	Error taxonomy & logging	RiskViolationError, OrderExecutionError, APIError + logger helpers.
-modules/telegram_bot.py	Notifications	Trade events and alerts to Telegram (optional).
-utils/utilities.py	Utilities	Robust logging config, JSON I/O, retry() decorator, time helpers, small helpers.
-main.py	Entry point	Ties together UI, DataManager, SelfLearningBot, scheduling, and simulation loop.
+1. config.py
+Purpose: Central configuration file for all modules.
+Key Features:
 
-Data Flow & Timing
-Top Pairs (hourly): determine which spot symbols to watch (e.g., top volume on Bybit). Default seed is BTC/USDT; list expands as data accrues.
+API keys (Bybit, Telegram) — simulation & live modes.
 
-Backfill (on first touch per symbol & timeframe): fetch ≤900 bars (5m & 15m) to stay well under Bybit limits.
+Global bot parameters (loop intervals, trade size, fee model).
 
-Incremental update: on each tick, get only new bars (not the whole history), append to disk.
+Risk management settings (per-pair, portfolio exposure caps).
 
-Training/Acting: DQN consumes features computed from cached OHLCV; actions routed to TradeExecutor(simulation_mode=True).
+Optimization parameters for ML/RL.
 
-Stop Management: trailing & breakeven logic in RiskManager.dynamic_stop_management(); polled minute-level for open positions (configurable).
+Paths for saving historical data & logs.
 
-UI: live updates of wallet, virtual wallet (paper), and reward points.
+Supports .env overrides.
 
-Storage Layout
-markdown
-Copy
-Edit
-historical_data/
-  bybit_spot/
-    5m/
-      BTCUSDT.csv
-      ETHUSDT.csv
-      ...
-    15m/
-      BTCUSDT.csv
-      ETHUSDT.csv
-      ...
-Append-only, with rotation safeguards (no 1GB pulls).
+2. main.py
+Purpose: Entry point for starting the bot.
+Key Features:
 
-New symbols create new files automatically.
+Initializes UI & core modules.
 
-Gaps handled by backfill on reconnect.
+Reads config to determine simulation or live mode.
 
-Simulation vs Live
-Default: ENVIRONMENT=simulation (no real orders).
+Launches bot loop or training loop.
 
-Live path is gated by RolloutManager and remains off until explicitly enabled; even then, strict risk caps apply.
+Handles button state changes (color change after click).
 
-UI Guide (Key Widgets)
-Controls: Start/Stop Training & Trading (buttons change color when active/recently pressed).
+3. scheduler.py
+Purpose: Handles scheduled tasks & recurring updates.
+Key Features:
 
-Charts (three):
+Triggers top-pairs refresh every 60 min.
 
-Wallet Balance (real if live; in sim mirrors paper wallet).
+Schedules reward and statistics updates.
 
-Virtual Wallet Balance (paper) — main focus in simulation.
+Can run background backtests or RL sessions.
 
-Reward Points — should broadly track ROI trend (used to detect “withholding wins” behavior).
+4. data_manager.py
+Purpose: Fetches & stores market data.
+Key Features:
 
-Metrics Panel: Balance, Portfolio Value, Current Symbol, Timeframe.
+Gets live klines from Bybit WebSocket & REST API.
 
-Logs: color-coded INFO/WARN/ERROR/SUCCESS.
+Appends new bars to existing CSVs without redownloading full history.
 
-Known Limits & Notes
-Bybit spot positions API is minimal; perp support is planned (enables richer live position insight).
+Avoids exceeding Bybit’s 1000-bar limit (keeps under 900 per request).
 
-TensorFlow isn’t required; PyTorch (CPU) is fine.
+Supports only 5m and 15m intervals (for setup & entry logic).
 
-Windows long paths may need enabling if you install very large packages (see README Troubleshooting).
+Can use locally stored historical datasets for training.
 
-Roadmap (Short)
-Websocket live feed (Bybit public) with REST backfill.
+Future-proofed for Forex/Options connectors.
 
-Perp support + better live position tracking.
+5. exchange.py
+Purpose: Unified interface for Bybit (spot, perp) and future exchanges.
+Key Features:
 
-Strategy: 15m setup detection, 5m entry refinement.
+Places orders (market, limit) with TP/SL.
 
-Forex adapter (Oanda/FXCM/CCXT-proxy).
+Fetches tickers, order book, positions.
 
-Offloading large historical files to object storage (S3/Backblaze B2/Azure Blob), optional SharePoint sync.
+Handles testnet/live domain switching.
+
+Graceful fallback if symbol not in testnet.
+
+Can be extended for Binance, IBKR, Forex.
+
+6. trade_executor.py
+Purpose: Executes trades in live or simulation mode.
+Key Features:
+
+Simulation mode keeps virtual balance & logs PnL without touching wallet.
+
+Live mode sends orders via exchange module.
+
+Avoids opening new positions on same symbol until closed.
+
+TP/SL monitoring cadence:
+
+Positions not re-entered for 60 min unless closed.
+
+Open positions checked every 1–5 min.
+
+Updates reward points on close.
+
+7. trade_simulator.py
+Purpose: Fee/slippage-aware backtesting engine.
+Key Features:
+
+Runs decision lists against historical bars.
+
+Applies config-defined fee & slippage models.
+
+Returns equity curve & final balance.
+
+Designed for RL/ML model validation.
+
+8. technical_indicators.py
+Purpose: Indicator generation for strategies.
+Key Features:
+
+EMA/SMA, RSI, ATR, Bollinger Bands, Fibonacci levels.
+
+Generates buy/sell signals for given timeframes.
+
+Can adapt indicator thresholds dynamically.
+
+Output structured for both ML/RL models & rule-based strategies.
+
+9. risk_management.py
+Purpose: Prevents overexposure & enforces rules.
+Key Features:
+
+Per-pair and portfolio exposure limits.
+
+Loss streak cooldowns.
+
+Position sizing from config (percentage of balance).
+
+Forces close on KPI violations.
+
+10. reward_system.py
+Purpose: Tracks reward points for RL.
+Key Features:
+
+Points for profit % ranges.
+
+Penalties for losses.
+
+Bonus for high-profit trades.
+
+Syncs with statistics & UI.
+
+11. top_pairs.py
+Purpose: Maintains dynamic list of most active pairs.
+Key Features:
+
+Pulls top pairs by volume from Bybit.
+
+Refreshes every 60 minutes.
+
+Removes symbols not supported in testnet when in simulation mode.
+
+Limits returned pairs based on config.
+
+12. self_learning.py
+Purpose: RL/ML-driven strategy orchestrator.
+Key Features:
+
+Uses 15m candles to detect setups, 5m candles for entries.
+
+Avoids symbols with open positions.
+
+Uses top pairs list for diversification.
+
+Refreshes top pairs list every 60 minutes.
+
+Executes trades via TradeExecutor.
+
+Runs entirely in simulation mode if configured.
+
+13. telegram_bot.py
+Purpose: Sends notifications to Telegram.
+Key Features:
+
+Alerts on trade entries/exits, errors, KPI summaries.
+
+Heartbeat messages every X minutes.
+
+Supports async sending for low-latency notifications.
+
+Configurable verbosity (quiet, normal, verbose).
+
+14. ui.py
+Purpose: Bot control panel.
+Key Features:
+
+Buttons for "Start Trading", "Stop Trading", "Reinforcement Learning".
+
+Button color changes after click (shows last action taken).
+
+Three live graphs:
+
+Real wallet balance.
+
+Virtual wallet balance.
+
+Reward points over time.
+
+Resizable log & statistics panels.
+
+15. forex/
+forex_exchange.py — API interface for Forex brokers (future IBKR integration).
+
+forex_data.py — Fetches Forex market data.
+
+forex_strategy.py — Forex-specific strategies.
+
+16. options/
+options_exchange.py — Interface for options trading.
+
+17. telemetry/
+metrics_exporter.py — Exports metrics to files or dashboard.
+
+report_generator.py — Generates KPI and strategy performance reports.
+
+18. state/
+runtime_state.py — Saves/restores bot state between runs.
+
+position_reconciler.py — Syncs open trades with exchange to ensure accuracy.
+
+19. rollout_manager.py
+Purpose: Manages staged rollout from simulation → full live trading.
+Stages:
+
+Data only.
+
+Simulated trades.
+
+Canary small trades.
+
+Scaled positions.
+
+Full deployment.
+
+20. optimization/
+Purpose: Model optimization & parameter tuning.
+Key Features:
+
+Supports grid search, random search, and evolutionary algorithms.
+
+Works with RL/ML modules to improve strategies.
+
+Do you want me to now follow this with the final batch of updated modules so that everything in this list matches your repo exactly? That way there’s no “circling” back again.
