@@ -1,17 +1,16 @@
 # modules/data_manager.py
 
 import os
-import gzip
-import io
+import time
+import math
 import logging
-from typing import Optional, Literal, Dict
-from datetime import datetime, timezone
+from typing import List, Optional, Tuple, Dict
 
 import pandas as pd
+import ccxt
 
 import config
-from modules.exchange import ExchangeAPI
-from utils.utilities import ensure_directory, retry
+from utils.utilities import ensure_directory, read_json, write_json, retry, format_timestamp
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:
@@ -22,206 +21,317 @@ logger.setLevel(getattr(logging, str(getattr(config, "LOG_LEVEL", "INFO")), logg
                 if isinstance(getattr(config, "LOG_LEVEL", "INFO"), str) else getattr(config, "LOG_LEVEL", logging.INFO))
 
 
-VALID_TIMEFRAMES = ("5m", "15m")
-TF_TO_MS: Dict[str, int] = {"5m": 5 * 60 * 1000, "15m": 15 * 60 * 1000}
+# ccxt timeframe to milliseconds
+TF_MS = {
+    "1m": 60_000, "3m": 180_000, "5m": 300_000, "15m": 900_000, "30m": 1_800_000,
+    "1h": 3_600_000, "2h": 7_200_000, "4h": 14_400_000, "6h": 21_600_000, "12h": 43_200_000,
+    "1d": 86_400_000, "1w": 604_800_000
+}
+
+
+def _symbol_to_filename(symbol: str) -> str:
+    # Remove "/" and ":" to keep it filesystem-safe
+    return symbol.replace("/", "").replace(":", "").upper()
+
+
+def _build_paths(symbol: str, timeframe: str, exchange_name: str = "bybit") -> Tuple[str, str]:
+    """
+    Return (csv_path, meta_path) for a symbol/timeframe.
+    """
+    symfile = _symbol_to_filename(symbol)
+    base = os.path.join(config.HISTORICAL_DATA_PATH, exchange_name.lower(), timeframe)
+    ensure_directory(base)
+    csv_path = os.path.join(base, f"{symfile}.csv")
+    meta_path = os.path.join(base, f"{symfile}.meta.json")
+    return csv_path, meta_path
 
 
 class DataManager:
     """
-    Handles historical bar storage & incremental updates.
+    Persisted OHLCV store with incremental backfill using ccxt.
 
-    - Supports ONLY 5m and 15m.
-    - Stores CSV.gz per symbol/timeframe under HISTORICAL_DATA_PATH/<timeframe>/<SYMBOL_NO_SLASH>.csv.gz
-    - Always appends *only new* bars (uses since=last_ts+1).
-    - Never requests more than `max_request_limit` (default 900).
-    - Keeps file row-count bounded via `max_rows_keep` (optional ring-buffer behavior).
+    Key design:
+      - CSV per symbol/timeframe at: historical_data/bybit/<timeframe>/<SYMBOL>.csv
+      - Metadata JSON alongside CSV tracks last sync timestamp
+      - Incremental fetch respects Bybit/ccxt limits (use <= 900 bars per call)
+      - Returns pandas.DataFrame with UTC DatetimeIndex, columns: open, high, low, close, volume
+
+    Notes:
+      - We default to Bybit spot unless config.EXCHANGE_PROFILE indicates perp.
+      - No API keys required for public data; keys (if present) won’t hurt.
     """
 
-    def __init__(
-        self,
-        exchange: Optional[ExchangeAPI] = None,
-        data_root: Optional[str] = None,
-        *,
-        max_request_limit: int = 900,
-        max_rows_keep: Optional[int] = None,  # e.g., 50_000 to cap file size; None = unlimited
-    ):
-        self.exchange = exchange or ExchangeAPI()
-        self.data_root = data_root or getattr(config, "HISTORICAL_DATA_PATH", "historical_data")
-        self.max_request_limit = max(1, min(int(max_request_limit), 900))
-        self.max_rows_keep = max_rows_keep
+    def __init__(self, exchange: Optional[ccxt.Exchange] = None, *, max_request_bars: int = 900):
+        self.max_request_bars = max(10, min(900, int(max_request_bars)))
+        self.exchange = exchange or self._make_exchange()
+        self.exchange.load_markets()
 
-        ensure_directory(self.data_root)
+    def _make_exchange(self) -> ccxt.Exchange:
+        is_sim = getattr(config, "USE_SIMULATION", True)
+        api_key = config.SIMULATION_BYBIT_API_KEY if is_sim else config.BYBIT_API_KEY
+        secret = config.SIMULATION_BYBIT_API_SECRET if is_sim else config.BYBIT_API_SECRET
 
-    # ─────────────────────────────
+        default_type = "spot"
+        if config.EXCHANGE_PROFILE in ("perp", "spot+perp"):
+            default_type = "linear"  # Bybit USDT perpetuals
+
+        ex = ccxt.bybit({
+            "apiKey": api_key,
+            "secret": secret,
+            "enableRateLimit": True,
+            "options": {
+                "defaultType": default_type,     # "spot" | "linear"
+                "adjustForTimeDifference": True
+            }
+        })
+        # Testnet for simulation
+        if is_sim:
+            # Spot testnet is limited; OHLCV still works via public REST.
+            ex.set_sandbox_mode(True)
+        return ex
+
+    # ──────────────────────────────────────────────────────────────────────
     # Public API
-    # ─────────────────────────────
-
-    def storage_path(self, symbol: str, timeframe: Literal["5m", "15m"]) -> str:
-        self._assert_tf(timeframe)
-        sym_noslash = self._noslash(symbol)
-        folder = os.path.join(self.data_root, timeframe)
-        ensure_directory(folder)
-        return os.path.join(folder, f"{sym_noslash}.csv.gz")
-
+    # ──────────────────────────────────────────────────────────────────────
     def load_historical_data(
         self,
         symbol: str,
-        timeframe: Literal["5m", "15m"],
+        timeframe: str = "5m",
         *,
-        auto_update: bool = True
+        backfill_bars: int = 900,
+        incremental: bool = True
     ) -> pd.DataFrame:
         """
-        Load bars from local storage; optionally fetch & append fresh bars first.
-        Returns columns: [timestamp, open, high, low, close, volume], index = pandas.DatetimeIndex (UTC)
+        Ensure CSV exists; backfill if missing; optionally incremental sync; return dataframe.
         """
-        self._assert_tf(timeframe)
-        if auto_update:
+        csv_path, meta_path = _build_paths(symbol, timeframe, self.exchange.id)
+        df = self._read_csv(csv_path)
+
+        if df is None or df.empty:
+            # Backfill last N bars
+            logger.info(f"[Data] Backfilling {symbol} {timeframe} for ~{backfill_bars} bars…")
+            self._backfill_from_scratch(symbol, timeframe, lookback_bars=backfill_bars)
+            df = self._read_csv(csv_path)
+
+        if incremental:
             try:
-                self.update_bars(symbol, timeframe)
+                self.sync_incremental(symbol, timeframe)
+                df = self._read_csv(csv_path)
             except Exception as e:
-                logger.warning(f"update_bars failed for {symbol} {timeframe}: {e}")
+                logger.warning(f"[Data] Incremental sync failed for {symbol} {timeframe}: {e}")
 
-        path = self.storage_path(symbol, timeframe)
-        if not os.path.exists(path):
-            # ensure empty frame with expected columns
-            return self._empty_df()
+        # Normalize index and types
+        if df is None:
+            return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+        df = self._normalize_df(df)
+        return df
 
-        try:
-            with gzip.open(path, "rt", encoding="utf-8") as f:
-                df = pd.read_csv(f)
-            return self._normalize_df(df)
-        except Exception as e:
-            logger.error(f"Failed reading {path}: {e}")
-            return self._empty_df()
-
-    @retry(max_attempts=3, delay=1.0, backoff=2.0)
-    def update_bars(
-        self,
-        symbol: str,
-        timeframe: Literal["5m", "15m"],
-        *,
-        bootstrap_candles: int = 600,  # first-time pull size (kept < 900)
-    ) -> int:
+    def sync_incremental(self, symbol: str, timeframe: str) -> int:
         """
-        Append only new bars for the symbol/timeframe.
-        Returns number of bars appended.
+        Fetch only *new* bars since last saved candle. Returns number of rows appended.
         """
-        self._assert_tf(timeframe)
-        path = self.storage_path(symbol, timeframe)
-        tf_ms = TF_TO_MS[timeframe]
+        csv_path, meta_path = _build_paths(symbol, timeframe, self.exchange.id)
+        df = self._read_csv(csv_path)
+        last_ts = None
+        if df is not None and not df.empty:
+            last_ts = int(df["timestamp"].iloc[-1])
 
-        # Load current
-        if os.path.exists(path):
-            with gzip.open(path, "rt", encoding="utf-8") as f:
-                existing = pd.read_csv(f)
-            existing = self._normalize_df(existing)
-            last_ts = int(existing["timestamp"].iloc[-1]) if len(existing) else None
-        else:
-            existing = self._empty_df()
-            last_ts = None
+        since = last_ts + 1 if last_ts else None
+        appended = self._fetch_append(symbol, timeframe, since=since)
+        if appended > 0:
+            write_json(meta_path, {"last_sync": format_timestamp(int(time.time()))})
+        return appended
 
-        # Determine since
-        if last_ts is None:
-            # Bootstrap a chunk; keep well under 900
-            limit = min(self.max_request_limit, max(200, bootstrap_candles))
-            since = None
-        else:
-            # Ask for the NEXT candle after the last saved (plus 1 ms to be safe)
-            since = last_ts + 1
-            limit = min(self.max_request_limit, 300)
+    def ensure_symbols(self, symbols: List[str], timeframes: List[str]) -> Dict[str, Dict[str, int]]:
+        """
+        Ensure storage exists and is up-to-date for each (symbol, timeframe).
+        Returns counts of appended rows per pair/timeframe.
+        """
+        result: Dict[str, Dict[str, int]] = {}
+        for sym in symbols:
+            result[sym] = {}
+            for tf in timeframes:
+                try:
+                    appended = self.sync_incremental(sym, tf)
+                    result[sym][tf] = appended
+                except Exception as e:
+                    logger.warning(f"[Data] ensure_symbols failed for {sym} {tf}: {e}")
+                    result[sym][tf] = 0
+        return result
 
-        new_rows = self._fetch_ohlcv(symbol, timeframe, since=since, limit=limit)
-        if new_rows is None or len(new_rows) == 0:
-            return 0
-
-        new_df = pd.DataFrame(
-            new_rows,
-            columns=["timestamp", "open", "high", "low", "close", "volume"],
-        )
-        # drop any duplicates or overlaps
-        if len(existing):
-            new_df = new_df[new_df["timestamp"] > existing["timestamp"].iloc[-1]]
-
-        if len(new_df) == 0:
-            return 0
-
-        # Ensure candle alignment to timeframe boundary
-        new_df = new_df[new_df["timestamp"] % tf_ms == 0]
-
-        # Append & cap
-        out = pd.concat([existing, new_df], ignore_index=True)
-
-        if self.max_rows_keep and len(out) > self.max_rows_keep:
-            out = out.iloc[-self.max_rows_keep :].reset_index(drop=True)
-
-        self._write_gz_csv(path, out)
-        return len(new_df)
-
-    # ─────────────────────────────
+    # ──────────────────────────────────────────────────────────────────────
     # Internals
-    # ─────────────────────────────
-
-    def _fetch_ohlcv(
-        self,
-        symbol: str,
-        timeframe: Literal["5m", "15m"],
-        *,
-        since: Optional[int],
-        limit: int,
-    ):
-        """
-        Fetch bars from exchange (ccxt under the hood via ExchangeAPI).
-        The ExchangeAPI resolves symbol mapping for Bybit automatically.
-        """
+    # ──────────────────────────────────────────────────────────────────────
+    def _read_csv(self, path: str) -> Optional[pd.DataFrame]:
         try:
-            # ExchangeAPI already handles spot/perp symbol normalization.
-            # We cap limit further to be safe.
-            limit = min(int(limit), self.max_request_limit)
-            if limit <= 0:
-                return []
-
-            rows = self.exchange.fetch_ohlcv(symbol, timeframe=timeframe, since=since, limit=limit)
-            # Expect ccxt format: [timestamp, open, high, low, close, volume]
-            return rows or []
+            if not os.path.exists(path):
+                return None
+            df = pd.read_csv(path)
+            # Expect columns: timestamp, open, high, low, close, volume
+            return df
         except Exception as e:
-            logger.warning(f"_fetch_ohlcv error {symbol} {timeframe}: {e}")
-            return []
-
-    def _write_gz_csv(self, path: str, df: pd.DataFrame) -> None:
-        # Always write UTF-8 csv.gz atomically
-        tmp = f"{path}.tmp"
-        csv_bytes = df.to_csv(index=False).encode("utf-8")
-        with gzip.open(tmp, "wb") as f:
-            f.write(csv_bytes)
-        os.replace(tmp, path)
+            logger.warning(f"[Data] failed to read {path}: {e}")
+            return None
 
     def _normalize_df(self, df: pd.DataFrame) -> pd.DataFrame:
-        if df is None or df.empty:
-            return self._empty_df()
         cols = ["timestamp", "open", "high", "low", "close", "volume"]
-        df = df.loc[:, cols].copy()
-        # enforce int timestamp
+        df = df.loc[:, [c for c in cols if c in df.columns]].copy()
         df["timestamp"] = df["timestamp"].astype("int64")
-        # ensure sorted unique
-        df = df.sort_values("timestamp").drop_duplicates("timestamp").reset_index(drop=True)
-        # attach UTC index for plotting/convenience (optional)
-        try:
-            df.index = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
-        except Exception:
-            pass
+        for c in ["open", "high", "low", "close", "volume"]:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+        df.dropna(subset=["timestamp", "close"], inplace=True)
+        df = df.drop_duplicates(subset=["timestamp"]).sort_values("timestamp")
+        # Set DatetimeIndex (UTC)
+        df.index = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
         return df
 
-    def _empty_df(self) -> pd.DataFrame:
-        df = pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
+    def _write_csv(self, path: str, df: pd.DataFrame) -> None:
+        ensure_directory(os.path.dirname(path) or ".")
+        df.to_csv(path, index=False)
+
+    def _append_to_csv(self, path: str, rows: List[List[float]]) -> int:
+        """
+        Append OHLCV rows if they are strictly newer than last timestamp in file.
+        rows are ccxt OHLCV lists: [ts, open, high, low, close, volume]
+        """
+        if not rows:
+            return 0
+        if not os.path.exists(path):
+            df = pd.DataFrame(rows, columns=["timestamp", "open", "high", "low", "close", "volume"])
+            self._write_csv(path, df)
+            return len(rows)
+
+        # Read last timestamp to avoid duplication
         try:
-            df.index = pd.to_datetime([], utc=True)
-        except Exception:
-            pass
-        return df
+            last_line = None
+            with open(path, "rb") as f:
+                f.seek(0, os.SEEK_END)
+                size = f.tell()
+                block = 1024
+                data = b""
+                while size > 0 and b"\n" not in data:
+                    step = min(block, size)
+                    size -= step
+                    f.seek(size)
+                    data = f.read(step) + data
+                lines = data.splitlines()
+                if lines:
+                    last_line = lines[-1].decode("utf-8")
+            last_ts = None
+            if last_line:
+                parts = last_line.split(",")
+                if parts and parts[0].isdigit():
+                    last_ts = int(parts[0])
 
-    def _assert_tf(self, timeframe: str) -> None:
-        if timeframe not in VALID_TIMEFRAMES:
-            raise ValueError(f"timeframe must be one of {VALID_TIMEFRAMES}, got '{timeframe}'")
+            new_rows = [r for r in rows if (last_ts is None or int(r[0]) > last_ts)]
+            if not new_rows:
+                return 0
 
-    def _noslash(self, symbol: str) -> str:
-        return symbol.replace("/", "").replace(":", "")
+            with open(path, "a", encoding="utf-8") as f:
+                for r in new_rows:
+                    f.write(",".join([
+                        str(int(r[0])),
+                        f"{float(r[1])}",
+                        f"{float(r[2])}",
+                        f"{float(r[3])}",
+                        f"{float(r[4])}",
+                        f"{float(r[5])}",
+                    ]) + "\n")
+            return len(new_rows)
+        except Exception as e:
+            logger.warning(f"[Data] append failed for {path}: {e}")
+            # Fallback: rewrite full file (rare)
+            df_old = self._read_csv(path)
+            df_new = pd.DataFrame(rows, columns=["timestamp", "open", "high", "low", "close", "volume"])
+            df_all = pd.concat([df_old, df_new], ignore_index=True) if df_old is not None else df_new
+            df_all = self._normalize_df(df_all)
+            self._write_csv(path, df_all.reset_index(drop=False)[["timestamp", "open", "high", "low", "close", "volume"]])
+            return len(df_new)
+
+    def _backfill_from_scratch(self, symbol: str, timeframe: str, *, lookback_bars: int = 900) -> None:
+        """
+        Fetch recent `lookback_bars` in as few requests as possible (<= max_request_bars per call).
+        """
+        csv_path, meta_path = _build_paths(symbol, timeframe, self.exchange.id)
+        tf_ms = TF_MS.get(timeframe)
+        if not tf_ms:
+            raise ValueError(f"Unsupported timeframe: {timeframe}")
+
+        now_ms = self._now_ms()
+        since = now_ms - lookback_bars * tf_ms
+        all_rows: List[List[float]] = []
+        remaining = lookback_bars
+
+        while remaining > 0:
+            limit = min(self.max_request_bars, remaining)
+            batch = self._fetch_ohlcv(symbol, timeframe, since=since, limit=limit)
+            if not batch:
+                break
+            all_rows.extend(batch)
+            since = int(batch[-1][0]) + tf_ms
+            got = len(batch)
+            remaining -= got
+            if got < limit:
+                break
+            # tiny pause to stay friendly
+            time.sleep(0.2)
+
+        if all_rows:
+            df = pd.DataFrame(all_rows, columns=["timestamp", "open", "high", "low", "close", "volume"])
+            self._write_csv(csv_path, df)
+            write_json(meta_path, {"last_sync": format_timestamp(int(time.time()))})
+
+    def _fetch_append(self, symbol: str, timeframe: str, *, since: Optional[int]) -> int:
+        """
+        Loop fetching in chunks <= max_request_bars until caught up to 'now'.
+        """
+        csv_path, meta_path = _build_paths(symbol, timeframe, self.exchange.id)
+        tf_ms = TF_MS.get(timeframe)
+        if not tf_ms:
+            raise ValueError(f"Unsupported timeframe: {timeframe}")
+
+        # If no since provided, fetch a small recent window (e.g., last 2*max bars)
+        if since is None:
+            since = self._now_ms() - (self.max_request_bars * 2 * tf_ms)
+
+        appended_total = 0
+        while True:
+            batch = self._fetch_ohlcv(symbol, timeframe, since=since, limit=self.max_request_bars)
+            if not batch:
+                break
+            appended = self._append_to_csv(csv_path, batch)
+            appended_total += appended
+
+            last_ts = int(batch[-1][0])
+            since = last_ts + tf_ms
+
+            # Stop if we’re close enough to the latest bar
+            if self._now_ms() - last_ts <= tf_ms:
+                break
+
+            # Be polite to API
+            time.sleep(0.2)
+
+        if appended_total > 0:
+            write_json(meta_path, {"last_sync": format_timestamp(int(time.time()))})
+
+        return appended_total
+
+    @retry(max_attempts=3, delay=1.0, backoff=2.0, logger=logger)
+    def _fetch_ohlcv(self, symbol: str, timeframe: str, *, since: Optional[int], limit: int) -> List[List[float]]:
+        """
+        Single ccxt fetchOHLCV call with retry. Returns list of [ts, o, h, l, c, v].
+        """
+        # Ensure symbol exists in exchange markets mapping
+        sym = symbol
+        markets = self.exchange.markets
+        if symbol not in markets and symbol.replace("/", ":") in markets:
+            sym = symbol.replace("/", ":")
+
+        data = self.exchange.fetch_ohlcv(sym, timeframe=timeframe, since=since, limit=limit)
+        # Bybit sometimes returns duplicates or gaps; we’ll clean when appending
+        return data or []
+
+    @staticmethod
+    def _now_ms() -> int:
+        return int(time.time() * 1000)
