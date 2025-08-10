@@ -4,10 +4,17 @@ import logging
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 
+import config
 from modules.trade_executor import TradeExecutor
 from modules.reward_system import calculate_points
 
 logger = logging.getLogger(__name__)
+if not logger.handlers:
+    h = logging.StreamHandler()
+    h.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+    logger.addHandler(h)
+logger.setLevel(getattr(logging, str(getattr(config, "LOG_LEVEL", "INFO")), logging.INFO)
+                if isinstance(getattr(config, "LOG_LEVEL", "INFO"), str) else getattr(config, "LOG_LEVEL", logging.INFO))
 
 
 class TradeSimulator:
@@ -24,16 +31,17 @@ class TradeSimulator:
 
     def __init__(
         self,
-        initial_wallet: float = 1000.0,
+        initial_wallet: float = None,
         initial_points: float = 100.0,
-        trade_size_percent: float = 0.1,
+        trade_size_percent: float = None,
         slippage: float = 0.0005,
-        trade_fee: float = 0.0002,
+        trade_fee: float = None,
         symbol: str = "SIM"
     ):
-        # Constants
-        self.starting_balance = initial_wallet
-        self.starting_points = initial_points
+        # Constants (pull from config if not supplied)
+        self.starting_balance = float(initial_wallet if initial_wallet is not None
+                                      else getattr(config, "SIMULATION_START_BALANCE", 1000.0))
+        self.starting_points = float(initial_points)
         self.symbol = symbol
 
         # State
@@ -43,11 +51,13 @@ class TradeSimulator:
         self.trade_history: List[Dict[str, Any]] = []
 
         # Strategy params
-        self.trade_size_percent = trade_size_percent
-        self.slippage = slippage
-        self.trade_fee = trade_fee
+        self.trade_size_percent = float(trade_size_percent if trade_size_percent is not None
+                                        else getattr(config, "TRADE_SIZE_PERCENT", 0.05))
+        self.slippage = float(slippage)
+        self.trade_fee = float(trade_fee if trade_fee is not None
+                               else getattr(config, "FEE_PERCENTAGE", 0.002))
 
-        # Trade executor in simulation mode
+        # Trade executor in simulation mode (always)
         self.executor = TradeExecutor(simulation_mode=True)
 
         # Internal
@@ -62,6 +72,10 @@ class TradeSimulator:
 
         Optionally pass `notify_summary` to receive a compact run summary at the end.
         """
+        if not market_data:
+            logger.info("No market_data provided to TradeSimulator.run()")
+            return
+
         # Reset
         self.wallet_balance = self.starting_balance
         self.points = self.starting_points
@@ -71,12 +85,19 @@ class TradeSimulator:
         self.portfolio_value = self.starting_balance
 
         for kline in market_data:
-            ts, o, h, l, close_price, vol = kline
+            try:
+                ts, o, h, l, close_price, vol = kline
+            except Exception:
+                logger.debug(f"Skipping malformed kline: {kline}")
+                continue
+
             signals = self._generate_trading_signals(kline)
 
+            # Entry when flat
             if signals.get("buy") and self.symbol not in self._entry_info:
                 self._execute_buy(ts, close_price)
 
+            # Exit when in position
             elif signals.get("sell") and self.symbol in self._entry_info:
                 self._execute_sell(ts, close_price)
 
@@ -94,20 +115,23 @@ class TradeSimulator:
     def _generate_trading_signals(self, kline: List[Any]) -> Dict[str, bool]:
         """
         Override in subclasses or tests to return {"buy": bool, "sell": bool}.
+        Default: no-op.
         """
         return {"buy": False, "sell": False}
 
     # -------------------- INTERNAL EXECUTION -------------------- #
 
     def _execute_buy(self, timestamp: int, price: float):
+        if price <= 0:
+            return
         qty = (self.wallet_balance * self.trade_size_percent) / (
             price * (1 + self.slippage + self.trade_fee)
         )
         result = self.executor.execute_order(self.symbol, "buy", quantity=qty, price=price)
+        # ExchangeAPI internal sim balance reflects fee debits; mirror to UI balance
         self.wallet_balance = self.executor.get_balance()
         entry_time = datetime.fromtimestamp(timestamp / 1000)
-        # store qty for profit % calculation on exit
-        self._entry_info[self.symbol] = {"price": price, "qty": float(result.get("quantity", qty)), "time": entry_time}
+        self._entry_info[self.symbol] = {"price": price, "time": entry_time}
 
         self.trade_history.append({**result, "timestamp": timestamp})
         self._summary_events.append(
@@ -115,22 +139,22 @@ class TradeSimulator:
         )
 
     def _execute_sell(self, timestamp: int, price: float):
+        if price <= 0:
+            return
         result = self.executor.execute_order(self.symbol, "sell", price=price)
         self.wallet_balance = self.executor.get_balance()
-        entry = self._entry_info.pop(self.symbol)
-        pnl = result.get("profit", 0.0)
+        entry = self._entry_info.pop(self.symbol, None)
+        pnl = float(result.get("profit", 0.0))
 
-        # Convert PnL to percentage of entry notional for points
-        notional = max(1e-12, entry["price"] * entry["qty"])
-        profit_pct = (pnl / notional) * 100.0
-
-        points = calculate_points(
-            profit=profit_pct,
-            entry_time=entry["time"],
-            exit_time=datetime.fromtimestamp(timestamp / 1000),
-            stop_loss_triggered=False,
-            risk_adjusted=True
-        )
+        points = 0.0
+        if entry:
+            points = calculate_points(
+                profit=pnl,
+                entry_time=entry["time"],
+                exit_time=datetime.fromtimestamp(timestamp / 1000),
+                stop_loss_triggered=False,
+                risk_adjusted=True
+            )
         self.points += points
 
         self.trade_history.append({**result, "timestamp": timestamp, "points": points})
@@ -150,4 +174,3 @@ class TradeSimulator:
             f"Portfolio:     ${self.portfolio_value:.2f}\n"
             f"Trades:\n- " + "\n- ".join(self._summary_events)
         )
-
