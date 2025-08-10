@@ -1,192 +1,94 @@
-Modules Overview & API Surface (v0.4)
-This file documents interfaces you must not break (functions, classes, and events), plus naming rules and a change-map so multiple devs stay aligned.
+Modules.md
+Overview
+This project is an AI-driven simulation-first trading framework that learns from live Bybit market data (5m & 15m), executes paper trades only, tracks wallet/virtual wallet performance, and enforces centralized risk controls. It’s designed to be exchange-agnostic later (Forex supported in roadmap), but optimized for Bybit spot right now.
 
-✅ Target timeframes: 15m primary, 5m confirm for entries/scalps
-✅ Domains: Crypto Spot, Perps, Forex, FX Options (FX/Options toggles default OFF at boot but positions are reconciled/managed)
+Module Map
+Module	Responsibility	Key Public APIs / Notes
+config.py	Central configuration + env vars	Sets environment (simulation vs production), Bybit keys (testnet/live), fee/slippage, paths, UI intervals, risk caps, telemetry.
+modules/exchange.py	Thin CCXT adapter + built-in paper engine	get_price(), get_balance(), get_min_cost(), get_amount_precision(), get_price_precision(), _simulate_order(), create_order() (live), fetch_positions() (stub for spot).
+modules/trade_executor.py	Normalized order execution	Accepts simulation_mode=True/False. In sim: routes to ExchangeAPI._simulate_order() and applies fees. Emits trade events.
+modules/trade_calculator.py	P&L math	calculate_trade_result() (basic), AdvancedTradeCalculator (leverage, interest, slippage, points).
+modules/risk_management.py	Centralized risk controls	Position sizing with caps, SL/TP calc (ATR & R:R), trailing stops, equity/drawdown gate, regime-aware tweaks.
+modules/self_learning.py	DQN agent (training loop)	Uses TradeExecutor (sim), DataManager states, epsilon-greedy actions, replay buffer, target net soft updates.
+modules/data_manager.py	Market data fetch/cache/append	REST backfill of ≤900 bars (5m/15m), incremental updates, file rotation, top-pairs refresh hourly. (Updated to use Bybit + CCXT; WS coming next batch)
+modules/technical_indicators.py	Indicators (list + pandas API)	SMA/EMA/RSI/ATR/ADX/CCI/Bollinger/etc.; pandas-aware wrapper for strategy features.
+modules/reward_system.py	Points and reward shaping	Converts profit/time/SL events to reward points.
+modules/exchange_scanner.py	(Planned) Top pairs selection	Hourly refresh, filters by liquidity/vol/volatility.
+modules/rollout_manager.py	Safety gates (staging)	Centralizes “simulation-only” vs “live” permissions + notes.
+modules/trade_simulator.py	Simple backtester on OHLCV	Replays historical candles through TradeExecutor(simulation_mode=True).
+modules/ui.py	Tkinter UI	Status, logs, 3 performance charts (Wallet, Virtual Wallet, Reward Points), color-feedback buttons, live metric panel.
+modules/error_handler.py	Error taxonomy & logging	RiskViolationError, OrderExecutionError, APIError + logger helpers.
+modules/telegram_bot.py	Notifications	Trade events and alerts to Telegram (optional).
+utils/utilities.py	Utilities	Robust logging config, JSON I/O, retry() decorator, time helpers, small helpers.
+main.py	Entry point	Ties together UI, DataManager, SelfLearningBot, scheduling, and simulation loop.
 
-0) Global Conventions
-Naming: snake_case for functions/vars, CamelCase for classes, module names lowercase.
+Data Flow & Timing
+Top Pairs (hourly): determine which spot symbols to watch (e.g., top volume on Bybit). Default seed is BTC/USDT; list expands as data accrues.
 
-Type hints required. Return None explicitly if nothing is returned.
+Backfill (on first touch per symbol & timeframe): fetch ≤900 bars (5m & 15m) to stay well under Bybit limits.
 
-Async: network I/O functions are async and end with _async (e.g., fetch_klines_async).
+Incremental update: on each tick, get only new bars (not the whole history), append to disk.
 
-Time: all timestamps UTC, ms since epoch (int); expose pd.Timestamp only inside data modules.
+Training/Acting: DQN consumes features computed from cached OHLCV; actions routed to TradeExecutor(simulation_mode=True).
 
-Money/Qty: use Decimal internally; accept float at API edge and cast.
+Stop Management: trailing & breakeven logic in RiskManager.dynamic_stop_management(); polled minute-level for open positions (configurable).
 
-Symbols: canonical: "BTCUSDT" (no slash) inside the engine; adapters may accept "BTC/USDT".
+UI: live updates of wallet, virtual wallet (paper), and reward points.
 
-Errors: raise from modules.exceptions; never raise bare Exception.
-
-Config vs State: constants in config.py; mutable runtime in state/runtime_state.py.
-
-1) Core Modules (/modules)
-config.py
-Purpose: central knobs, rollout flags, fee models.
-
-Key attributes (read-only at runtime):
-
-py
+Storage Layout
+markdown
 Copy
 Edit
-ENVIRONMENT: Literal["simulation","production"]
-ROLLOUT_STAGE: int
-EXCHANGE_PROFILE: Literal["spot","perp","spot+perp"]
-FOREX_ENABLED: int
-OPTIONS_ENABLED: int
-HISTORICAL_DATA_PATH: str
-LIVE_LOOP_INTERVAL: float
-SIMULATION_ORDER_DELAY: float
-TIMEFRAMES: dict
-EXPOSURE_CAPS: dict
-RISK: dict
-EXPLORATION: dict
-FEE_MODEL: dict
-CRITICAL_ERROR_CODES: set[int]
-data_manager.py
-Purpose: unified data access (WS + REST backfill), dedupe, parquet partitioned by day.
+historical_data/
+  bybit_spot/
+    5m/
+      BTCUSDT.csv
+      ETHUSDT.csv
+      ...
+    15m/
+      BTCUSDT.csv
+      ETHUSDT.csv
+      ...
+Append-only, with rotation safeguards (no 1GB pulls).
 
-py
-Copy
-Edit
-class DataManager:
-    def __init__(self, venue: str, domain: Literal["spot","perp","forex","options"])
-    async def fetch_klines_async(...)
-    def load_bars(...)
-    def upsert_bars(...)
-    def last_bar_time(...)
-    def gap_backfill_plan(...)
-exchange.py
-Purpose: place/cancel orders; reconcile & reattach TP/SL on restart; throttle.
+New symbols create new files automatically.
 
-py
-Copy
-Edit
-class Exchange:
-    def __init__(...)
-    async def get_price_async(...)
-    async def get_balance_async(...)
-    async def create_order_async(...)
-    async def cancel_order_async(...)
-    async def get_open_positions_async(...)
-    async def reconcile_async()
-trade_executor.py
-Purpose: execution with risk/fees; always attach TP/SL.
+Gaps handled by backfill on reconnect.
 
-py
-Copy
-Edit
-class TradeExecutor:
-    def __init__(...)
-    async def submit_trade_async(...)
-    async def close_position_async(...)
-    async def disaster_flatten_all_async(...)
-risk_management.py
-Purpose: position sizing, caps, time-based exits, cooldowns.
+Simulation vs Live
+Default: ENVIRONMENT=simulation (no real orders).
 
-py
-Copy
-Edit
-def position_size(...)
-def enforce_exposure(...)
-def compute_tp_sl(...)
-def should_force_exit(...)
-def cooldown_required(...)
-reward_system.py
-Purpose: RL reward + human KPIs.
+Live path is gated by RolloutManager and remains off until explicitly enabled; even then, strict risk caps apply.
 
-py
-Copy
-Edit
-def trade_points(...)
-def rl_reward(...)
-technical_indicators.py
-Purpose: TA feature calculations for strategy and ML pipelines.
+UI Guide (Key Widgets)
+Controls: Start/Stop Training & Trading (buttons change color when active/recently pressed).
 
-py
-Copy
-Edit
-# Moving averages
-def sma(data: list[float], window: int) -> float | None
-def ema(data: list[float], window: int) -> float | None
+Charts (three):
 
-# Oscillators
-def rsi(close: list[float], window: int = 14) -> float | None
-def stochastic_oscillator(...)
-def williams_r(...)
-def obv(close: list[float], volume: list[float]) -> list[float] | None
+Wallet Balance (real if live; in sim mirrors paper wallet).
 
-# Trend / volatility
-def atr(...)
-def adx(...)
-def cci(...)
-def bollinger_bands(...)
-def entropy_volatility(...)
+Virtual Wallet Balance (paper) — main focus in simulation.
 
-# Other
-def fibonacci_retracement(...)
-def market_regime(...)
+Reward Points — should broadly track ROI trend (used to detect “withholding wins” behavior).
 
-# Wrapper
-class TechnicalIndicators:
-    sma(...)
-    ema(...)
-    rsi(...)
-    atr(...)
-    adx(...)
-    cci(...)
-    williams_r(...)
-    obv(...)
-    stochastic_oscillator(...)
-    bollinger_bands(...)
-    fibonacci_retracement(...)
-    market_regime(...)
-    entropy_volatility(...)
-top_pairs.py
-Purpose: priority queue of symbols, sentiment hook, watchlist refresh.
+Metrics Panel: Balance, Portfolio Value, Current Symbol, Timeframe.
 
-self_learning.py
-Purpose: supervised + online RL strategy loop.
+Logs: color-coded INFO/WARN/ERROR/SUCCESS.
 
-trade_simulator.py
-Purpose: paper engine/backtests with fee/slippage.
+Known Limits & Notes
+Bybit spot positions API is minimal; perp support is planned (enables richer live position insight).
 
-telegram_bot.py
-Purpose: notifications + inline controls.
+TensorFlow isn’t required; PyTorch (CPU) is fine.
 
-ui.py
-Purpose: headless web UI / CLI controls.
+Windows long paths may need enabling if you install very large packages (see README Troubleshooting).
 
-2) New Domains (placeholders)
-/forex/forex_exchange.py
+Roadmap (Short)
+Websocket live feed (Bybit public) with REST backfill.
 
-/forex/forex_data.py
+Perp support + better live position tracking.
 
-/forex/forex_strategy.py
+Strategy: 15m setup detection, 5m entry refinement.
 
-/options/options_exchange.py
+Forex adapter (Oanda/FXCM/CCXT-proxy).
 
-3) Telemetry & Reports
-/telemetry/metrics_exporter.py
-
-/telemetry/report_generator.py
-
-4) State & Reconciliation
-/state/runtime_state.py
-
-/state/position_reconciler.py
-
-5) Change-Control / Update Map
-Keep old names for 2 releases when renaming
-
-Deprecate before removal
-
-✅ Updated in v0.4:
-
-technical_indicators.py section aligned with actual codebase (removed duplicate class def, clarified function signatures)
-
-Global conventions unchanged but reconfirmed
-
-Added clarity on wrappers vs functions
-
+Offloading large historical files to object storage (S3/Backblaze B2/Azure Blob), optional SharePoint sync.
