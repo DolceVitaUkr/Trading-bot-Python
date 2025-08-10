@@ -1,473 +1,457 @@
 # modules/data_manager.py
-from __future__ import annotations
 
 import os
-import json
 import time
-import logging
-import pathlib
-from datetime import datetime, timedelta, timezone
-from typing import List, Dict, Optional, Any, Tuple
+import json
+import math
+import gzip
+import queue
+import atexit
+import signal
+import threading
+from datetime import datetime, timezone
+from typing import List, Dict, Optional, Tuple, Any
 
 import pandas as pd
-import requests
 
 import config
-from utils.utilities import ensure_directory, retry
+from utils.utilities import ensure_directory, retry, utc_now, format_timestamp
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
-handler = logging.StreamHandler()
-handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
-if not any(isinstance(h, logging.StreamHandler) for h in logger.handlers):
-    logger.addHandler(handler)
+try:
+    import requests
+except Exception:
+    requests = None
 
-# Bybit v5 market kline endpoint (public)
-BYBIT_V5_KLINE = (getattr(config, "BYBIT_BASE_URL", "https://api.bybit.com").rstrip("/") + "/v5/market/kline")
-
-
-def timeframe_to_minutes(tf: str) -> int:
-    unit_map = {"m": 1, "h": 60, "d": 1440, "w": 10080}
-    unit = tf[-1]
-    num = int(tf[:-1])
-    return num * unit_map.get(unit, 1)
+try:
+    import websockets
+    import asyncio
+except Exception:
+    websockets = None
+    asyncio = None
 
 
-def _utc_ms(dt: datetime) -> int:
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+BYBIT_API = "https://api.bybit.com"
+WS_PUBLIC = "wss://stream.bybit.com/v5/public/spot"  # change to linear if using futures
+
+# Map internal timeframe -> Bybit interval string
+INTERVAL_MAP = {
+    "5m": "5",
+    "15m": "15",
+}
+
+DEFAULT_CATEGORY = getattr(config, "BYBIT_CATEGORY", "spot")  # "spot" or "linear"
+DATA_ROOT = getattr(config, "DATA_ROOT", "./data/bybit")
+BACKFILL_BARS_5M = int(getattr(config, "BACKFILL_BARS_5M", 10000))   # ~34 days
+BACKFILL_BARS_15M = int(getattr(config, "BACKFILL_BARS_15M", 8000))  # ~83 days
+REST_PAGE_LIMIT = 900  # stay under Bybit max 1000
+TOP_PAIRS_COUNT = int(getattr(config, "TOP_PAIRS_COUNT", 10))
+TOP_PAIRS_REFRESH_MIN = int(getattr(config, "TOP_PAIRS_REFRESH_MIN", 60))
+REQUEST_SLEEP = float(getattr(config, "REQUEST_SLEEP", 0.15))  # polite pacing
+
+
+def _now_ms() -> int:
+    return int(time.time() * 1000)
+
+
+def _to_ms(dt: datetime) -> int:
     return int(dt.timestamp() * 1000)
 
 
-def _ms_to_utc(ms: int) -> datetime:
-    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
+def normalize_symbol_for_rest(sym: str) -> str:
+    """BTC/USDT -> BTCUSDT"""
+    return sym.replace("/", "").upper()
 
 
-def _floor_to_tf(ts: int, tf_ms: int) -> int:
-    return ts - (ts % tf_ms)
+def pretty_symbol(sym: str) -> str:
+    """BTCUSDT -> BTC/USDT"""
+    if "/" in sym:
+        return sym.upper()
+    if sym.endswith("USDT"):
+        return f"{sym[:-4]}/USDT"
+    return sym.upper()
+
+
+def _tf_path(timeframe: str) -> str:
+    return os.path.join(DATA_ROOT, timeframe)
+
+
+def _file_path(symbol: str, timeframe: str) -> str:
+    ensure_directory(_tf_path(timeframe))
+    return os.path.join(_tf_path(timeframe), f"{normalize_symbol_for_rest(symbol)}.parquet")
+
+
+def _sleep_polite():
+    time.sleep(REQUEST_SLEEP)
 
 
 class DataManager:
     """
-    Historical OHLCV manager for Bybit v5 (HTTP).
-    Partitioned parquet by day:
-      {HISTORICAL_DATA_PATH}/{SYMBOL}/{TF}/YYYY-MM-DD.parquet
+    Bybit market data manager:
+      - Parquet storage per symbol/timeframe
+      - REST backfill (<=900/page) + incremental sync
+      - WebSocket append on CLOSED candle
+      - Top pairs hourly refresh with 24h volume rank and 2h/24h change (spike watch)
     """
 
-    TF_MAP = {
-        "5m": 5 * 60 * 1000,
-        "15m": 15 * 60 * 1000,
-    }
+    def __init__(self, category: str = DEFAULT_CATEGORY, timeframes: Optional[List[str]] = None):
+        self.category = category
+        self.timeframes = timeframes or ["15m", "5m"]
 
-    INTERVAL_MAP = {
-        "5m": "5",
-        "15m": "15",
-    }
+        self._stop = threading.Event()
+        self._ws_thread: Optional[threading.Thread] = None
+        self._ws_symbols: List[str] = []  # normalized REST style (BTCUSDT)
+        self._ws_connected = False
 
-    DEFAULT_CATEGORY = "spot"  # "spot" or "linear"/"inverse"
+        self._top_pairs_cache: List[str] = []
+        self._top_pairs_ts: float = 0.0
+        self._spike_state: Dict[str, Dict[str, float]] = {}  # symbol -> last pct changes snapshot
 
-    _CONNECT_TIMEOUT = 3.05
-    _READ_TIMEOUT = 10.0
-    _REQS_PER_MIN_BUDGET = 40
-    _PAGE_LIMIT = 1000  # v5 max rows/page
+        # in-process queue for closed candles from WS
+        self._ws_queue: "queue.Queue[Tuple[str, str, dict]]" = queue.Queue()
 
-    def __init__(self, test_mode: bool = False):
-        self.data_folder = config.HISTORICAL_DATA_PATH
-        ensure_directory(self.data_folder)
-        self.data_root = pathlib.Path(self.data_folder)
-
-        self.cache: Dict[str, pd.DataFrame] = {}
-        self._rate_bucket: List[float] = []
-        self._meta_cache: Dict[str, Dict[str, Any]] = {}
-
-    # ---------------- Public API ---------------- #
-
-    def update_klines(
-        self,
-        symbol: str,
-        timeframe: str,
-        klines: Optional[List[list]] = None,
-        category: Optional[str] = None,
-        since: Optional[datetime] = None,
-        until: Optional[datetime] = None,
-    ) -> bool:
+        atexit.register(self.shutdown)
         try:
-            self._validate_tf(timeframe)
-            category = (category or self.DEFAULT_CATEGORY).lower()
+            signal.signal(signal.SIGINT, lambda *_: self.shutdown())
+        except Exception:
+            pass
 
-            if klines:
-                new_df = self._process_data(klines)
-                self._write_partition_df(symbol, timeframe, new_df)
-                if not new_df.empty:
-                    last_ts = int(new_df.index[-1].value // 10**6)
-                    meta = self._load_meta(symbol, timeframe)
-                    if meta.get("last_ts") is None or last_ts > int(meta["last_ts"]):
-                        meta["last_ts"] = last_ts
-                        self._save_meta(symbol, timeframe, meta)
-                return True
+    # ─────────────────────────────────────────────────────────────────────
+    # Public API
+    # ─────────────────────────────────────────────────────────────────────
 
-            now_utc = datetime.now(timezone.utc)
-            if until is None:
-                until = now_utc
+    def start_ws(self, symbols: List[str]) -> None:
+        """
+        Start WebSocket (if available) to receive kline CLOSE events and append to Parquet.
+        `symbols` should be pretty style (BTC/USDT). We'll normalize internally.
+        """
+        if websockets is None or asyncio is None:
+            # websockets lib not available; fallback to REST only
+            return
+        rest_syms = [normalize_symbol_for_rest(s) for s in symbols]
+        self._ws_symbols = sorted(set(rest_syms))
+        if self._ws_thread and self._ws_thread.is_alive():
+            # already running; update subs by restarting
+            self.stop_ws()
+        self._ws_thread = threading.Thread(target=self._ws_worker, daemon=True)
+        self._ws_thread.start()
 
-            last_ts = self.last_timestamp(symbol, timeframe)
-            tf_ms = self.TF_MAP[timeframe]
-            if since is None:
-                if last_ts is None:
-                    days = 120 if timeframe == "15m" else 30
-                    since = now_utc - timedelta(days=days)
-                else:
-                    since = _ms_to_utc(last_ts - (3 * tf_ms))
+    def stop_ws(self) -> None:
+        self._stop.set()
+        if self._ws_thread and self._ws_thread.is_alive():
+            self._ws_thread.join(timeout=5)
+        self._stop.clear()
 
-            rows, parts = self._fetch_and_persist(
-                symbol=symbol,
-                timeframe=timeframe,
-                category=category,
-                start=since,
-                end=until,
-            )
-            logger.info(f"[{symbol} {timeframe}] added rows={rows}, partitions={parts}")
-            return True
-        except Exception as e:
-            logger.exception(f"update_klines failed: {e}")
-            return False
+    def shutdown(self):
+        self.stop_ws()
 
     def load_historical_data(self, symbol: str, timeframe: str) -> pd.DataFrame:
-        key = f"{symbol}_{timeframe}_all"
-        if key in self.cache:
-            return self.cache[key]
-        df = self._read_all(symbol, timeframe)
-        self.cache[key] = df
-        return df
+        """
+        Return a DataFrame with columns: open, high, low, close, volume (index = datetime UTC).
+        Ensures local Parquet exists & is fresh up to near-now (by REST incremental if WS not running).
+        """
+        assert timeframe in INTERVAL_MAP, f"Unsupported timeframe: {timeframe}"
+        path = _file_path(symbol, timeframe)
 
-    def load_window(
-        self,
-        symbol: str,
-        timeframe: str,
-        lookback: int = 500,
-        end_time: Optional[datetime] = None,
-    ) -> pd.DataFrame:
-        self._validate_tf(timeframe)
-        end_time = end_time or datetime.now(timezone.utc)
-        tf_ms = self.TF_MAP[timeframe]
-        start_time = end_time - timedelta(milliseconds=lookback * tf_ms)
-        df = self._read_range(symbol, timeframe, start_time, end_time)
-        return self._finalize_df(df)
-
-    def last_timestamp(self, symbol: str, timeframe: str) -> Optional[int]:
-        meta = self._load_meta(symbol, timeframe)
-        ts = meta.get("last_ts")
-        if ts is not None:
-            return int(ts)
-        tail = self._read_tail(symbol, timeframe, 1)
-        if tail is None or tail.empty:
-            return None
-        return int(tail.index[-1].value // 10**6)
-
-    def has_gap(self, symbol: str, timeframe: str) -> bool:
-        self._validate_tf(timeframe)
-        tf_ms = self.TF_MAP[timeframe]
-        df = self.load_window(symbol, timeframe, lookback=220)
-        if df.empty:
-            return False
-        diffs = df.index.to_series().diff().dropna().view("i8") // 10**6
-        return (diffs != tf_ms).any()
-
-    def upsert_bar(self, symbol: str, timeframe: str, bar: Dict[str, Any], category: Optional[str] = None) -> None:
-        self._validate_tf(timeframe)
-        ts = int(bar["timestamp"])
-        tf_ms = self.TF_MAP[timeframe]
-        if ts % tf_ms != 0:
-            raise ValueError(f"Bar ts {ts} not aligned to {timeframe}")
-
-        df = (
-            pd.DataFrame([bar])
-            .set_index(pd.to_datetime([ts], unit="ms", utc=True))
-            .astype({"open": float, "high": float, "low": float, "close": float, "volume": float})
-        )
-        df.index.name = "timestamp"
-        self._write_partition_df(symbol, timeframe, df)
-
-        meta = self._load_meta(symbol, timeframe)
-        if meta.get("last_ts") is None or ts > int(meta["last_ts"]):
-            meta["last_ts"] = ts
-            self._save_meta(symbol, timeframe, meta)
-
-    # ---------------- Fetch & Persist ---------------- #
-
-    @retry(times=3, backoff=2)
-    def _fetch_page(
-        self,
-        symbol: str,
-        timeframe: str,
-        category: str,
-        start_ms: int,
-        end_ms: int,
-    ) -> List[Dict[str, Any]]:
-        params: Dict[str, Any] = {
-            "category": category,
-            "symbol": symbol.replace("/", ""),
-            "interval": self.INTERVAL_MAP[timeframe],
-            "start": start_ms,
-            "end": end_ms,
-            "limit": str(self._PAGE_LIMIT),
-        }
-        resp = requests.get(
-            BYBIT_V5_KLINE,
-            params=params,
-            timeout=(self._CONNECT_TIMEOUT, self._READ_TIMEOUT),
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        if data.get("retCode") != 0:
-            raise RuntimeError(f"Bybit retCode={data.get('retCode')} msg={data.get('retMsg')}")
-
-        rows = data.get("result", {}).get("list", []) or []
-        if not rows:
-            return []
-
-        recs = []
-        for k in rows:
-            ts = int(k[0])
-            recs.append({
-                "timestamp": ts,
-                "open": float(k[1]),
-                "high": float(k[2]),
-                "low": float(k[3]),
-                "close": float(k[4]),
-                "volume": float(k[5]),
-            })
-        recs.sort(key=lambda x: x["timestamp"])
-        return recs
-
-    def _fetch_and_persist(
-        self,
-        symbol: str,
-        timeframe: str,
-        category: str,
-        start: datetime,
-        end: datetime,
-    ) -> Tuple[int, int]:
-        start_ms = _utc_ms(start)
-        end_ms = _utc_ms(end)
-        tf_ms = self.TF_MAP[timeframe]
-        if end_ms <= start_ms:
-            return 0, 0
-
-        cursor = _floor_to_tf(start_ms, tf_ms)
-        end_ms = _floor_to_tf(end_ms, tf_ms)
-
-        rows_added = 0
-        partitions_touched = set()
-
-        while cursor <= end_ms:
-            self._throttle_bucket()
-            page_end = min(cursor + (self._PAGE_LIMIT - 1) * tf_ms, end_ms)
-            recs = self._fetch_page(symbol, timeframe, category, cursor, page_end)
-            if not recs:
-                cursor = page_end + tf_ms
-                continue
-
-            df = (
-                pd.DataFrame(recs)
-                .drop_duplicates(subset=["timestamp"])
-                .set_index(pd.to_datetime([r["timestamp"] for r in recs], unit="ms", utc=True))
-                [["open", "high", "low", "close", "volume"]]
-            )
+        if os.path.exists(path):
+            df = pd.read_parquet(path)
+        else:
+            df = pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
             df.index.name = "timestamp"
 
-            aligned = ((df.index.view('i8') // 10**6) % tf_ms == 0).all()
-            if not aligned:
-                raise RuntimeError("Fetched bars not aligned to timeframe")
+        # Incremental sync (REST) to fill gaps
+        latest_ts = int(df.index[-1].timestamp() * 1000) if not df.empty else None
+        needed_bars = BACKFILL_BARS_5M if timeframe == "5m" else BACKFILL_BARS_15M
+        self._sync_rest(symbol, timeframe, latest_ts=latest_ts, min_total=needed_bars)
 
-            touched = self._write_partition_df(symbol, timeframe, df)
-            partitions_touched |= touched
-            rows_added += len(df)
+        # Reload
+        if os.path.exists(path):
+            df = pd.read_parquet(path)
+        return df
 
-            last_ts = int(df.index[-1].value // 10**6)
-            meta = self._load_meta(symbol, timeframe)
-            if meta.get("last_ts") is None or last_ts > int(meta["last_ts"]):
-                meta["last_ts"] = last_ts
-                self._save_meta(symbol, timeframe, meta)
-
-            cursor = last_ts + tf_ms
-
-        return rows_added, len(partitions_touched)
-
-    # ---------------- IO Layout: partitioned parquet ---------------- #
-
-    def _symbol_dir(self, symbol: str, timeframe: str) -> pathlib.Path:
-        return self.data_root / self._sanitize_symbol(symbol) / timeframe
-
-    def _meta_path(self, symbol: str, timeframe: str) -> pathlib.Path:
-        return self._symbol_dir(symbol, timeframe) / "_meta.json"
-
-    def _day_path(self, symbol: str, timeframe: str, day: datetime) -> pathlib.Path:
-        return self._symbol_dir(symbol, timeframe) / f"{day.strftime('%Y-%m-%d')}.parquet"
-
-    def _write_partition_df(self, symbol: str, timeframe: str, df: pd.DataFrame) -> set:
-        if df is None or df.empty:
-            return set()
-
-        symdir = self._symbol_dir(symbol, timeframe)
-        symdir.mkdir(parents=True, exist_ok=True)
-
-        touched = set()
-        for day, g in df.groupby(df.index.date):
-            day_dt = datetime.combine(day, datetime.min.time(), tzinfo=timezone.utc)
-            path = self._day_path(symbol, timeframe, day_dt)
-
-            if path.exists():
-                old = pd.read_parquet(path)
-                if old.index.tz is None:
-                    old.index = old.index.tz_localize(timezone.utc)
-                merged = pd.concat([old, g], axis=0)
-            else:
-                merged = g
-
-            merged = self._finalize_df(merged)
-            tmp = merged.copy()
-            tmp.index = tmp.index.tz_localize(None)
-            tmp.to_parquet(path, engine="pyarrow", compression="snappy")
-            touched.add(path.name)
-
-        return touched
-
-    # ---------------- Readers ---------------- #
-
-    def _read_all(self, symbol: str, timeframe: str) -> pd.DataFrame:
-        symdir = self._symbol_dir(symbol, timeframe)
-        if not symdir.exists():
-            return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
-
-        dfs = []
-        for fn in sorted(os.listdir(symdir)):
-            if not fn.endswith(".parquet"):
-                continue
-            try:
-                d = pd.read_parquet(symdir / fn)
-                if d.index.tz is None:
-                    d.index = d.index.tz_localize(timezone.utc)
-                dfs.append(d)
-            except Exception as e:
-                logger.error(f"Failed reading {symdir / fn}: {e}")
-
-        if not dfs:
-            return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
-
-        df = pd.concat(dfs, axis=0)
-        return self._finalize_df(df)
-
-    def _read_range(self, symbol: str, timeframe: str, start: datetime, end: datetime) -> pd.DataFrame:
-        symdir = self._symbol_dir(symbol, timeframe)
-        if not symdir.exists():
-            return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
-
-        day = datetime(start.year, start.month, start.day, tzinfo=timezone.utc)
-        end_day = datetime(end.year, end.month, end.day, tzinfo=timezone.utc)
-
-        dfs = []
-        while day <= end_day:
-            path = self._day_path(symbol, timeframe, day)
-            if path.exists():
+    def ensure_symbols_ready(self, symbols: List[str]) -> None:
+        """
+        Make sure local data exists and is up-to-date for each symbol/timeframe.
+        Keeps initial backfill manageable & then incremental.
+        """
+        for sym in symbols:
+            for tf in self.timeframes:
                 try:
-                    d = pd.read_parquet(path)
-                    if d.index.tz is None:
-                        d.index = d.index.tz_localize(timezone.utc)
-                    dfs.append(d)
-                except Exception as e:
-                    logger.error(f"Failed reading {path}: {e}")
-            day += timedelta(days=1)
+                    self.load_historical_data(sym, tf)
+                except Exception:
+                    # don't crash whole loop
+                    pass
 
-        if not dfs:
-            return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+    def get_top_pairs(self) -> List[str]:
+        """
+        Return cached Top Pairs list (pretty style symbols), refreshing hourly by 24h volume & pct change.
+        """
+        now = time.time()
+        if not self._top_pairs_cache or (now - self._top_pairs_ts) >= TOP_PAIRS_REFRESH_MIN * 60:
+            pairs = self._refresh_top_pairs()
+            self._top_pairs_cache = pairs
+            self._top_pairs_ts = now
+        return self._top_pairs_cache[:]
 
-        df = pd.concat(dfs, axis=0)
-        df = df[(df.index >= start) & (df.index <= end)]
-        return self._finalize_df(df)
+    # ─────────────────────────────────────────────────────────────────────
+    # Internals: REST Backfill & Incremental
+    # ─────────────────────────────────────────────────────────────────────
 
-    def _read_tail(self, symbol: str, timeframe: str, n: int) -> Optional[pd.DataFrame]:
-        symdir = self._symbol_dir(symbol, timeframe)
-        if not symdir.exists():
-            return None
-        parts = sorted([p for p in symdir.iterdir() if p.name.endswith(".parquet")])
-        if not parts:
-            return None
-        dfs = []
-        for p in parts[-2:]:
-            try:
-                d = pd.read_parquet(p)
-                if d.index.tz is None:
-                    d.index = d.index.tz_localize(timezone.utc)
-                dfs.append(d)
-            except Exception as e:
-                logger.error(f"Failed reading {p}: {e}")
-        if not dfs:
-            return None
-        df = pd.concat(dfs, axis=0)
-        df = self._finalize_df(df)
-        return df.tail(n)
+    def _sync_rest(self, symbol: str, timeframe: str, latest_ts: Optional[int], min_total: int) -> None:
+        """
+        Ensure we have at least `min_total` bars and up to latest-1 closed bar, pulling only missing pages.
+        """
+        path = _file_path(symbol, timeframe)
+        rest_sym = normalize_symbol_for_rest(symbol)
+        interval = INTERVAL_MAP[timeframe]
 
-    # ---------------- Meta ---------------- #
+        existing = pd.DataFrame()
+        if os.path.exists(path):
+            existing = pd.read_parquet(path)
 
-    def _load_meta(self, symbol: str, timeframe: str) -> Dict[str, Any]:
-        path = self._meta_path(symbol, timeframe)
-        key = path.as_posix()
-        if key in self._meta_cache:
-            return self._meta_cache[key]
-        if not path.exists():
-            meta = {"last_ts": None}
-            self._meta_cache[key] = meta
-            return meta
-        try:
-            meta = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            meta = {"last_ts": None}
-        self._meta_cache[key] = meta
-        return meta
+        have = len(existing)
+        now_ms = _now_ms()
+        tf_ms = int(INTERVAL_MAP[timeframe]) * 60 * 1000
+        last_wanted_end = now_ms - tf_ms  # last fully closed bar end
 
-    def _save_meta(self, symbol: str, timeframe: str, meta: Dict[str, Any]) -> None:
-        path = self._meta_path(symbol, timeframe)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
-        tmp.replace(path)
-        self._meta_cache[path.as_posix()] = meta
+        # Determine starting point
+        if latest_ts is None or have == 0:
+            # fresh backfill: request min_total in pages backward from last_wanted_end
+            required = min_total
+            end = last_wanted_end
+            frames = []
+            while required > 0:
+                limit = min(REST_PAGE_LIMIT, required)
+                start = end - limit * tf_ms
+                chunk = self._fetch_klines(rest_sym, interval, start, end)
+                if chunk.empty:
+                    break
+                frames.append(chunk)
+                required -= len(chunk)
+                end = int(chunk.index[0].timestamp() * 1000)  # page backward
+                _sleep_polite()
+            if frames:
+                newdf = pd.concat(frames, axis=0).sort_index()
+            else:
+                newdf = pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+                newdf.index.name = "timestamp"
+            # write
+            if not newdf.empty:
+                newdf = newdf[~newdf.index.duplicated(keep="last")]
+                newdf.to_parquet(path)
+            return
 
-    # ---------------- Internals ---------------- #
+        # incremental forward
+        start = latest_ts + tf_ms
+        if start > last_wanted_end:
+            return  # already up-to-date
 
-    def _sanitize_symbol(self, symbol: str) -> str:
-        return symbol.replace("/", "_").upper()
+        frames = []
+        while start <= last_wanted_end:
+            # fetch a page forward
+            limit = min(REST_PAGE_LIMIT, math.ceil((last_wanted_end - start) / tf_ms))
+            end = start + limit * tf_ms
+            chunk = self._fetch_klines(rest_sym, interval, start, end)
+            if chunk.empty:
+                break
+            frames.append(chunk)
+            start = int(chunk.index[-1].timestamp() * 1000) + tf_ms
+            _sleep_polite()
 
-    def _finalize_df(self, df: pd.DataFrame) -> pd.DataFrame:
-        if df is None or df.empty:
-            return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
-        df = df[~df.index.duplicated(keep="last")].sort_index()
-        cols = ["open", "high", "low", "close", "volume"]
-        for c in cols:
-            if c not in df.columns:
-                df[c] = float("nan")
-        return df[cols].astype(float)
+        if frames:
+            add = pd.concat(frames, axis=0).sort_index()
+            add = add[~add.index.duplicated(keep="last")]
+            combined = pd.concat([existing, add], axis=0).sort_index()
+            combined = combined[~combined.index.duplicated(keep="last")]
+            combined.to_parquet(path)
 
-    def _validate_tf(self, timeframe: str) -> None:
-        if timeframe not in self.TF_MAP:
-            raise ValueError(f"Unsupported timeframe: {timeframe}")
-
-    def _throttle_bucket(self) -> None:
-        t = time.time()
-        self._rate_bucket.append(t)
-        self._rate_bucket = [x for x in self._rate_bucket if t - x <= 60.0]
-        if len(self._rate_bucket) > self._REQS_PER_MIN_BUDGET:
-            sleep_s = 60.0 - (t - self._rate_bucket[0])
-            if sleep_s > 0:
-                time.sleep(min(sleep_s, 1.5))
-
-    # Small helper to convert raw klines -> DataFrame (used when klines passed in)
-    def _process_data(self, klines: List[list]) -> pd.DataFrame:
-        # Expect rows like [ts, open, high, low, close, volume]
-        if not klines:
-            return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
-        df = pd.DataFrame(klines, columns=["timestamp", "open", "high", "low", "close", "volume"])
-        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
+    @retry(max_attempts=5, delay=0.3, backoff=1.8)
+    def _fetch_klines(self, symbol_rest: str, interval: str, start: int, end: int) -> pd.DataFrame:
+        """
+        Fetch klines from Bybit /v5/market/kline within [start, end), respecting limit 900/page.
+        """
+        if requests is None:
+            raise RuntimeError("requests library not available")
+        url = f"{BYBIT_API}/v5/market/kline"
+        params = {
+            "category": self.category,
+            "symbol": symbol_rest,
+            "interval": interval,
+            "start": start,
+            "end": end,
+            "limit": REST_PAGE_LIMIT,
+        }
+        resp = requests.get(url, params=params, timeout=15)
+        if resp.status_code != 200:
+            raise RuntimeError(f"Bybit kline error {resp.status_code}: {resp.text}")
+        data = resp.json()
+        if str(data.get("retCode")) != "0":
+            raise RuntimeError(f"Bybit kline retCode={data.get('retCode')} msg={data.get('retMsg')}")
+        rows = data.get("result", {}).get("list", []) or []
+        # rows are typically newest first; normalize to oldest->newest
+        rows.sort(key=lambda x: int(x[0]))
+        # Bybit v5 list cols: startTime, open, high, low, close, volume, turnover
+        records = []
+        for r in rows:
+            ts = int(r[0])
+            records.append({
+                "timestamp": datetime.fromtimestamp(ts / 1000, tz=timezone.utc),
+                "open": float(r[1]),
+                "high": float(r[2]),
+                "low": float(r[3]),
+                "close": float(r[4]),
+                "volume": float(r[5]),
+            })
+        df = pd.DataFrame.from_records(records)
+        if df.empty:
+            df = pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
         df.set_index("timestamp", inplace=True)
-        return self._finalize_df(df)
+        return df
+
+    # ─────────────────────────────────────────────────────────────────────
+    # WebSocket handling
+    # ─────────────────────────────────────────────────────────────────────
+
+    def _ws_worker(self):
+        """
+        Run WebSocket listener in a thread, push CLOSED candles into queue, and writer loop appends to parquet.
+        """
+        self._ws_connected = False
+
+        def writer_loop():
+            while not self._stop.is_set():
+                try:
+                    sym_rest, tf, payload = self._ws_queue.get(timeout=0.5)
+                except queue.Empty:
+                    continue
+                try:
+                    ts_ms = int(payload["start"])
+                    # process only on confirm close
+                    if not payload.get("confirm"):
+                        continue
+                    df = pd.DataFrame([{
+                        "timestamp": datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc),
+                        "open": float(payload["open"]),
+                        "high": float(payload["high"]),
+                        "low": float(payload["low"]),
+                        "close": float(payload["close"]),
+                        "volume": float(payload["volume"]),
+                    }]).set_index("timestamp")
+                    path = _file_path(pretty_symbol(sym_rest), tf)
+                    # append
+                    if os.path.exists(path):
+                        cur = pd.read_parquet(path)
+                        merged = pd.concat([cur, df], axis=0).sort_index()
+                        merged = merged[~merged.index.duplicated(keep="last")]
+                        merged.to_parquet(path)
+                    else:
+                        df.to_parquet(path)
+                except Exception:
+                    # swallow in writer to keep loop alive
+                    pass
+
+        writer = threading.Thread(target=writer_loop, daemon=True)
+        writer.start()
+
+        if websockets is None or asyncio is None:
+            return
+
+        async def ws_main():
+            self._ws_connected = True
+            try:
+                async with websockets.connect(WS_PUBLIC, ping_interval=20, ping_timeout=20) as ws:
+                    # subscribe to klines for requested symbols on 5 and 15
+                    topics = []
+                    for sym in self._ws_symbols:
+                        for tf in self.timeframes:
+                            interval = INTERVAL_MAP[tf]
+                            topics.append(f"kline.{interval}.{sym}")
+                    sub = {"op": "subscribe", "args": topics}
+                    await ws.send(json.dumps(sub))
+
+                    while not self._stop.is_set():
+                        try:
+                            msg = await asyncio.wait_for(ws.recv(), timeout=5)
+                        except asyncio.TimeoutError:
+                            # keep-alive: Bybit will ping/pong automatically, continue
+                            continue
+                        data = json.loads(msg)
+                        # kline format: {"topic":"kline.5.BTCUSDT","data":[{...}],"type":"snapshot/update"}
+                        topic = data.get("topic", "")
+                        if not topic.startswith("kline."):
+                            continue
+                        parts = topic.split(".")
+                        if len(parts) != 3:
+                            continue
+                        interval, sym_rest = parts[1], parts[2]
+                        tf = "5m" if interval == "5" else "15m" if interval == "15" else None
+                        if tf not in self.timeframes:
+                            continue
+                        for item in data.get("data", []):
+                            # Bybit sends both live & confirm on close; we only enqueue confirm
+                            self._ws_queue.put((sym_rest, tf, item))
+            finally:
+                self._ws_connected = False
+
+        # run the async loop
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(ws_main())
+        finally:
+            try:
+                loop.stop()
+            except Exception:
+                pass
+            try:
+                loop.close()
+            except Exception:
+                pass
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Top pairs + spike detection
+    # ─────────────────────────────────────────────────────────────────────
+
+    @retry(max_attempts=4, delay=0.4, backoff=2.0)
+    def _refresh_top_pairs(self) -> List[str]:
+        """
+        Rank USDT-quoted pairs by 24h volume; track 2h/24h change to flag spikes.
+        Returns pretty symbols list.
+        """
+        if requests is None:
+            return ["BTC/USDT", "ETH/USDT"]
+
+        url = f"{BYBIT_API}/v5/market/tickers"
+        params = {"category": self.category}
+        resp = requests.get(url, params=params, timeout=15)
+        if resp.status_code != 200:
+            raise RuntimeError(f"Bybit tickers error {resp.status_code}: {resp.text}")
+        data = resp.json()
+        if str(data.get("retCode")) != "0":
+            raise RuntimeError(f"Bybit tickers retCode={data.get('retCode')} msg={data.get('retMsg')}")
+
+        items = data.get("result", {}).get("list", []) or []
+        # filter USDT quote
+        usdt = [it for it in items if str(it.get("symbol", "")).upper().endswith("USDT")]
+
+        # parse fields
+        parsed: List[Tuple[str, float, float, float]] = []
+        for it in usdt:
+            sym = pretty_symbol(it["symbol"])
+            vol24 = float(it.get("turnover24h", it.get("volume24h", 0.0)) or 0.0)
+            chg24 = float(it.get("price24hPcnt", 0.0) or 0.0) * 100.0  # often in fraction
+            chg2h = float(it.get("usdIndexPrice2hPcnt", it.get("lastPrice2hPcnt", 0.0)) or 0.0) * 100.0
+            parsed.append((sym, vol24, chg2h, chg24))
+
+        # sort by 24h volume desc
+        parsed.sort(key=lambda x: x[1], reverse=True)
+        top = parsed[:TOP_PAIRS_COUNT]
+
+        # spike detection vs previous snapshot
+        for sym, vol, chg2, chg24 in top:
+            last = self._spike_state.get(sym, {})
+            last2 = last.get("chg2h", 0.0)
+            last24 = last.get("chg24h", 0.0)
+            spike_2h = chg2 - last2
+            spike_24h = chg24 - last24
+            self._spike_state[sym] = {"chg2h": chg2, "chg24h": chg24, "last_spike2h": spike_2h, "last_spike24h": spike_24h}
+        return [sym for sym, *_ in top]
