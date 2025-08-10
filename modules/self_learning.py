@@ -1,9 +1,10 @@
 # modules/self_learning.py
+
 import random
 import numpy as np
 from collections import deque, namedtuple
-from typing import List, Dict, Optional
-from datetime import datetime, timezone
+from typing import List, Dict, Optional, Tuple
+from datetime import datetime, timezone, timedelta
 import logging
 
 import torch
@@ -11,17 +12,14 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 
+import config
 from modules.data_manager import DataManager
 from modules.error_handler import ErrorHandler
-from modules.reward_system import RewardSystem
+from modules.reward_system import RewardSystem, calculate_points
 from modules.trade_executor import TradeExecutor
 from modules.technical_indicators import TechnicalIndicators
 from modules.risk_management import RiskManager, RiskViolationError
-
-try:
-    import pandas as pd
-except Exception:  # very unlikely, but guard NaN checks
-    pd = None  # type: ignore
+from modules.top_pairs import TopPairs
 
 Experience = namedtuple("Experience", ["state", "action", "reward", "next_state", "done"])
 
@@ -40,11 +38,10 @@ class ReplayBuffer:
 class DQNetwork(nn.Module):
     def __init__(self, input_dim: int, hidden_dims: List[int], output_dim: int):
         super().__init__()
-        h1, h2, h3 = hidden_dims
-        self.fc1 = nn.Linear(input_dim, h1)
-        self.fc2 = nn.Linear(h1, h2)
-        self.fc3 = nn.Linear(h2, h3)
-        self.out = nn.Linear(h3, output_dim)
+        self.fc1 = nn.Linear(input_dim, hidden_dims[0])
+        self.fc2 = nn.Linear(hidden_dims[0], hidden_dims[1])
+        self.fc3 = nn.Linear(hidden_dims[1], hidden_dims[2])
+        self.out = nn.Linear(hidden_dims[2], output_dim)
     def forward(self, x):
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
@@ -54,7 +51,12 @@ class DQNetwork(nn.Module):
 
 class SelfLearningBot:
     """
-    DQN-based agent with minimal defaults to avoid breaking older wiring.
+    DQN-based agent aligned to:
+      - Simulation-only execution
+      - 5m & 15m intervals (15m = setup scan, 5m = entries/management)
+      - Live market data feed (WS) + REST backfill with incremental append
+      - Hourly Top Pairs refresh; minute-level open-position monitoring
+      - No re-entry on same symbol within 60 minutes after close
     """
 
     def __init__(
@@ -63,7 +65,8 @@ class SelfLearningBot:
         error_handler: ErrorHandler,
         reward_system: Optional[RewardSystem] = None,
         risk_manager: Optional[RiskManager] = None,
-        state_size: int = 5,
+        *,
+        state_size: int = 8,
         action_size: int = 6,  # buy/sell/hold/close + extras
         hidden_dims: List[int] = [128, 64, 32],
         batch_size: int = 64,
@@ -75,8 +78,10 @@ class SelfLearningBot:
         memory_size: int = 100_000,
         tau: float = 0.005,
         training: bool = True,
-        timeframe: str = "15m",
-        symbol: Optional[str] = None,
+        timeframe_entry: str = "5m",
+        timeframe_setup: str = "15m",
+        base_symbol: Optional[str] = None,
+        notifications: Optional[object] = None,
     ):
         self.data_provider = data_provider
         self.error_handler = error_handler
@@ -95,7 +100,8 @@ class SelfLearningBot:
         self.epsilon_decay = exploration_decay
         self.training = training
 
-        self.executor = TradeExecutor(simulation_mode=training)
+        # Always simulation-mode executor per design
+        self.executor = TradeExecutor(simulation_mode=True, notifications=notifications)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.memory = ReplayBuffer(capacity=memory_size)
 
@@ -107,9 +113,203 @@ class SelfLearningBot:
         self.optimizer = optim.Adam(self.policy_net.parameters(), lr=self.learning_rate)
         self.train_steps = 0
         self.logger = logging.getLogger(self.__class__.__name__)
+        if not self.logger.handlers:
+            h = logging.StreamHandler()
+            h.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+            self.logger.addHandler(h)
+        self.logger.setLevel(getattr(logging, str(getattr(config, "LOG_LEVEL", "INFO")), logging.INFO)
+                            if isinstance(getattr(config, "LOG_LEVEL", "INFO"), str) else getattr(config, "LOG_LEVEL", logging.INFO))
 
-        self.timeframe = timeframe
-        self.default_symbol = symbol
+        # Timeframes
+        self.tf_entry = timeframe_entry  # "5m"
+        self.tf_setup = timeframe_setup  # "15m"
+        self.default_symbol = base_symbol or getattr(config, "DEFAULT_SYMBOL", "BTC/USDT")
+
+        # Top pairs selection
+        self.top_pairs = TopPairs(self.data_provider)
+        self.current_universe: List[str] = [self._normalize(self.default_symbol)]
+        self.last_universe_refresh: Optional[datetime] = None
+
+        # Per-symbol “cooldown” after closing a position (no re-entry for 60 minutes)
+        self.cooldown_after_close: Dict[str, datetime] = {}
+
+        # Open position monitoring cadence (minutes)
+        self.open_monitor_minutes = 1  # you can tune to 5 if you prefer
+        self.last_position_check: Dict[str, datetime] = {}
+
+        # Track last action per symbol (avoid spamming)
+        self.last_action_ts: Dict[str, datetime] = {}
+
+        # Kline backfill sizing
+        self.max_request_bars = 900  # under Bybit’s 1000 limit
+        self.append_increment_bars = 5  # append tiny increments, no GB downloads
+
+    # ─────────────── Core Loop Orchestration (to be called by main.py) ─────────────── #
+
+    def step(self, now: Optional[datetime] = None):
+        """
+        One “tick” of logic:
+          - Periodically refresh top pairs (hourly)
+          - For each symbol in universe:
+            * Load incremental data (5m for entries, 15m for setup)
+            * Evaluate state → select action (DQN)
+            * Simulate order if action says so
+            * Record experience & learn
+          - Tighten stops for open positions (every minute)
+        """
+        now = now or datetime.now(timezone.utc)
+        self._refresh_universe_if_needed(now)
+
+        # Manage open positions frequently (minute cadence)
+        self._monitor_open_positions(now)
+
+        for sym in list(self.current_universe):
+            try:
+                # cooldown guard
+                if sym in self.cooldown_after_close and now < self.cooldown_after_close[sym]:
+                    continue
+
+                # Build state from current market (5m + 15m features)
+                state, price = self._get_state(sym)
+                if state is None or price is None or price <= 0:
+                    continue
+
+                # Choose action
+                action_idx = self.select_action(state)
+                action_name = self._action_to_command(action_idx)
+
+                # Throttle per-symbol actions to avoid spam (every bar)
+                last_ts = self.last_action_ts.get(sym)
+                if last_ts and (now - last_ts).total_seconds() < 60:  # 1 min minimal spacing
+                    continue
+
+                # Decide side and simple SL/TP skeleton
+                qty = None
+                sl_px, tp_px = None, None
+                risk_close = False
+
+                if action_name in ("buy", "sell"):
+                    side = "long" if action_name == "buy" else "short"
+                    # default 1.5 ATR stop, RR>=1.5
+                    atr_val = self._safe_atr(sym)
+                    if atr_val is None:
+                        # fallback: 0.5% stop
+                        sl_distance = 0.005 * price
+                    else:
+                        sl_distance = 1.5 * atr_val
+
+                    if side == "long":
+                        sl_px = max(0.0001, price - sl_distance)
+                        tp_px = price + 1.5 * (price - sl_px)
+                    else:
+                        sl_px = price + sl_distance
+                        tp_px = price - 1.5 * (sl_px - price)
+
+                    # Risk-aware position sizing (virtual)
+                    if self.risk_manager:
+                        try:
+                            pos = self.risk_manager.calculate_position_size(
+                                symbol=sym,
+                                side="long" if action_name == "buy" else "short",
+                                entry_price=price,
+                                stop_price=sl_px,
+                                atr=atr_val,
+                                rr=1.5,
+                                regime=None,
+                            )
+                            qty = pos.position_size
+                        except RiskViolationError as re:
+                            self.logger.info(f"[{sym}] Risk blocked order: {re}")
+                            continue
+
+                elif action_name == "close":
+                    risk_close = True
+
+                # Execute simulated order
+                tr = self.executor.execute_order(
+                    sym,
+                    action_name if action_name != "close" else "sell",
+                    quantity=qty,
+                    price=price,
+                    order_type="market",
+                    attach_sl=sl_px,
+                    attach_tp=tp_px,
+                    risk_close=risk_close,
+                )
+
+                self.last_action_ts[sym] = now
+
+                # Register position open/close with RiskManager for bookkeeping
+                status = tr.get("status")
+                if status in ("open", "open_added", "open_increased") and self.risk_manager and qty:
+                    # build a mirror PositionRisk snapshot (best-effort)
+                    side = "long" if action_name == "buy" else "short"
+                    atr_val = self._safe_atr(sym)
+                    rr = 1.5
+                    if atr_val is not None:
+                        sl, tp = self.risk_manager.compute_sl_tp_from_atr(side, price, atr_val, rr)
+                    else:
+                        if side == "long":
+                            sl = sl_px or (price * 0.995)
+                            tp = price + rr * (price - sl)
+                        else:
+                            sl = sl_px or (price * 1.005)
+                            tp = price - rr * (sl - price)
+                    pr = self.risk_manager.calculate_position_size(
+                        symbol=sym, side=side, entry_price=price, stop_price=sl, atr=atr_val, rr=rr
+                    )
+                    self.risk_manager.register_open_position(sym, pr)
+
+                if status in ("closed", "closed_partial"):
+                    # mark cooldown 60 minutes to avoid immediate re-entry
+                    self.cooldown_after_close[sym] = now + timedelta(minutes=60)
+                    # remove from risk manager
+                    if self.risk_manager:
+                        self.risk_manager.unregister_position(sym)
+
+                # Build reward from immediate outcome (paper)
+                entry_price = float(tr.get("entry_price") or price)
+                exit_price = float(tr.get("exit_price") or entry_price)
+                q_used = float(tr.get("quantity") or (qty or 0.0))
+
+                reward_raw = self.reward_system.calculate_reward(
+                    entry_price=entry_price,
+                    exit_price=exit_price,
+                    position_size=q_used,
+                    entry_time=now,
+                    exit_time=now,
+                    max_drawdown=0.0,
+                    volatility=0.0,
+                    stop_loss_triggered=False,
+                )
+                reward_pts = calculate_points(
+                    profit=reward_raw,
+                    entry_time=now,
+                    exit_time=now,
+                    stop_loss_triggered=False,
+                )
+                reward_total = float(reward_raw + reward_pts)
+
+                # next state
+                next_state, _ = self._get_state(sym)
+                done = status in ("closed",)
+
+                if state is not None and next_state is not None:
+                    self.memory.push(state, action_idx, reward_total, next_state, done)
+                    self.train_steps += 1
+                    self.logger.info(
+                        f"[{sym}] step={self.train_steps} action={action_name} qty={q_used:.8f} "
+                        f"reward={reward_total:.4f} eps={self.epsilon:.4f} status={status}"
+                    )
+
+                    if self.training:
+                        self.learn()
+                        self.epsilon = max(self.epsilon * self.epsilon_decay, self.epsilon_min)
+
+            except Exception as e:
+                self.error_handler.handle(e, {"symbol": sym, "stage": "step"})
+
+    # ─────────────── Learning ─────────────── #
 
     def select_action(self, state: np.ndarray) -> int:
         try:
@@ -146,167 +346,131 @@ class SelfLearningBot:
             nn.utils.clip_grad_norm_(self.policy_net.parameters(), 1.0)
             self.optimizer.step()
 
-            # Soft update target net
             for t_param, p_param in zip(self.target_net.parameters(), self.policy_net.parameters()):
-                t_param.data.mul_(1.0 - self.tau).add_(self.tau * p_param.data)
+                t_param.data.mul_((1.0 - self.tau)).add_(self.tau * p_param.data)
         except Exception as e:
             self.error_handler.log_error(e, {"stage": "learn"})
 
-    def act_and_learn(self, symbol: Optional[str], timestamp: Optional[datetime] = None):
-        sym = symbol or self.default_symbol
-        if not sym:
-            self.logger.warning("act_and_learn called without symbol")
+    # ─────────────── State Construction ─────────────── #
+
+    def _get_state(self, symbol: str) -> Tuple[Optional[np.ndarray], Optional[float]]:
+        """
+        Build a compact state vector blending 15m setup & 5m entry signals.
+        Uses incremental append (<= append_increment_bars) to minimize downloads.
+        """
+        sym = self._normalize(symbol)
+        try:
+            # Ensure we have recent bars (backfill small increments)
+            df5 = self.data_provider.load_historical_data(sym, timeframe=self.tf_entry, max_bars=self.max_request_bars, append_increment=self.append_increment_bars)
+            df15 = self.data_provider.load_historical_data(sym, timeframe=self.tf_setup, max_bars=self.max_request_bars, append_increment=self.append_increment_bars)
+
+            if df5 is None or len(df5) == 0 or df15 is None or len(df15) == 0:
+                return None, None
+
+            # latest prices
+            price = float(df5["close"].iloc[-1])
+
+            # 5m features
+            rsi5 = TechnicalIndicators.rsi(df5["close"], window=14)
+            ema_fast5 = TechnicalIndicators.ema(df5["close"], window=10)
+            ema_slow5 = TechnicalIndicators.ema(df5["close"], window=50)
+
+            # 15m setup features
+            rsi15 = TechnicalIndicators.rsi(df15["close"], window=14)
+            ema_fast15 = TechnicalIndicators.ema(df15["close"], window=10)
+            ema_slow15 = TechnicalIndicators.ema(df15["close"], window=50)
+
+            # Normalize ratios against price where sensible
+            def last(series) -> float:
+                try:
+                    return float(series.iloc[-1])
+                except Exception:
+                    return 0.0
+
+            features = [
+                price,                                  # absolute anchor (model can learn diffs)
+                last(ema_fast5) / price if price else 0.0,
+                last(ema_slow5) / price if price else 0.0,
+                (last(rsi5) or 0.0) / 100.0,
+                last(ema_fast15) / price if price else 0.0,
+                last(ema_slow15) / price if price else 0.0,
+                (last(rsi15) or 0.0) / 100.0,
+                float(df5["volume"].iloc[-1]),
+            ]
+            state = np.array(features, dtype=np.float32)
+            return state, price
+        except Exception as e:
+            self.error_handler.handle(e, {"symbol": sym, "stage": "_get_state"})
+            return None, None
+
+    def _safe_atr(self, symbol: str) -> Optional[float]:
+        try:
+            df = self.data_provider.load_historical_data(self._normalize(symbol), timeframe=self.tf_entry, max_bars=200, append_increment=self.append_increment_bars)
+            if df is None or len(df) < 16:
+                return None
+            atr_series = TechnicalIndicators.atr(df["high"], df["low"], df["close"], period=14)
+            if isinstance(atr_series, list):
+                # list API fallback
+                return float(atr_series[-1]) if atr_series and atr_series[-1] is not None else None
+            return float(atr_series.iloc[-1])
+        except Exception:
+            return None
+
+    # ─────────────── Universe & Monitoring ─────────────── #
+
+    def _refresh_universe_if_needed(self, now: datetime):
+        # refresh every 60 minutes
+        if self.last_universe_refresh and (now - self.last_universe_refresh).total_seconds() < 3600:
             return
-
-        ts = timestamp or datetime.now(timezone.utc)
-
         try:
-            state = self._get_state(sym)
-            action_idx = self.select_action(state)
-            action_name = self._action_to_command(action_idx)
-
-            price = self._safe_last_price(sym, state)
-
-            qty = None
-            sl_px, tp_px = None, None
-            risk_close = False
-
-            if action_name in ("buy", "sell"):
-                is_buy = action_name == "buy"
-                side_str = "long" if is_buy else "short"
-
-                # initial SL/TP (will be refined by RiskManager if wired)
-                sl_mult = 0.99 if is_buy else 1.01
-                sl_px = price * sl_mult
-
-                if self.risk_manager:
-                    try:
-                        pos = self.risk_manager.calculate_position_size(
-                            symbol=sym,
-                            side=side_str,
-                            entry_price=price,
-                            stop_price=sl_px,
-                            atr=None,
-                            rr=None,
-                            regime=None,
-                        )
-                        qty = float(pos.position_size)
-                        sl_px = float(pos.stop_loss)
-                        tp_px = float(pos.take_profit)
-                    except RiskViolationError as re:
-                        self.logger.info(f"Risk blocked order: {re}")
-                        return
-                else:
-                    # naive qty: 5% notional
-                    notional = price * 0.05
-                    qty = max(1e-6, notional / max(price, 1e-9))
-                    tp_px = price * (1.02 if is_buy else 0.98)
-
-            elif action_name == "close":
-                risk_close = True
-
-            tr = self.executor.execute_order(
-                sym,
-                action_name if action_name != "close" else "sell",
-                quantity=qty,
-                price=price,
-                order_type="market",
-                attach_sl=sl_px,
-                attach_tp=tp_px,
-                risk_close=risk_close,
+            pairs = self.top_pairs.get_top_pairs(
+                lookback_hours_24=24,
+                lookback_hours_2=2,
+                limit=getattr(config, "MAX_SIMULATION_PAIRS", 5),
+                include_base=self.default_symbol,
+                timeframe=self.tf_setup,
             )
-
-            entry_price = float(tr.get("entry_price") or price)
-            exit_price = float(tr.get("exit_price") or entry_price)
-            q_used = float(tr.get("quantity") or (qty or 0.0))
-
-            reward_score = self.reward_system.calculate_reward(
-                entry_price=entry_price,
-                exit_price=exit_price,
-                position_size=q_used,
-                entry_time=ts,
-                exit_time=ts,
-                max_drawdown=0.0,
-                volatility=0.0,
-                stop_loss_triggered=False,
-            )
-
-            next_state = self._get_state(sym)
-            done = tr.get("status") in ("closed",)
-
-            self.memory.push(state, action_idx, float(reward_score), next_state, done)
-            self.train_steps += 1
-            self.logger.info(
-                f"Step {self.train_steps} {sym} | action={action_name} qty={q_used:.8f} "
-                f"reward={float(reward_score):.4f} eps={self.epsilon:.4f}"
-            )
-
-            if self.training:
-                self.learn()
-                self.epsilon = max(self.epsilon * self.epsilon_decay, self.epsilon_min)
-
+            # normalize like "BTC/USDT" -> "BTC/USDT"
+            self.current_universe = [self._normalize(p) for p in pairs] or [self._normalize(self.default_symbol)]
+            self.last_universe_refresh = now
+            self.logger.info(f"[universe] refreshed: {', '.join(self.current_universe)}")
         except Exception as e:
-            self.error_handler.handle(e, {"symbol": sym})
+            self.error_handler.log_error(e, {"stage": "refresh_universe"})
+            if not self.current_universe:
+                self.current_universe = [self._normalize(self.default_symbol)]
 
-    def _get_state(self, symbol: str) -> np.ndarray:
-        try:
-            df = self.data_provider.load_historical_data(symbol, timeframe=self.timeframe)
-            if df.empty:
-                return np.zeros(self.state_size, dtype=np.float32)
-        except Exception as e:
-            self.error_handler.handle(e, {"symbol": symbol, "stage": "load_state"})
-            return np.zeros(self.state_size, dtype=np.float32)
+    def _monitor_open_positions(self, now: datetime):
+        if not self.risk_manager:
+            return
+        for key, pos in list(self.risk_manager.open_positions.items()):
+            last = self.last_position_check.get(key)
+            if last and (now - last).total_seconds() < self.open_monitor_minutes * 60:
+                continue
+            try:
+                # latest price to manage stops
+                df = self.data_provider.load_historical_data(pos.symbol, timeframe=self.tf_entry, max_bars=10, append_increment=1)
+                if df is None or len(df) == 0:
+                    continue
+                price = float(df["close"].iloc[-1])
+                atr_val = self._safe_atr(pos.symbol)
 
-        lookback = min(len(df), 50)
-        tail = df.iloc[-lookback:].copy()
+                updated = self.risk_manager.dynamic_stop_management(key, price, atr=atr_val)
+                self.logger.debug(f"[stop-mgr] {pos.symbol} SL→{updated.stop_loss:.6f} TP→{updated.take_profit:.6f}")
+                self.last_position_check[key] = now
+            except Exception as e:
+                self.error_handler.log_error(e, {"symbol": pos.symbol, "stage": "monitor_open"})
 
-        prices = tail["close"].to_numpy()
-        base = prices[0] if len(prices) else 0.0
-        norm_price = float(prices[-1] / base) if base else 0.0
-
-        tail["sma_short"] = TechnicalIndicators.sma(tail["close"], window=10)
-        tail["sma_long"] = TechnicalIndicators.sma(tail["close"], window=50)
-        tail["rsi"] = TechnicalIndicators.rsi(tail["close"], window=14)
-        last = tail.iloc[-1]
-
-        def safe_val(x) -> float:
-            if pd is not None and hasattr(pd, "isna") and pd.isna(x):
-                return 0.0
-            return float(x) if x is not None else 0.0
-
-        sma_short = safe_val(last.get("sma_short"))
-        sma_long = safe_val(last.get("sma_long"))
-        rsi_last = safe_val(last.get("rsi"))
-        vol_last = safe_val(last.get("volume"))
-        px_last = prices[-1] if len(prices) else 0.0
-
-        features = [
-            norm_price,
-            (sma_short / px_last) if px_last else 0.0,
-            (sma_long / px_last) if px_last else 0.0,
-            rsi_last / 100.0,
-            vol_last,
-        ]
-        state = np.array(features, dtype=np.float32)
-
-        if state.size < self.state_size:
-            pad = np.zeros(self.state_size - state.size, dtype=np.float32)
-            state = np.concatenate([state, pad])
-        else:
-            state = state[: self.state_size]
-        return state
+    # ─────────────── Helpers ─────────────── #
 
     def _action_to_command(self, action_idx: int) -> str:
-        # 0: buy, 1: sell, 2: hold, 3: buy (add), 4: sell (add), 5: close
+        # 0: buy, 1: sell, 2: hold, 3: buy (aggressive), 4: sell (aggressive), 5: close
         mapping = {0: "buy", 1: "sell", 2: "hold", 3: "buy", 4: "sell", 5: "close"}
         return mapping.get(action_idx, "hold")
 
-    def _safe_last_price(self, symbol: str, state: np.ndarray) -> float:
-        try:
-            df = self.data_provider.load_historical_data(symbol, timeframe=self.timeframe)
-            if not df.empty:
-                return float(df["close"].iloc[-1])
-        except Exception:
-            pass
-        # fallback: 1.0 (neutral) if state has normalized price feature
-        return 1.0
+    def _normalize(self, symbol: str) -> str:
+        # Ensure symbols are consistent "BTC/USDT"
+        s = symbol.replace("-", "/").upper()
+        if "/" not in s and s.endswith("USDT"):
+            base = s[:-4]
+            s = f"{base}/USDT"
+        return s
