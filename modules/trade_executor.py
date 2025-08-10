@@ -23,7 +23,7 @@ class TradeExecutor:
     """
     Executes trades in live or simulation mode.
 
-    - Live mode: proxies to ExchangeAPI (CCXT).
+    - Live mode: proxies to ExchangeAPI (CCXT / Bybit).
     - Simulation mode: uses ExchangeAPI's in-memory fills but still applies our fee model.
     - Uses exchange helpers for min-notional and precision.
     - Optional SL/TP attachment (inline on live if supported; shadow in paper).
@@ -34,12 +34,15 @@ class TradeExecutor:
         self,
         simulation_mode: Optional[bool] = None,
         notifier: Optional[TelegramNotifier] = None,
-        notifications: Optional[Any] = None,  # duck-typed: expected to have notify_trade/notify_error/notify_status
+        notifications: Optional[Any] = None,  # duck-typed: notify_trade/notify_error/notify_status
     ):
-        self.simulation_mode = config.USE_SIMULATION if simulation_mode is None else simulation_mode
+        # Force sim if ENVIRONMENT==simulation unless caller overrides explicitly
+        default_sim = config.USE_SIMULATION
+        self.simulation_mode = default_sim if simulation_mode is None else simulation_mode
+
         self.exchange = ExchangeAPI()
         # Fallback notifier (used if no notifications manager or manager chooses to be quiet)
-        self.notifier = notifier or TelegramNotifier(disable_async=True)
+        self.notifier = notifier or TelegramNotifier(disable_async=not getattr(config, "ASYNC_TELEGRAM", True))
         # Optional higher-level notifications manager
         self.notifications = notifications
         self.fee_rate = float(getattr(config, "FEE_PERCENTAGE", 0.002))
@@ -81,7 +84,7 @@ class TradeExecutor:
     def close_position(
         self,
         symbol: str,
-        *,
+        * ,
         price: Optional[float] = None,
         quantity: Optional[float] = None
     ) -> Optional[Dict[str, Any]]:
@@ -174,7 +177,7 @@ class TradeExecutor:
         quantity: Optional[float] = None,
         price: Optional[float] = None,
         order_type: str = "market",
-        *,
+        * ,
         attach_sl: Optional[float] = None,
         attach_tp: Optional[float] = None,
         risk_close: bool = False
