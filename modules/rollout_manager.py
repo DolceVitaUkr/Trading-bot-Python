@@ -1,166 +1,97 @@
 # modules/rollout_manager.py
-from __future__ import annotations
-from typing import Dict, Optional
+
 import logging
+from dataclasses import dataclass
+from typing import Literal, Dict, Any, List
 
 import config
-from modules.runtime_state import RuntimeState
 
 logger = logging.getLogger(__name__)
+if not logger.handlers:
+    h = logging.StreamHandler()
+    h.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+    logger.addHandler(h)
+logger.setLevel(getattr(logging, str(getattr(config, "LOG_LEVEL", "INFO")), logging.INFO)
+                if isinstance(getattr(config, "LOG_LEVEL", "INFO"), str) else getattr(config, "LOG_LEVEL", logging.INFO))
+
+
+@dataclass
+class RolloutState:
+    environment: Literal["simulation", "production"]
+    stage: int
+    can_trade_live: bool
+    can_withdraw: bool
+    risk_pct_max: float
+    notes: str
 
 
 class RolloutManager:
     """
-    Rollout stage gatekeeper + helper utilities.
+    Central place to control rollout/risk gates.
 
-    Stages (from readme):
-      1: Crypto Paper (Learn)
-      2: Crypto Live (+ Exploration)
-      3: Crypto Live + Perps/Forex Paper
-      4: Crypto & Forex Live (+ Options Paper)
-      5: Full Rollout (Crypto Live + Forex Live; Options optional)
+    Stages (typical):
+      1: Simulation only (paper). No live trading.
+      2: Canary live on tiny size (still mostly paper). (Not used if you keep simulation-only)
+      3+: Gradual ramp (ignored while ENVIRONMENT='simulation').
 
-    Domain mapping:
-      - crypto: paper allowed from stage 1; live from stage 2
-      - perps:  paper allowed from stage 3; live (when enabled later) can share rules with crypto (spot+perp)
-      - forex:  paper from stage 3; live from stage 4
-      - options: paper from stage 4; live from stage 5 (optional)
-
-    This class does NOT place orders. It only decides if features are permitted,
-    reconciles toggles on boot, and updates persistent state.
+    This manager doesn’t place orders; it just tells the rest of the system what’s allowed.
     """
 
-    def __init__(self, state: RuntimeState):
-        self.state = state
+    def __init__(self):
+        self.env = (config.ENVIRONMENT or "simulation").lower()
+        self.stage = int(getattr(config, "ROLLOUT_STAGE", 1))
 
-        # Gate definitions
-        self._paper_gate = {
-            "crypto": 1,
-            "perps": 3,
-            "forex": 3,
-            "options": 4,
-        }
-        self._live_gate = {
-            "crypto": 2,
-            # perps live rides under crypto EXCHANGE_PROFILE = "spot+perp"
-            "forex": 4,
-            "options": 5,  # optional even at 5; still gated
-        }
+    def snapshot(self) -> RolloutState:
+        if self.env == "simulation":
+            return RolloutState(
+                environment="simulation",
+                stage=self.stage,
+                can_trade_live=False,
+                can_withdraw=False,
+                risk_pct_max=0.0,
+                notes="Simulation mode: all execution is paper; live endpoints disabled.",
+            )
 
-    # ──────────────────────────────────────────────────────────────────────
-    # Capability checks
-    # ──────────────────────────────────────────────────────────────────────
-    def allows_paper(self, domain: str) -> bool:
-        stage = self.state.get_stage()
-        return stage >= self._paper_gate.get(domain, 99)
+        # Production env (kept conservative — adjust if you start using this path)
+        if self.stage <= 1:
+            # technically live env but still blocked
+            return RolloutState(
+                environment="production",
+                stage=self.stage,
+                can_trade_live=False,
+                can_withdraw=False,
+                risk_pct_max=0.0,
+                notes="Stage 1 in production: learning/monitoring only, no live orders.",
+            )
+        elif self.stage == 2:
+            return RolloutState(
+                environment="production",
+                stage=2,
+                can_trade_live=True,
+                can_withdraw=False,
+                risk_pct_max=max(0.01, min(0.02, config.TRADE_SIZE_PERCENT)),  # 1–2%
+                notes="Canary: live orders allowed with tiny size; withdrawals disabled.",
+            )
+        else:
+            return RolloutState(
+                environment="production",
+                stage=self.stage,
+                can_trade_live=True,
+                can_withdraw=True,
+                risk_pct_max=max(0.02, min(0.05, config.TRADE_SIZE_PERCENT)),  # 2–5%
+                notes="Ramp up per KPI guardrails.",
+            )
 
-    def allows_live(self, domain: str) -> bool:
-        stage = self.state.get_stage()
-        need = self._live_gate.get(domain, 99)
-        return stage >= need
+    # Convenience gates
+    def live_orders_allowed(self) -> bool:
+        s = self.snapshot()
+        return s.can_trade_live
 
-    def can_trade_crypto_live(self) -> bool:
-        return self.allows_live("crypto")
+    def max_risk_pct(self) -> float:
+        return float(self.snapshot().risk_pct_max)
 
-    def can_trade_forex_live(self) -> bool:
-        return self.allows_live("forex")
-
-    def can_trade_options_live(self) -> bool:
-        return self.allows_live("options")
-
-    # ──────────────────────────────────────────────────────────────────────
-    # Reconciliation on boot
-    # ──────────────────────────────────────────────────────────────────────
-    def reconcile_on_boot(self) -> None:
-        """
-        Enforce safe-restart semantics:
-          - Forex and Options toggles OFF on boot (no new orders) but monitor/reconcile open positions.
-          - Crypto retains last state; Perps governed by EXCHANGE_PROFILE (spot|perp|spot+perp).
-          - Paper wallets persist; never reset unless user requests.
-        """
-        # FX/Options: disable trading toggles at boot, but keep monitoring
-        self.state.set_flag("forex_enabled", 0)   # OFF for new orders
-        self.state.set_flag("options_enabled", 0) # OFF for new orders
-
-        # Ensure we have stage & baseline exploration min
-        if self.state.get_flag("exploration_min_rate") is None:
-            self.state.set_flag("exploration_min_rate", config.EXPLORATION_MIN_RATE)
-
-        # Record current profile for crypto (spot/perp/spot+perp)
-        self.state.set_flag("exchange_profile", config.EXCHANGE_PROFILE)
-
-        self.state._event("rollout.reconcile_boot", "Toggles normalized at boot")
-        self.state.save()
-
-    # ──────────────────────────────────────────────────────────────────────
-    # Guard helpers (returns bool and optionally pushes a UI message)
-    # ──────────────────────────────────────────────────────────────────────
-    def guard_paper(self, domain: str, ui=None) -> bool:
-        if not self.allows_paper(domain):
-            msg = f"Stage gate: Paper trading for {domain} not allowed at stage {self.state.get_stage()}."
-            logger.warning(msg)
-            if ui:
-                ui.push_warning(msg)
-            return False
-        return True
-
-    def guard_live(self, domain: str, ui=None) -> bool:
-        if not self.allows_live(domain):
-            msg = f"Stage gate: Live trading for {domain} not allowed at stage {self.state.get_stage()}."
-            logger.warning(msg)
-            if ui:
-                ui.push_warning(msg)
-            return False
-        return True
-
-    # ──────────────────────────────────────────────────────────────────────
-    # Stage transitions (manual promotion via UI, if you expose it)
-    # ──────────────────────────────────────────────────────────────────────
-    def set_stage(self, stage: int) -> None:
-        """Force set stage (e.g., after KPI review) — call from a UI handler with confirmation."""
-        prev = self.state.get_stage()
-        self.state.set_stage(stage)
-        self.state._event("rollout.stage_set", f"{prev} -> {stage}")
-        self.state.save()
-
-    # ──────────────────────────────────────────────────────────────────────
-    # Domain enable helpers
-    # ──────────────────────────────────────────────────────────────────────
-    def enable_crypto_live(self) -> bool:
-        if not self.guard_live("crypto"):
-            return False
-        self.state.set_domain_live("crypto", True)
-        self.state._event("domain.crypto.live_on", "")
-        self.state.save()
-        return True
-
-    def disable_crypto_live(self) -> None:
-        self.state.set_domain_live("crypto", False)
-        self.state._event("domain.crypto.live_off", "")
-        self.state.save()
-
-    def enable_forex_live(self) -> bool:
-        if not self.guard_live("forex"):
-            return False
-        self.state.set_flag("forex_enabled", 1)
-        self.state._event("domain.forex.live_on", "")
-        self.state.save()
-        return True
-
-    def disable_forex_live(self) -> None:
-        self.state.set_flag("forex_enabled", 0)
-        self.state._event("domain.forex.live_off", "")
-        self.state.save()
-
-    def enable_options_live(self) -> bool:
-        if not self.guard_live("options"):
-            return False
-        self.state.set_flag("options_enabled", 1)
-        self.state._event("domain.options.live_on", "")
-        self.state.save()
-        return True
-
-    def disable_options_live(self) -> None:
-        self.state.set_flag("options_enabled", 0)
-        self.state._event("domain.options.live_off", "")
-        self.state.save()
+    def explain(self) -> str:
+        s = self.snapshot()
+        return (f"Env={s.environment}, Stage={s.stage}, "
+                f"live_orders_allowed={s.can_trade_live}, withdraws={s.can_withdraw}, "
+                f"max_risk_pct={s.risk_pct_max:.2%} | {s.notes}")
