@@ -1,14 +1,12 @@
 # modules/exchange.py
 
+import time
+import math
 import logging
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
 
+import ccxt
 import config
-
-try:
-    import ccxt  # REST + live trading
-except Exception:  # pragma: no cover
-    ccxt = None
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:
@@ -21,313 +19,188 @@ logger.setLevel(getattr(logging, str(getattr(config, "LOG_LEVEL", "INFO")), logg
 
 class ExchangeAPI:
     """
-    Thin adapter around ccxt.bybit with a built-in, simple paper-trading engine
-    used by TradeExecutor(simulation_mode=True).
+    Thin wrapper around ccxt with an in-memory paper engine that mirrors
+    the subset of calls used by TradeExecutor.
 
-    Public methods used elsewhere:
-      - get_balance() -> float
-      - get_price(symbol) -> float
-      - get_min_cost(symbol) -> float
-      - get_amount_precision(symbol) -> int
-      - get_price_precision(symbol) -> int
-      - _resolve_symbol(symbol) -> 'BTC/USDT'
-      - _simulate_order(...)
-      - fetch_positions(symbol) -> list[dict]        (live only)
-      - create_order(symbol, type, side, amount, price, attach_sl=None, attach_tp=None, reduce_only=False)
+    Public methods used by the app:
+      - get_balance()
+      - get_price(symbol)
+      - get_min_cost(symbol)
+      - get_amount_precision(symbol)
+      - get_price_precision(symbol)
+      - fetch_positions(symbol)         # live only → list[dict]; paper returns internal
+      - create_order(symbol, type, side, amount, price, attach_sl/attach_tp, reduce_only)
+      - _simulate_order(...)            # paper engine for TradeExecutor
+
+    Notes
+    -----
+    • Symbols use the ccxt standard with slash, e.g. "BTC/USDT".
+    • In SIM mode, we keep:
+        _sim_cash_usd  : float  (starting from SIMULATION_START_BALANCE)
+        _sim_positions : dict[symbol] -> {side, quantity, entry_price, sl, tp}
+        _last_price    : dict[symbol] -> float   (simple cache from last get_price)
     """
 
     def __init__(self):
-        self.simulation_mode = bool(getattr(config, "USE_SIMULATION", True))
-        self.use_testnet = bool(getattr(config, "USE_TESTNET", True))
+        self.is_testnet = bool(getattr(config, "USE_TESTNET", True))
+        self.profile = getattr(config, "EXCHANGE_PROFILE", "spot")
+        self.fee_rate = float(getattr(config, "FEE_PERCENTAGE", 0.002))
+        self.sim_delay = float(getattr(config, "SIMULATION_ORDER_DELAY", 0.5))
 
-        self._sim_cash_usd: float = float(getattr(config, "SIMULATION_START_BALANCE", 1000.0))
-        # simple long-only position book keyed by normalized symbol (BTCUSDT)
-        self._sim_positions: Dict[str, Dict[str, Any]] = {}
-        self.positions = self._sim_positions  # public alias (used by TradeSimulator)
+        # --- ccxt client (Bybit) ---
+        # We prefer spot unless explicitly perp.
+        bybit_kwargs = {
+            "apiKey": config.SIMULATION_BYBIT_API_KEY if self.is_testnet else config.BYBIT_API_KEY,
+            "secret": config.SIMULATION_BYBIT_API_SECRET if self.is_testnet else config.BYBIT_API_SECRET,
+            "enableRateLimit": True,
+            "options": {
+                "defaultType": "spot" if self.profile == "spot" else "swap",
+                "adjustForTimeDifference": True,
+            },
+        }
+        self.client = ccxt.bybit(bybit_kwargs)
+        # ccxt's Bybit testnet setting
+        try:
+            self.client.set_sandbox_mode(self.is_testnet)
+        except Exception:
+            # Older ccxt may not have set_sandbox_mode for Bybit; ignore.
+            pass
 
-        self._markets_loaded = False
+        # Load markets once (best-effort)
         self._markets = {}
-
-        self.exchange = None
-        if ccxt is not None:
-            self.exchange = ccxt.bybit({
-                "apiKey": (config.SIMULATION_BYBIT_API_KEY if self.simulation_mode else config.BYBIT_API_KEY),
-                "secret": (config.SIMULATION_BYBIT_API_SECRET if self.simulation_mode else config.BYBIT_API_SECRET),
-                "enableRateLimit": True,
-                "options": {
-                    # market data works the same; trades route to testnet when simulation_mode=False but USE_TESTNET=True
-                    "defaultType": "spot",
-                },
-            })
-            # ccxt testnet toggle (affects some exchanges; Bybit spot market-data is public anyway)
-            try:
-                if hasattr(self.exchange, "set_sandbox_mode"):
-                    self.exchange.set_sandbox_mode(self.use_testnet)
-            except Exception:
-                pass
-
-            # Preload markets lazily
-            self._load_markets_safely()
-        else:
-            logger.warning("ccxt is not installed; live price/markets unavailable.")
-
-    # ─────────────────────────────────────────────────────────────────────
-    # Utilities
-    # ─────────────────────────────────────────────────────────────────────
-
-    def _load_markets_safely(self):
-        if self.exchange is None:
-            return
-        if self._markets_loaded:
-            return
         try:
-            self._markets = self.exchange.load_markets()
-            self._markets_loaded = True
+            self._markets = self.client.load_markets()
         except Exception as e:
-            logger.debug(f"load_markets failed: {e}")
+            logger.warning(f"load_markets failed (continuing): {e}")
 
-    @staticmethod
-    def _normalize_for_storage(symbol: str) -> str:
-        return symbol.replace("/", "").upper()
+        # --- Paper engine state ---
+        self._sim_cash_usd: float = float(getattr(config, "SIMULATION_START_BALANCE", 1000.0))
+        self._sim_positions: Dict[str, Dict[str, Any]] = {}
+        self._last_price: Dict[str, float] = {}
 
-    @staticmethod
-    def _human_symbol(symbol: str) -> str:
-        if "/" in symbol:
-            return symbol
-        if symbol.endswith("USDT"):
-            return f"{symbol[:-4]}/USDT"
-        return symbol
-
+    # ──────────────────────────────────────────────────────────────────────
+    # Helpers / Normalization
+    # ──────────────────────────────────────────────────────────────────────
     def _resolve_symbol(self, symbol: str) -> str:
-        """Ensure 'BASE/QUOTE' format for ccxt."""
-        return self._human_symbol(symbol)
+        # Normalize common forms: btcusdt → BTC/USDT
+        s = symbol.replace(" ", "").upper()
+        if "/" not in s:
+            if s.endswith("USDT"):
+                s = s[:-4] + "/USDT"
+            elif s.endswith("USD"):
+                s = s[:-3] + "/USD"
+        return s
 
-    # ─────────────────────────────────────────────────────────────────────
-    # Public: market data / precision helpers
-    # ─────────────────────────────────────────────────────────────────────
-
+    # ──────────────────────────────────────────────────────────────────────
+    # Live-ish helpers
+    # ──────────────────────────────────────────────────────────────────────
     def get_price(self, symbol: str) -> Optional[float]:
-        """Last price via fetch_ticker; returns None if unavailable."""
         sym = self._resolve_symbol(symbol)
-        if self.exchange is None:
-            return None
+        # Try ticker first
         try:
-            t = self.exchange.fetch_ticker(sym)
-            px = t.get("last") or t.get("close") or t.get("info", {}).get("lastPrice")
-            return float(px) if px is not None else None
+            t = self.client.fetch_ticker(sym)
+            last = float(t.get("last") or t.get("close") or 0.0)
+            if last > 0:
+                self._last_price[sym] = last
+                return last
         except Exception as e:
-            logger.debug(f"get_price({sym}) failed: {e}")
-            return None
+            logger.debug(f"fetch_ticker {sym} failed: {e}")
+
+        # Fallback to cache
+        return self._last_price.get(sym)
 
     def get_balance(self) -> float:
-        """Wallet balance:
-           - simulation: simulated USD cash
-           - live: Bybit wallet USDT total (free + used)
-        """
-        if self.simulation_mode or self.exchange is None:
+        if self.is_testnet or getattr(config, "USE_SIMULATION", True):
             return float(self._sim_cash_usd)
         try:
-            bal = self.exchange.fetch_balance()
-            # Prefer USDT total; fall back to 'total' balance sum
-            if "USDT" in bal.get("total", {}):
-                return float(bal["total"]["USDT"])
-            # Sum all quote-equivalent if needed (very rough)
-            total = 0.0
-            for _, v in bal.get("total", {}).items():
-                try:
-                    total += float(v or 0.0)
-                except Exception:
-                    pass
-            return float(total)
+            bal = self.client.fetch_balance()
+            # Prefer USDT total (Bybit spot swaps use USDT commonly)
+            total = bal.get("total", {})
+            usdt = float(total.get("USDT") or 0.0)
+            if usdt <= 0 and "free" in bal:
+                usdt = float(bal["free"].get("USDT") or 0.0)
+            return usdt
         except Exception as e:
-            logger.debug(f"get_balance live failed: {e}")
+            logger.warning(f"fetch_balance failed: {e}")
             return 0.0
 
     def get_min_cost(self, symbol: str) -> float:
-        """Minimum notional cost (USD) for a trade (best-effort)."""
-        self._load_markets_safely()
         sym = self._resolve_symbol(symbol)
-        market = self._markets.get(sym, {})
-        limits = market.get("limits", {})
-        cost = limits.get("cost", {})
-        min_cost = cost.get("min")
-        try:
-            if min_cost is None:
-                # Fallback to config minimum
-                return float(getattr(config, "MIN_TRADE_AMOUNT_USD", 10.0))
-            return float(min_cost)
-        except Exception:
+        m = self._markets.get(sym)
+        if not m:
+            # Generic fallback: $10
             return float(getattr(config, "MIN_TRADE_AMOUNT_USD", 10.0))
+        # ccxt meta fields vary; use minCost/limits
+        min_cost = None
+        try:
+            min_cost = m.get("limits", {}).get("cost", {}).get("min")
+        except Exception:
+            min_cost = None
+        if min_cost is None:
+            min_cost = m.get("minCost")
+        if not min_cost:
+            min_cost = float(getattr(config, "MIN_TRADE_AMOUNT_USD", 10.0))
+        return float(min_cost)
 
     def get_amount_precision(self, symbol: str) -> int:
-        """Amount precision (number of decimals for quantity)."""
-        self._load_markets_safely()
         sym = self._resolve_symbol(symbol)
-        market = self._markets.get(sym, {})
-        precision = market.get("precision", {})
-        amt = precision.get("amount")
-        try:
-            return int(amt) if isinstance(amt, int) else 6
-        except Exception:
+        m = self._markets.get(sym)
+        if not m:
             return 6
+        # ccxt uses "precision": {"amount": n, "price": n}
+        prec = m.get("precision", {}).get("amount")
+        if prec is None:
+            # derive from limits if available
+            step = m.get("limits", {}).get("amount", {}).get("min")
+            if step:
+                return max(0, int(round(-math.log10(float(step)))))  # crude
+            return 6
+        return int(prec)
 
     def get_price_precision(self, symbol: str) -> int:
-        """Price precision (number of decimals)."""
-        self._load_markets_safely()
         sym = self._resolve_symbol(symbol)
-        market = self._markets.get(sym, {})
-        precision = market.get("precision", {})
-        px = precision.get("price")
-        try:
-            return int(px) if isinstance(px, int) else 2
-        except Exception:
-            return 2
+        m = self._markets.get(sym)
+        if not m:
+            return 4
+        prec = m.get("precision", {}).get("price")
+        if prec is None:
+            step = m.get("limits", {}).get("price", {}).get("min")
+            if step:
+                return max(0, int(round(-math.log10(float(step)))))
+            return 4
+        return int(prec)
 
-    # ─────────────────────────────────────────────────────────────────────
-    # Simulation engine (spot, long-only, SL/TP shadow)
-    # ─────────────────────────────────────────────────────────────────────
-
-    def _simulate_order(
-        self,
-        symbol: str,
-        side: str,
-        order_type: str,
-        quantity: float,
-        price: float,
-        attach_sl: Optional[float],
-        attach_tp: Optional[float],
-        reduce_only: bool = False
-    ) -> Dict[str, Any]:
-        """
-        Very small spot simulator:
-          - BUY opens/increases a long position; subtract notional from cash
-          - SELL closes a long (full or partial); adds notional back to cash
-          - Tracks pnl on close and returns it
-          - SL/TP stored as shadow levels (not auto-triggered here)
-        """
-        sym_h = self._resolve_symbol(symbol)
-        sym_k = self._normalize_for_storage(symbol)
-        side = side.lower()
-        order_type = order_type.lower()
-
-        qty = float(quantity)
-        px = float(price)
-        if qty <= 0 or px <= 0:
-            raise ValueError("Quantity and price must be positive")
-
-        pos = self._sim_positions.get(sym_k)
-
-        # BUY
-        if side == "buy" and not reduce_only:
-            if pos:
-                # increase / average price
-                old_qty = float(pos["quantity"])
-                old_entry = float(pos["entry_price"])
-                new_qty = old_qty + qty
-                new_entry = (old_entry * old_qty + px * qty) / max(new_qty, 1e-12)
-                pos["quantity"] = new_qty
-                pos["entry_price"] = new_entry
-                if attach_sl is not None:
-                    pos["sl"] = float(attach_sl)
-                if attach_tp is not None:
-                    pos["tp"] = float(attach_tp)
-                self._sim_cash_usd -= (px * qty)
-                return {
-                    "status": "open_increased",
-                    "symbol": sym_h,
-                    "side": "buy",
-                    "quantity": new_qty,
-                    "entry_price": new_entry,
-                    "price": px,
-                }
-            else:
-                # open new
-                self._sim_positions[sym_k] = {
-                    "side": "long",
-                    "quantity": qty,
-                    "entry_price": px,
-                    "sl": float(attach_sl) if attach_sl is not None else None,
-                    "tp": float(attach_tp) if attach_tp is not None else None,
-                }
-                self._sim_cash_usd -= (px * qty)
-                return {
-                    "status": "open",
-                    "symbol": sym_h,
-                    "side": "buy",
-                    "quantity": qty,
-                    "entry_price": px,
-                    "price": px,
-                }
-
-        # SELL (close long)
-        if side == "sell":
-            if not pos or pos.get("side") != "long":
-                # nothing to close
-                return {
-                    "status": "noop",
-                    "symbol": sym_h,
-                    "side": "sell",
-                    "quantity": 0.0,
-                    "price": px,
-                    "pnl": 0.0,
-                }
-            close_qty = min(qty, float(pos["quantity"]))
-            entry_px = float(pos["entry_price"])
-            pnl = (px - entry_px) * close_qty
-
-            # reduce or close
-            remaining = float(pos["quantity"]) - close_qty
-            if remaining <= 1e-12:
-                self._sim_positions.pop(sym_k, None)
-                status = "closed"
-                final_qty = 0.0
-            else:
-                pos["quantity"] = remaining
-                status = "closed_partial"
-                final_qty = remaining
-
-            # add back cash for the notional sold
-            self._sim_cash_usd += (px * close_qty)
-
-            return {
-                "status": status,
-                "symbol": sym_h,
-                "side": "sell",
-                "quantity": close_qty if status == "closed" else final_qty,
-                "price": px,
-                "pnl": pnl,
-            }
-
-        # Unknown path
-        return {
-            "status": "rejected",
-            "symbol": sym_h,
-            "side": side,
-            "quantity": qty,
-            "price": px,
-            "reason": "unsupported order path",
-        }
-
-    # ─────────────────────────────────────────────────────────────────────
-    # Live trading helpers (used only when simulation_mode=False)
-    # ─────────────────────────────────────────────────────────────────────
-
+    # ──────────────────────────────────────────────────────────────────────
+    # Live order/positions
+    # ──────────────────────────────────────────────────────────────────────
     def fetch_positions(self, symbol: str):
-        """Live-only: return open position list for the symbol (reduce-only close).
-        For spot, Bybit typically doesn’t expose positions (perps do). We fallback to empty.
-        """
-        if self.exchange is None or self.simulation_mode:
-            return []
+        """Live-only positions (paper uses _sim_positions)."""
+        if self.is_testnet or getattr(config, "USE_SIMULATION", True):
+            # map paper position to a ccxt-like list
+            sym = self._resolve_symbol(symbol)
+            p = self._sim_positions.get(sym)
+            if not p:
+                return []
+            qty = float(p.get("quantity", 0.0))
+            return [{
+                "symbol": sym,
+                "side": p.get("side"),
+                "contracts": qty,
+                "amount": qty,
+                "entryPrice": float(p.get("entry_price", 0.0)),
+            }]
         try:
-            # If you later use perps, you can switch defaultType=linear and call fetchPositions.
-            return []
-        except Exception:
+            # Not all venues support fetch_positions for spot; handle gracefully
+            positions = self.client.fetch_positions([self._resolve_symbol(symbol)])
+            return positions or []
+        except Exception as e:
+            logger.debug(f"fetch_positions not supported/failed: {e}")
             return []
 
     def create_order(
         self,
         symbol: str,
-        order_type: str,
+        type: str,
         side: str,
         amount: float,
         price: Optional[float] = None,
@@ -336,21 +209,186 @@ class ExchangeAPI:
         attach_tp: Optional[float] = None,
         reduce_only: bool = False
     ) -> Dict[str, Any]:
-        """Pass-through to ccxt.create_order with minimal normalization."""
-        if self.exchange is None:
-            raise RuntimeError("Exchange not available")
+        """Live path only; paper is handled by TradeExecutor via _simulate_order()."""
         sym = self._resolve_symbol(symbol)
-        typ = order_type.lower()
-        side = side.lower()
-
-        params = {}
-        # Bybit spot generally ignores reduce-only; included for compatibility
-        if reduce_only:
-            params["reduceOnly"] = True
-
         try:
-            order = self.exchange.create_order(sym, typ, side, amount, price, params)
-            order.setdefault("status", "open")
+            params = {}
+            if reduce_only:
+                params["reduceOnly"] = True
+
+            # Some ccxt/venue combos require price for limit only
+            if type.lower() == "market":
+                order = self.client.create_order(sym, "market", side, amount, None, params)
+            else:
+                order = self.client.create_order(sym, "limit", side, amount, price, params)
+
+            # Inline SL/TP: best-effort, many venues require separate orders
+            # so we skip here to keep compatibility.
+
             return order
         except Exception as e:
-            raise RuntimeError(f"create_order failed: {e}")
+            # surface exception; TradeExecutor will wrap it
+            raise
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Paper engine
+    # ──────────────────────────────────────────────────────────────────────
+    def _simulate_order(
+        self,
+        symbol: str,
+        side: str,
+        order_type: str,
+        quantity: float,
+        price: float,
+        *,
+        attach_sl: Optional[float] = None,
+        attach_tp: Optional[float] = None,
+        reduce_only: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Very lightweight spot-like simulator:
+         - Long or Short "positions" (we allow short notionally for strategy testing)
+         - Open: deduct entry notional from cash (fees applied in TradeExecutor)
+         - Close: release notional and realize PnL to cash
+         - Average price when adding to existing position of same side
+         - If opening opposite side, we close existing (simple netting)
+
+        Position schema:
+          { "side": "long"|"short", "quantity": float, "entry_price": float,
+            "sl": float|None, "tp": float|None }
+        """
+        sym = self._resolve_symbol(symbol)
+        side = side.lower()
+        order_type = order_type.lower()
+
+        # Artificial delay to feel realistic
+        try:
+            time.sleep(max(0.0, self.sim_delay))
+        except Exception:
+            pass
+
+        px = float(price)
+        qty = float(quantity)
+        if qty <= 0 or px <= 0:
+            return {"status": "rejected", "reason": "invalid_qty_or_price"}
+
+        pos = self._sim_positions.get(sym)
+
+        # Reduce-only close path
+        if reduce_only and pos:
+            return self._close_position(sym, px, qty)
+
+        # No position → open
+        if not pos:
+            self._open_position(sym, side, qty, px, attach_sl, attach_tp)
+            return {
+                "status": "open",
+                "symbol": sym,
+                "side": side,
+                "quantity": qty,
+                "entry_price": px,
+            }
+
+        # Existing position present
+        if pos["side"] == side:
+            # Increase / add; compute new average entry
+            new_qty = pos["quantity"] + qty
+            if new_qty <= 0:
+                return {"status": "rejected", "reason": "nonpositive_qty"}
+
+            avg_entry = (pos["entry_price"] * pos["quantity"] + px * qty) / new_qty
+            pos["quantity"] = new_qty
+            pos["entry_price"] = avg_entry
+            if attach_sl is not None:
+                pos["sl"] = float(attach_sl)
+            if attach_tp is not None:
+                pos["tp"] = float(attach_tp)
+
+            return {
+                "status": "open_increased",
+                "symbol": sym,
+                "side": side,
+                "quantity": new_qty,
+                "entry_price": float(avg_entry),
+            }
+
+        # Opposite side → close existing (netting). For simplicity, close fully.
+        close_res = self._close_position(sym, px, pos["quantity"])
+        # Optionally, open the new opposite side after close.
+        self._open_position(sym, side, qty, px, attach_sl, attach_tp)
+        return {
+            "status": "open_added",
+            "symbol": sym,
+            "side": side,
+            "quantity": qty,
+            "entry_price": px,
+            "closed_prev": close_res,
+        }
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Paper internals
+    # ──────────────────────────────────────────────────────────────────────
+    def _open_position(
+        self, symbol: str, side: str, qty: float, price: float,
+        sl: Optional[float], tp: Optional[float]
+    ):
+        """
+        Open a notional position:
+          - We “reserve” notional by moving it out of cash, but actual fee
+            handling is performed by TradeExecutor (so we don’t double-count).
+        """
+        notional = float(qty * price)
+        # Reserve: move cash down by notional (naive spot-like accounting)
+        try:
+            self._sim_cash_usd -= notional
+        except Exception:
+            pass
+        self._sim_positions[symbol] = {
+            "side": "long" if side == "buy" or side == "long" else "short",
+            "quantity": float(qty),
+            "entry_price": float(price),
+            "sl": float(sl) if sl else None,
+            "tp": float(tp) if tp else None,
+        }
+
+    def _close_position(self, symbol: str, price: float, qty: float) -> Dict[str, Any]:
+        pos = self._sim_positions.get(symbol)
+        if not pos:
+            return {"status": "noop", "symbol": symbol}
+
+        close_qty = min(float(qty), float(pos["quantity"]))
+        entry = float(pos["entry_price"])
+        side = pos["side"]
+        pnl = 0.0
+        notional_release = 0.0
+
+        if side == "long":
+            pnl = (price - entry) * close_qty
+            notional_release = price * close_qty
+        else:
+            # Short PnL: entry higher than exit → profit
+            pnl = (entry - price) * close_qty
+            # Notional release mirrors how we "reserved" at open:
+            notional_release = entry * close_qty  # conservative
+
+        # Return notional + PnL to cash (fees added by TradeExecutor separately)
+        try:
+            self._sim_cash_usd += notional_release + pnl
+        except Exception:
+            pass
+
+        remaining = float(pos["quantity"]) - close_qty
+        if remaining <= 0.0:
+            self._sim_positions.pop(symbol, None)
+            status = "closed"
+        else:
+            pos["quantity"] = remaining
+            status = "closed_partial"
+
+        return {
+            "status": status,
+            "symbol": symbol,
+            "pnl": float(pnl),
+            "quantity": float(close_qty),
+            "price": float(price),
+        }
