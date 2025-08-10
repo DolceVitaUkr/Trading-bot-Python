@@ -1,13 +1,19 @@
 # modules/risk_management.py
+
 import logging
 from dataclasses import dataclass, asdict
-from typing import Dict, Optional, Literal, Tuple
+from typing import Dict, Optional, Literal
 
 import config
 from modules.error_handler import RiskViolationError
 
 logger = logging.getLogger(__name__)
-logger.addHandler(logging.NullHandler())
+if not logger.handlers:
+    h = logging.StreamHandler()
+    h.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+    logger.addHandler(h)
+logger.setLevel(getattr(logging, str(getattr(config, "LOG_LEVEL", "INFO")), logging.INFO)
+                if isinstance(getattr(config, "LOG_LEVEL", "INFO"), str) else getattr(config, "LOG_LEVEL", logging.INFO))
 
 
 @dataclass
@@ -55,33 +61,30 @@ class RiskManager:
         # Balances & caps
         self.account_balance = float(account_balance)
 
-        # --- Map to your config keys ---
-        # Use KPI_TARGETS.max_drawdown if provided, else fallback 0.15
-        kpis = getattr(config, "KPI_TARGETS", {})
+        # Pull defaults from config if not provided
         self.max_drawdown_limit = (
             max_drawdown_limit
             if max_drawdown_limit is not None
-            else float(kpis.get("max_drawdown", 0.15))
+            else getattr(config, "KPI_TARGETS", {}).get("max_drawdown", 0.15)
         )
 
-        # Pick domain caps from RISK_CAPS based on exchange profile
-        caps_map = getattr(config, "RISK_CAPS", {}) or {}
-        profile = str(getattr(config, "EXCHANGE_PROFILE", "spot")).lower()
-        domain_key = "perp" if "perp" in profile else "crypto_spot"
-        domain_caps = caps_map.get(domain_key, {"per_pair_pct": 0.15, "portfolio_concurrent_pct": 0.30})
+        # Risk caps by domain/profile
+        # Prefer EXCHANGE_PROFILE + domain override in RISK_CAPS
+        profile = getattr(config, "EXCHANGE_PROFILE", "spot")
+        risk_caps = getattr(config, "RISK_CAPS", {})
+        caps_key = "crypto_spot" if profile == "spot" else "perp" if profile == "perp" else "crypto_spot"
+        caps = risk_caps.get(caps_key, {"per_pair_pct": 0.15, "portfolio_concurrent_pct": 0.30})
 
         self.per_pair_cap_pct = (
             per_pair_cap_pct
             if per_pair_cap_pct is not None
-            else float(domain_caps.get("per_pair_pct", 0.15))
+            else float(caps.get("per_pair_pct", 0.15))
         )
         self.portfolio_cap_pct = (
             portfolio_cap_pct
             if portfolio_cap_pct is not None
-            else float(domain_caps.get("portfolio_concurrent_pct", 0.30))
+            else float(caps.get("portfolio_concurrent_pct", 0.30))
         )
-
-        # Base risk per trade: map from TRADE_SIZE_PERCENT by default
         self.base_risk_per_trade_pct = (
             base_risk_per_trade_pct
             if base_risk_per_trade_pct is not None
@@ -100,8 +103,10 @@ class RiskManager:
 
         # Hard guardrails from config
         self.min_trade_usd = float(getattr(config, "MIN_TRADE_AMOUNT_USD", 10.0))
-        self.max_leverage = float(getattr(config, "MAX_LEVERAGE", 3))  # optional in config; fallback 3
-        self.fee_rate = float(getattr(config, "FEE_PERCENTAGE", 0.002))  # taker default
+        self.max_leverage = int(getattr(config, "MAX_LEVERAGE", 3))  # conservative default
+        fee_model = getattr(config, "FEE_MODEL", {}).get("bybit", {}).get("spot", {})
+        # use taker fee for safety
+        self.fee_rate = float(fee_model.get("taker", getattr(config, "FEE_PERCENTAGE", 0.002)))
 
     # ────────────────────────────────────────────────────────────────────────────
     # Equity / Drawdown
@@ -134,7 +139,7 @@ class RiskManager:
         entry_price: float,
         atr: float,
         rr: Optional[float] = None,
-    ) -> Tuple[float, float]:
+    ) -> tuple[float, float]:
         """
         Compute SL and TP using ATR bands and R:R.
         """
@@ -358,7 +363,7 @@ class RiskManager:
         risk_pct: float,
         rr: float,
         regime: Optional[Literal["trend", "range"]],
-    ) -> Tuple[float, float]:
+    ) -> tuple[float, float]:
         """
         Adjust risk and RR by regime:
           - In trend: slightly reduce exploration & widen SL → higher RR target
