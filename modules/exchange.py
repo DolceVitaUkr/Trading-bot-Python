@@ -1,246 +1,270 @@
 # modules/exchange.py
 
-import time
+import asyncio
+import json
 import logging
-from typing import List, Optional, Union, Dict, Any, Callable
-from functools import wraps
+import math
+import time
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
 
 import ccxt
+import ccxt.base.errors as ccxt_errors
+
 import config
-from modules.error_handler import APIError, OrderExecutionError
 
 logger = logging.getLogger(__name__)
-logger.setLevel(getattr(logging, config.LOG_LEVEL, logging.INFO))
+if not logger.handlers:
+    h = logging.StreamHandler()
+    h.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+    logger.addHandler(h)
+logger.setLevel(getattr(logging, str(getattr(config, "LOG_LEVEL", "INFO")), logging.INFO)
+                if isinstance(getattr(config, "LOG_LEVEL", "INFO"), str) else getattr(config, "LOG_LEVEL", logging.INFO))
 
 
-class ThrottleGuard:
-    def __init__(self, max_per_minute: int = 90, burst: int = 15):
-        self.max_per_minute = max_per_minute
-        self.burst = burst
-        self.window: List[float] = []
+# ────────────────────────────────────────────────────────────────────────────────
+# Helpers
+# ────────────────────────────────────────────────────────────────────────────────
 
-    def tick(self):
-        now = time.time()
-        one_min_ago = now - 60
-        self.window = [t for t in self.window if t >= one_min_ago]
-        self.window.append(now)
-
-        n = len(self.window)
-        if n <= self.burst:
-            return
-        if n > self.max_per_minute:
-            sleep_for = min(1.0, (n - self.max_per_minute) * 0.05)
-            logger.debug(f"[ThrottleGuard] Sleeping {sleep_for:.2f}s (n={n})")
-            time.sleep(sleep_for)
+def normalize_symbol(sym: str) -> str:
+    """Convert common formats to Bybit spot symbol (USDT quote) e.g. 'BTC/USDT' -> 'BTCUSDT'."""
+    sym = sym.strip().upper()
+    if "/" in sym:
+        base, quote = sym.split("/", 1)
+        return f"{base}{quote}"
+    return sym
 
 
-def _retry(times: int = 3, backoff: float = 1.5):
-    def deco(fun: Callable):
-        @wraps(fun)
-        def wrapper(self, *args, **kwargs):
-            delay = 1.0
-            last_exc = None
-            for attempt in range(times):
-                try:
-                    return fun(self, *args, **kwargs)
-                except Exception as e:
-                    last_exc = e
-                    if attempt < times - 1:
-                        logger.warning(f"{fun.__name__} failed (attempt {attempt+1}/{times}): {e}")
-                        time.sleep(delay)
-                        delay *= backoff
-                    else:
-                        raise
-            raise last_exc  # safety
-        return wrapper
-    return deco
+def denormalize_symbol(sym: str) -> str:
+    """Inverse of normalize_symbol (best-effort) e.g. 'BTCUSDT' -> 'BTC/USDT'."""
+    sym = sym.strip().upper()
+    if sym.endswith("USDT"):
+        return f"{sym[:-4]}/USDT"
+    return sym
 
+
+@dataclass
+class MarketMeta:
+    symbol: str
+    base: str
+    quote: str
+    price_precision: int
+    amount_precision: int
+    min_cost: float
+
+
+# ────────────────────────────────────────────────────────────────────────────────
+# ExchangeAPI (Bybit via CCXT + light simulation helpers)
+# ────────────────────────────────────────────────────────────────────────────────
 
 class ExchangeAPI:
     """
-    Unified BYBIT exchange wrapper (Spot + Perp).
+    Thin wrapper around CCXT Bybit plus small simulation helpers that our TradeExecutor expects.
+    - Works with testnet when config.USE_TESTNET=True.
+    - Normalizes symbols to Bybit spot format (BTCUSDT).
+    - Exposes basic helpers: get_price, fetch_klines, get_min_cost, precisions, fetch top pairs.
+    - Simulation state for paper trading: _sim_cash_usd, _sim_positions, and _simulate_order().
     """
 
-    def __init__(self, profile: str = None):
-        self.simulation: bool = bool(getattr(config, "USE_SIMULATION", False))
-        self.profile: str = profile or getattr(config, "EXCHANGE_PROFILE", "spot")
+    def __init__(self) -> None:
+        # CCXT Bybit client
+        # (use the unified spot endpoints; ccxt handles testnet flag)
+        self._ccxt = ccxt.bybit({
+            "apiKey": (config.SIMULATION_BYBIT_API_KEY if config.USE_TESTNET else config.BYBIT_API_KEY),
+            "secret": (config.SIMULATION_BYBIT_API_SECRET if config.USE_TESTNET else config.BYBIT_API_SECRET),
+            "enableRateLimit": True,
+            "options": {
+                "defaultType": "spot",  # use spot for this project
+            },
+        })
+        self._ccxt.set_sandbox_mode(config.USE_TESTNET)
 
-        self.use_testnet: bool = bool(getattr(config, "USE_TESTNET", False)) or self.simulation
+        # Markets/metadata cache
+        self._markets: Dict[str, MarketMeta] = {}
 
-        self.client: Optional[ccxt.bybit] = None
-        self.markets: Dict[str, Any] = {}
-        self._throttle = ThrottleGuard(max_per_minute=90, burst=20)
+        # Light REST cache for prices (avoid hammering REST when WS is on)
+        self._last_prices: Dict[str, Tuple[float, float]] = {}  # symbol -> (price, unix_ts)
 
-        self._sim_positions: Dict[str, Dict[str, Any]] = {}
-        self._sim_open_orders: Dict[str, List[Dict[str, Any]]] = {}
+        # Simulation state (paper)
         self._sim_cash_usd: float = float(getattr(config, "SIMULATION_START_BALANCE", 1000.0))
+        self._sim_positions: Dict[str, Dict[str, Any]] = {}  # symbol -> {side, quantity, entry_price, ts}
 
-        if not self.simulation:
-            self._init_ccxt()
-
-    def _init_ccxt(self):
+        # Load markets once
         try:
-            self.client = ccxt.bybit({
-                "apiKey": getattr(config, "BYBIT_API_KEY", ""),
-                "secret": getattr(config, "BYBIT_API_SECRET", ""),
-                "enableRateLimit": True,
-            })
-            if self.use_testnet:
-                self.client.set_sandbox_mode(True)
-
-            self._throttle.tick()
-            self.markets = self.client.load_markets()
-            logger.info(f"Loaded {len(self.markets)} markets (sandbox={self.use_testnet})")
+            markets = self._ccxt.load_markets()
+            for mkt in markets.values():
+                if mkt.get("spot") and mkt.get("active"):
+                    sym = mkt["id"]  # Bybit: 'BTCUSDT'
+                    price_prec = mkt.get("precision", {}).get("price", 4)
+                    amt_prec = mkt.get("precision", {}).get("amount", 6)
+                    limits = mkt.get("limits", {}) or {}
+                    min_cost = float(limits.get("cost", {}).get("min") or 0.0)
+                    self._markets[sym] = MarketMeta(
+                        symbol=sym,
+                        base=mkt.get("base", ""),
+                        quote=mkt.get("quote", ""),
+                        price_precision=int(price_prec or 4),
+                        amount_precision=int(amt_prec or 6),
+                        min_cost=float(min_cost or 0.0),
+                    )
         except Exception as e:
-            logger.error("Failed to init/load Bybit markets", exc_info=True)
-            raise APIError("Market load failure", context={"exception": str(e)})
+            logger.warning(f"load_markets failed (will lazily resolve later): {e}")
 
-    # ---------- Market helpers ----------
+    # ───────────────────────────────
+    # Basic Account / Market Helpers
+    # ───────────────────────────────
+
+    def _ensure_market(self, symbol: str) -> MarketMeta:
+        sym = normalize_symbol(symbol)
+        if sym in self._markets:
+            return self._markets[sym]
+        try:
+            self._ccxt.load_markets(reload=True)
+            m = self._ccxt.market(denormalize_symbol(sym))
+            price_prec = m.get("precision", {}).get("price", 4)
+            amt_prec = m.get("precision", {}).get("amount", 6)
+            limits = m.get("limits", {}) or {}
+            min_cost = float(limits.get("cost", {}).get("min") or 0.0)
+            meta = MarketMeta(
+                symbol=sym,
+                base=m.get("base", ""),
+                quote=m.get("quote", ""),
+                price_precision=int(price_prec or 4),
+                amount_precision=int(amt_prec or 6),
+                min_cost=float(min_cost or 0.0),
+            )
+            self._markets[sym] = meta
+            return meta
+        except Exception as e:
+            raise ccxt_errors.BadSymbol(f"Unknown symbol: {symbol} ({e})")
 
     def _resolve_symbol(self, symbol: str) -> str:
-        if "/" in symbol:
-            return symbol
-        if symbol.endswith("USDT"):
-            return f"{symbol[:-4]}/USDT"
-        return symbol
+        return self._ensure_market(symbol).symbol
 
-    def _get_market(self, symbol: str) -> Dict[str, Any]:
-        s = self._resolve_symbol(symbol)
-        m = self.markets.get(s) if self.markets else None
-        if not m and not self.simulation and self.client:
-            self._throttle.tick()
-            self.markets = self.client.load_markets()
-            m = self.markets.get(s)
-        if not m:
-            return {
-                "symbol": s,
-                "limits": {
-                    "amount": {"min": 0.0001},
-                    "cost": {"min": float(getattr(config, "MIN_TRADE_AMOUNT_USD", 10.0))}
-                },
-                "precision": {"price": 2, "amount": 6}
-            }
-        return m
+    def get_price(self, symbol: str) -> Optional[float]:
+        """Return last price; uses 3s cache to avoid spamming REST."""
+        sym = self._resolve_symbol(symbol)
+        now = time.time()
+        cached = self._last_prices.get(sym)
+        if cached and now - cached[1] < 3.0:
+            return cached[0]
+        try:
+            tkr = self._ccxt.fetch_ticker(denormalize_symbol(sym))
+            price = float(tkr.get("last") or tkr.get("close") or tkr.get("bid") or tkr.get("ask") or 0.0)
+            if price > 0:
+                self._last_prices[sym] = (price, now)
+            return price if price > 0 else None
+        except Exception as e:
+            logger.debug(f"get_price({sym}) failed: {e}")
+            return cached[0] if cached else None
 
     def get_min_cost(self, symbol: str) -> float:
-        m = self._get_market(symbol)
-        return float(m.get("limits", {}).get("cost", {}).get("min", 10.0))
-
-    def get_min_amount(self, symbol: str) -> float:
-        m = self._get_market(symbol)
-        return float(m.get("limits", {}).get("amount", {}).get("min", 0.0001))
+        return float(self._ensure_market(symbol).min_cost or getattr(config, "MIN_TRADE_AMOUNT_USD", 10.0))
 
     def get_price_precision(self, symbol: str) -> int:
-        m = self._get_market(symbol)
-        return int(m.get("precision", {}).get("price", 2))
+        return int(self._ensure_market(symbol).price_precision or 4)
 
     def get_amount_precision(self, symbol: str) -> int:
-        m = self._get_market(symbol)
-        return int(m.get("precision", {}).get("amount", 6))
+        return int(self._ensure_market(symbol).amount_precision or 6)
 
-    # ---------- Public market data ----------
-
-    @_retry()
-    def get_price(self, symbol: str) -> float:
-        sym = self._resolve_symbol(symbol)
-        if self.client:
-            try:
-                self._throttle.tick()
-                ticker = self.client.fetch_ticker(sym)
-                return float(ticker.get("last") or ticker.get("close") or 0.0)
-            except Exception as e:
-                logger.error(f"get_price failed for {sym}: {e}", exc_info=True)
-                raise APIError(f"Failed to fetch price for {sym}", context={"symbol": sym})
-        pos = self._sim_positions.get(sym)
-        return float(pos["entry_price"]) if pos else 0.0
-
-    @_retry()
-    def fetch_ohlcv(
-        self,
-        symbol: str,
-        timeframe: str = "1m",
-        since: Optional[int] = None,
-        limit: int = 1000
-    ) -> List[List[Union[int, float]]]:
-        sym = self._resolve_symbol(symbol)
-        if not self.client:
-            raise APIError("OHLCV requires ccxt client (should be available)", context={"symbol": sym})
-        try:
-            self._throttle.tick()
-            return self.client.fetch_ohlcv(sym, timeframe=timeframe, since=since, limit=limit)
-        except Exception as e:
-            logger.error(f"fetch_ohlcv failed for {sym}/{timeframe}: {e}", exc_info=True)
-            raise APIError("Failed to fetch OHLCV", context={"symbol": sym, "timeframe": timeframe})
-
-    def fetch_market_data(self, symbol: str, timeframe: str, since: Optional[int] = None, limit: int = 1000):
-        return self.fetch_ohlcv(symbol, timeframe, since=since, limit=limit)
-
-    # ---------- Account state ----------
-
-    @_retry()
     def get_balance(self) -> float:
-        if self.simulation or not self.client:
+        """
+        - Simulation: simulated USD cash
+        - Live: sum free+used in quote wallet (USDT)
+        """
+        if config.USE_SIMULATION:
             return float(self._sim_cash_usd)
         try:
-            self._throttle.tick()
-            bal = self.client.fetch_balance()
-            usdt = bal.get("USDT") or bal.get("total", {}).get("USDT")
-            if isinstance(usdt, dict):
-                return float(usdt.get("free", 0.0) + usdt.get("used", 0.0))
-            return float(usdt or 0.0)
+            bal = self._ccxt.fetch_balance()
+            total = bal.get("total", {})
+            # Prefer USDT
+            if "USDT" in total:
+                return float(total["USDT"])
+            # sum everything (rough)
+            return float(sum(v for v in total.values() if isinstance(v, (int, float))))
         except Exception as e:
-            logger.error(f"get_balance failed: {e}", exc_info=True)
-            raise APIError("Failed to fetch balance")
+            logger.warning(f"fetch_balance failed: {e}")
+            return 0.0
 
-    @_retry()
-    def list_open_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
-        if self.simulation:
-            if symbol:
-                return list(self._sim_open_orders.get(self._resolve_symbol(symbol), []))
-            all_orders = []
-            for v in self._sim_open_orders.values():
-                all_orders.extend(v)
-            return all_orders
+    # ───────────────────────────────
+    # OHLCV & Top Pairs
+    # ───────────────────────────────
 
+    def fetch_klines(
+        self,
+        symbol: str,
+        timeframe: str = "5m",
+        since_ms: Optional[int] = None,
+        limit: int = 300,
+    ) -> List[List[Any]]:
+        """
+        Return ccxt-style OHLCV list [[ts, open, high, low, close, volume], ...]
+        limit is hard-capped to 900 to respect your preference & Bybit constraints.
+        """
+        sym = denormalize_symbol(self._resolve_symbol(symbol))
+        limit = int(max(1, min(limit, 900)))
         try:
-            self._throttle.tick()
-            return self.client.fetch_open_orders(symbol=self._resolve_symbol(symbol) if symbol else None)
+            data = self._ccxt.fetch_ohlcv(sym, timeframe=timeframe, since=since_ms, limit=limit)
+            return data or []
         except Exception as e:
-            logger.error(f"list_open_orders failed: {e}", exc_info=True)
-            raise APIError("Failed to fetch open orders")
+            logger.warning(f"fetch_klines {sym} {timeframe} failed: {e}")
+            return []
 
-    @_retry()
-    def fetch_positions(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
-        if self.simulation:
-            if symbol:
-                sym = self._resolve_symbol(symbol)
-                pos = self._sim_positions.get(sym)
-                return [pos] if pos else []
-            return list(self._sim_positions.values())
-
+    def fetch_top_pairs(
+        self,
+        max_pairs: int = 5,
+        quote: str = "USDT",
+        min_quote_vol_usd: float = 1_000_000.0,
+    ) -> List[str]:
+        """
+        Pull top Spot pairs by 24h volume with USDT quote.
+        Returns list of Bybit-format symbols e.g. ['BTCUSDT', 'ETHUSDT', ...]
+        """
         try:
-            self._throttle.tick()
-            positions = self.client.fetch_positions(symbols=[self._resolve_symbol(symbol)] if symbol else None)
-            return positions or []
+            tickers = self._ccxt.fetch_tickers()
         except Exception as e:
-            logger.error(f"fetch_positions failed: {e}", exc_info=True)
-            raise APIError("Failed to fetch positions")
+            logger.warning(f"fetch_tickers failed: {e}")
+            return [normalize_symbol(config.DEFAULT_SYMBOL)]
 
-    def get_position(self, symbol: str) -> Optional[Dict[str, Any]]:
-        ps = self.fetch_positions(symbol)
-        return ps[0] if ps else None
+        ranked: List[Tuple[str, float]] = []
+        for key, tkr in tickers.items():
+            # ccxt unifies symbol like 'BTC/USDT'
+            if not key.endswith(f"/{quote}"):
+                continue
+            # skip inactive markets if known
+            try:
+                m = self._ccxt.market(key)
+                if not (m.get("spot") and m.get("active")):
+                    continue
+            except Exception:
+                pass
 
-    # ---------- Order placement ----------
+            # Use quoteVolume or baseVolume → approximate USD volume
+            qvol = tkr.get("quoteVolume")
+            if qvol is None:
+                base_vol = tkr.get("baseVolume") or 0
+                last = tkr.get("last") or tkr.get("close") or 0
+                qvol = (base_vol or 0) * (last or 0)
+            try:
+                qvol = float(qvol or 0.0)
+            except Exception:
+                qvol = 0.0
+            if qvol <= 0:
+                continue
+            if qvol < min_quote_vol_usd:
+                continue
+            ranked.append((normalize_symbol(key), qvol))
 
-    def _round_amount(self, symbol: str, amount: float) -> float:
-        prec = self.get_amount_precision(symbol)
-        return float(f"{amount:.{prec}f}")
+        ranked.sort(key=lambda kv: kv[1], reverse=True)
+        out = [s for s, _ in ranked[:max_pairs]]
+        if not out:
+            out = [normalize_symbol(config.DEFAULT_SYMBOL)]
+        return out
 
-    def _round_price(self, symbol: str, price: float) -> float:
-        prec = self.get_price_precision(symbol)
-        return float(f"{price:.{prec}f}")
+    # ───────────────────────────────
+    # Orders (we only simulate for now)
+    # ───────────────────────────────
 
-    @_retry()
     def create_order(
         self,
         symbol: str,
@@ -251,267 +275,141 @@ class ExchangeAPI:
         *,
         attach_sl: Optional[float] = None,
         attach_tp: Optional[float] = None,
-        reduce_only: bool = False,
-        params: Optional[dict] = None
+        reduce_only: bool = False
     ) -> Dict[str, Any]:
-        sym = self._resolve_symbol(symbol)
-        params = params or {}
+        """
+        For this project we keep real trading OFF; this raises if not simulation.
+        (TradeExecutor handles simulation directly via _simulate_order.)
+        """
+        if config.USE_SIMULATION:
+            raise RuntimeError("Live order route called in simulation mode")
+        # If you ever flip to live, you can implement the CCXT createOrder call here.
+        raise NotImplementedError("Live trading is disabled in this build")
 
-        mkt_price = self.get_price(sym)
-        min_cost = self.get_min_cost(sym)
-        notional = (price or mkt_price) * amount
-        if notional < max(min_cost, float(getattr(config, "MIN_TRADE_AMOUNT_USD", 10.0))):
-            raise OrderExecutionError(
-                f"Order notional too small: {notional:.2f} < min {min_cost:.2f}",
-                context={"symbol": sym, "amount": amount, "price": price or mkt_price}
-            )
-
-        amount = self._round_amount(sym, amount)
-        if price is not None:
-            price = self._round_price(sym, price)
-
-        if self.simulation:
-            return self._simulate_order(
-                sym, side.lower(), order_type.lower(), amount, price,
-                attach_sl=attach_sl, attach_tp=attach_tp, reduce_only=reduce_only
-            )
-
+    def fetch_positions(self, symbol: str) -> List[Dict[str, Any]]:
+        """
+        Only used by live close flow; in simulation we keep positions locally.
+        """
+        if config.USE_SIMULATION:
+            # TradeExecutor checks for None / empty
+            return []
         try:
-            order_params = dict(params)
-            if attach_tp is not None:
-                order_params.setdefault("takeProfit", float(attach_tp))
-            if attach_sl is not None:
-                order_params.setdefault("stopLoss", float(attach_sl))
-            if reduce_only:
-                order_params.setdefault("reduceOnly", True)
+            # For spot there are no 'positions'; would need to emulate with balances/orders.
+            return []
+        except Exception:
+            return []
 
-            self._throttle.tick()
-            order = self.client.create_order(sym, order_type, side, amount, price, order_params)
-
-            if (attach_sl is not None or attach_tp is not None):
-                try:
-                    self._ensure_protective_orders_live(sym, side.lower(), amount, attach_sl, attach_tp)
-                except Exception as sub_e:
-                    logger.warning(f"Failed to attach protective orders via fallback: {sub_e}")
-
-            return order
-        except Exception as e:
-            logger.error(f"create_order failed for {sym}: {e}", exc_info=True)
-            raise OrderExecutionError("Order execution failed", context={"symbol": sym, "side": side})
-
-    def _ensure_protective_orders_live(
-        self, symbol: str, side: str, amount: float,
-        sl: Optional[float], tp: Optional[float]
-    ):
-        if sl is None and tp is None:
-            return
-        opp_side = "sell" if side in ("buy", "long") else "buy"
-        if sl is not None:
-            params = {"reduceOnly": True}
-            self._throttle.tick()
-            self.client.create_order(symbol, "stop", opp_side, amount, sl, params)
-        if tp is not None:
-            params = {"reduceOnly": True}
-            self._throttle.tick()
-            self.client.create_order(symbol, "limit", opp_side, amount, tp, params)
-
-    # ---------- Simulation ----------
-
-    def _sim_mark_to_market(self, symbol: str):
-        pos = self._sim_positions.get(symbol)
-        if not pos:
-            return
-        last = self.get_price(symbol)
-        pos["unrealized_pnl"] = (
-            (last - pos["entry_price"]) * pos["quantity"]
-            if pos["side"] == "long"
-            else (pos["entry_price"] - last) * pos["quantity"]
-        )
-
-    def _append_sim_order(self, symbol: str, order: Dict[str, Any]):
-        self._sim_open_orders.setdefault(symbol, []).append(order)
+    # ───────────────────────────────
+    # Paper trading helpers (used by TradeExecutor)
+    # ───────────────────────────────
 
     def _simulate_order(
         self,
         symbol: str,
         side: str,
         order_type: str,
-        amount: float,
-        price: Optional[float],
+        quantity: float,
+        price: float,
         *,
         attach_sl: Optional[float],
         attach_tp: Optional[float],
-        reduce_only: bool
+        reduce_only: bool = False
     ) -> Dict[str, Any]:
-        now = int(time.time() * 1000)
-        last_price = self.get_price(symbol)
-        fill_price = float(price or last_price)
+        """
+        Very simple spot simulation:
+        - Single net position per symbol (no hedging)
+        - Buy adds long; Sell closes/reduces long (no shorting in spot)
+        - Apply entry/exit at given price
+        - Track PnL on closes; attach SL/TP kept as metadata
+        """
+        sym = self._resolve_symbol(symbol)
+        side = side.lower()
+        price = float(price)
+        qty = float(quantity)
 
-        pos = self._sim_positions.get(symbol)
-        opening_side = "long" if side in ("buy", "long") else "short"
-        closing_side = "sell" if opening_side == "long" else "buy"
+        # enforce min-notional
+        min_cost = self.get_min_cost(sym)
+        notional = price * qty
+        if notional < max(min_cost, float(getattr(config, "MIN_TRADE_AMOUNT_USD", 10.0))):
+            return {"status": "rejected_min_notional"}
 
-        if reduce_only or (pos and pos["side"] != opening_side):
-            if not pos:
-                return {"status": "no_position", "symbol": symbol, "time": now}
+        pos = self._sim_positions.get(sym)
 
-            qty_to_close = min(amount, pos["quantity"])
-            pnl = (
-                (fill_price - pos["entry_price"]) * qty_to_close
-                if pos["side"] == "long"
-                else (pos["entry_price"] - fill_price) * qty_to_close
-            )
-            self._sim_cash_usd += float(pnl)
-
-            pos["quantity"] = round(pos["quantity"] - qty_to_close, 12)
-            closed = {
-                "symbol": symbol,
-                "side": closing_side,
-                "quantity": qty_to_close,
-                "price": fill_price,
-                "time": now,
-                "pnl": pnl,
-                "status": "closed_partial" if pos["quantity"] > 0 else "closed",
-            }
-            if pos["quantity"] <= 0:
-                del self._sim_positions[symbol]
-            return closed
-
-        cost = fill_price * amount
-        if cost > self._sim_cash_usd:
-            raise OrderExecutionError(
-                "Insufficient simulated cash",
-                context={"needed": cost, "cash": self._sim_cash_usd}
-            )
-
-        self._sim_cash_usd -= cost
-
-        if pos and pos["side"] == opening_side:
-            new_qty = pos["quantity"] + amount
-            pos["entry_price"] = (pos["entry_price"] * pos["quantity"] + fill_price * amount) / new_qty
-            pos["quantity"] = new_qty
-            pos["time"] = now
-        else:
-            self._sim_positions[symbol] = {
-                "symbol": symbol,
-                "side": opening_side,
-                "quantity": amount,
-                "entry_price": fill_price,
-                "time": now,
-                "unrealized_pnl": 0.0,
-                "sl": attach_sl,
-                "tp": attach_tp
-            }
-
-        if attach_sl is not None:
-            self._append_sim_order(symbol, {
-                "id": f"sim-sl-{now}",
-                "type": "stop",
-                "side": "sell" if opening_side == "long" else "buy",
-                "price": float(attach_sl),
-                "amount": float(amount),
-                "reduceOnly": True,
-                "status": "open"
-            })
-            self._sim_positions[symbol]["sl"] = float(attach_sl)
-        if attach_tp is not None:
-            self._append_sim_order(symbol, {
-                "id": f"sim-tp-{now}",
-                "type": "limit",
-                "side": "sell" if opening_side == "long" else "buy",
-                "price": float(attach_tp),
-                "amount": float(amount),
-                "reduceOnly": True,
-                "status": "open"
-            })
-            self._sim_positions[symbol]["tp"] = float(attach_tp)
-
-        return {
-            "symbol": symbol,
-            "side": opening_side,
-            "quantity": self._sim_positions[symbol]["quantity"],
-            "entry_price": self._sim_positions[symbol]["entry_price"],
-            "status": "open",
-            "time": now
-        }
-
-    @_retry()
-    def reconcile_open_state(self) -> Dict[str, Any]:
-        summary: Dict[str, Any] = {"positions": [], "orders": [], "actions": []}
-
-        if self.simulation:
-            for sym, pos in list(self._sim_positions.items()):
-                self._sim_mark_to_market(sym)
-                sl, tp = pos.get("sl"), pos.get("tp")
-                if sl is None or tp is None:
-                    summary["actions"].append({"symbol": sym, "action": "missing_protection_sim"})
-                summary["positions"].append(pos)
-            for sym, orders in self._sim_open_orders.items():
-                summary["orders"].extend(orders)
-            return summary
-
-        try:
-            symbols = [m for m in self.markets.keys() if m.endswith("/USDT")]
-            for sym in symbols:
-                self._throttle.tick()
-                positions = self.fetch_positions(sym)
-                if not positions:
-                    continue
-                summary["positions"].extend(positions)
-
-                open_orders = self.list_open_orders(sym)
-                summary["orders"].extend(open_orders)
-
-                has_sl = any(o for o in open_orders if o.get("type") in ("stop", "stop_loss") and o.get("reduceOnly"))
-                has_tp = any(o for o in open_orders if o.get("type") in ("limit", "take_profit") and o.get("reduceOnly"))
-                if positions and (not has_sl or not has_tp):
-                    pos_qty = abs(float(
-                        positions[0].get("contracts")
-                        or positions[0].get("contractsSize")
-                        or positions[0].get("amount")
-                        or 0
-                    ))
-                    side = positions[0].get("side", "").lower()
-                    last = self.get_price(sym)
-                    sl = last * (0.98 if side == "long" else 1.02)
-                    tp = last * (1.02 if side == "long" else 0.98)
-                    try:
-                        self._ensure_protective_orders_live(sym, "buy" if side == "long" else "sell", pos_qty, sl, tp)
-                        summary["actions"].append({"symbol": sym, "action": "reattach_sl_tp"})
-                    except Exception as sub_e:
-                        logger.warning(f"Failed to re-attach SL/TP for {sym}: {sub_e}")
-                        summary["actions"].append({"symbol": sym, "action": "reattach_failed"})
-            return summary
-        except Exception as e:
-            logger.error(f"reconcile_open_state failed: {e}", exc_info=True)
-            raise APIError("Failed to reconcile state")
-
-    @_retry()
-    def cancel_all(self, symbol: Optional[str] = None) -> int:
-        sym = self._resolve_symbol(symbol) if symbol else None
-        count = 0
-        if self.simulation:
-            if sym:
-                count = len(self._sim_open_orders.get(sym, []))
-                self._sim_open_orders[sym] = []
+        if side == "buy":
+            # open or add long
+            cost = price * qty
+            if cost > self._sim_cash_usd + 1e-8:
+                return {"status": "rejected_insufficient_cash"}
+            self._sim_cash_usd -= cost
+            if pos and pos["side"] == "long":
+                new_qty = pos["quantity"] + qty
+                avg = (pos["entry_price"] * pos["quantity"] + price * qty) / max(new_qty, 1e-12)
+                pos.update({
+                    "quantity": new_qty,
+                    "entry_price": avg,
+                    "sl": attach_sl or pos.get("sl"),
+                    "tp": attach_tp or pos.get("tp"),
+                    "ts": time.time(),
+                })
+                status = "open_increased"
             else:
-                for k in list(self._sim_open_orders.keys()):
-                    count += len(self._sim_open_orders[k])
-                    self._sim_open_orders[k] = []
-            return count
+                self._sim_positions[sym] = {
+                    "side": "long",
+                    "quantity": qty,
+                    "entry_price": price,
+                    "sl": attach_sl,
+                    "tp": attach_tp,
+                    "ts": time.time(),
+                }
+                status = "open"
+            return {
+                "status": status,
+                "symbol": sym,
+                "entry_price": price,
+                "quantity": qty,
+            }
 
-        try:
-            orders = self.list_open_orders(sym)
-            for o in orders:
-                oid = o.get("id")
-                if oid:
-                    self._throttle.tick()
-                    self.client.cancel_order(oid, sym)
-                    count += 1
-            return count
-        except Exception as e:
-            logger.error(f"cancel_all failed: {e}", exc_info=True)
-            raise APIError("Failed to cancel orders", context={"symbol": sym})
+        if side == "sell":
+            # reduce/close long if exists
+            if not pos or pos["side"] != "long" or pos["quantity"] <= 1e-12:
+                return {"status": "no_position"}
+            close_qty = min(qty, pos["quantity"])
+            pnl = (price - pos["entry_price"]) * close_qty
+            self._sim_cash_usd += price * close_qty
+            pos["quantity"] -= close_qty
+            if pos["quantity"] <= 1e-12:
+                # full close
+                del self._sim_positions[sym]
+                status = "closed"
+            else:
+                status = "closed_partial"
+            return {
+                "status": status,
+                "symbol": sym,
+                "price": price,
+                "quantity": close_qty,
+                "pnl": float(pnl),
+            }
 
-    async def close(self):
-        return
+        return {"status": "rejected_unknown_side"}
+
+    # Expose internal store for UI/Executor convenience
+    @property
+    def positions(self) -> Dict[str, Dict[str, Any]]:
+        return self._sim_positions
+
+    # ───────────────────────────────
+    # Simple WS (public) for kline push (optional, DataManager owns loop)
+    # We keep endpoints here for reference.
+    # ───────────────────────────────
+
+    @staticmethod
+    def ws_public_endpoint_spot() -> str:
+        if config.USE_TESTNET:
+            return "wss://stream-testnet.bybit.com/v5/public/spot"
+        return "wss://stream.bybit.com/v5/public/spot"
+
+    @staticmethod
+    def ws_kline_topic(interval_min: int, symbol: str) -> str:
+        # Bybit WS v5 spot kline topic format: "kline.<interval>.<symbol>", where interval is minutes ("5", "15")
+        return f"kline.{interval_min}.{normalize_symbol(symbol)}"
