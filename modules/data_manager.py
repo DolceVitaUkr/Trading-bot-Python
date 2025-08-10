@@ -1,16 +1,16 @@
 # modules/data_manager.py
 
 import os
-import time
-import math
+import gzip
+import io
 import logging
-from typing import Optional, List, Tuple
+from typing import Optional, Literal, Dict
 from datetime import datetime, timezone
 
-import ccxt  # REST only (stable cross-platform)
 import pandas as pd
 
 import config
+from modules.exchange import ExchangeAPI
 from utils.utilities import ensure_directory, retry
 
 logger = logging.getLogger(__name__)
@@ -22,237 +22,206 @@ logger.setLevel(getattr(logging, str(getattr(config, "LOG_LEVEL", "INFO")), logg
                 if isinstance(getattr(config, "LOG_LEVEL", "INFO"), str) else getattr(config, "LOG_LEVEL", logging.INFO))
 
 
-# ------------------------------ Helpers ------------------------------ #
+VALID_TIMEFRAMES = ("5m", "15m")
+TF_TO_MS: Dict[str, int] = {"5m": 5 * 60 * 1000, "15m": 15 * 60 * 1000}
 
-def _sanitize_symbol_for_file(symbol: str) -> str:
-    # "BTC/USDT" -> "BTCUSDT"
-    return symbol.replace("/", "").replace("-", "").upper()
-
-
-def _now_ms() -> int:
-    return int(time.time() * 1000)
-
-
-# ------------------------------ DataManager ------------------------------ #
 
 class DataManager:
     """
-    Data access layer for OHLCV and latest price.
+    Handles historical bar storage & incremental updates.
 
-    Design goals:
-      - Keep local CSV per (symbol,timeframe), append incrementally
-      - Never exceed `max_bars` rows (default 900)
-      - Use Bybit via CCXT REST (stable on Windows)
-      - Avoid gigabyte downloads (only fetch missing tail)
-      - Filenames use slashless symbols: BTCUSDT_5m.csv
-
-    File schema:
-      index: pandas datetime (UTC)
-      columns: ["open","high","low","close","volume"]
+    - Supports ONLY 5m and 15m.
+    - Stores CSV.gz per symbol/timeframe under HISTORICAL_DATA_PATH/<timeframe>/<SYMBOL_NO_SLASH>.csv.gz
+    - Always appends *only new* bars (uses since=last_ts+1).
+    - Never requests more than `max_request_limit` (default 900).
+    - Keeps file row-count bounded via `max_rows_keep` (optional ring-buffer behavior).
     """
 
     def __init__(
         self,
-        base_path: str = None,
-        exchange: str = "bybit",
-        use_websocket: bool = False,  # reserved (off in this implementation)
-        spot_market: bool = True,
+        exchange: Optional[ExchangeAPI] = None,
+        data_root: Optional[str] = None,
+        *,
+        max_request_limit: int = 900,
+        max_rows_keep: Optional[int] = None,  # e.g., 50_000 to cap file size; None = unlimited
     ):
-        self.base_path = base_path or getattr(config, "HISTORICAL_DATA_PATH", "historical_data")
-        ensure_directory(self.base_path)
+        self.exchange = exchange or ExchangeAPI()
+        self.data_root = data_root or getattr(config, "HISTORICAL_DATA_PATH", "historical_data")
+        self.max_request_limit = max(1, min(int(max_request_limit), 900))
+        self.max_rows_keep = max_rows_keep
 
-        # CCXT exchange (Bybit)
-        self.exchange_id = exchange.lower()
-        self.use_websocket = use_websocket and False  # no WS client here; REST-only by design
-        self.spot_market = spot_market
+        ensure_directory(self.data_root)
 
-        self.ccxt = self._build_ccxt_client()
-        self._timeframe_limits = {
-            "1m": 1000, "3m": 1000, "5m": 1000, "15m": 1000, "30m": 1000,
-            "1h": 1000, "4h": 1000, "1d": 1000
-        }
+    # ─────────────────────────────
+    # Public API
+    # ─────────────────────────────
 
-    def _build_ccxt_client(self):
-        cls = getattr(ccxt, self.exchange_id)
-        # Use testnet keys if simulation, else live keys
-        if config.USE_SIMULATION:
-            api_key = getattr(config, "SIMULATION_BYBIT_API_KEY", None)
-            secret = getattr(config, "SIMULATION_BYBIT_API_SECRET", None)
-            testnet = True
-        else:
-            api_key = getattr(config, "BYBIT_API_KEY", None)
-            secret = getattr(config, "BYBIT_API_SECRET", None)
-            testnet = False
-
-        params = {"enableRateLimit": True}
-        inst = cls({
-            "apiKey": api_key,
-            "secret": secret,
-            "enableRateLimit": True,
-            "options": {
-                "defaultType": "spot" if self.spot_market else "swap",
-            },
-        })
-        # Bybit testnet host (ccxt auto-handles in most versions; keep param for clarity)
-        if hasattr(inst, "urls") and "api" in inst.urls and testnet:
-            try:
-                inst.urls["api"]["public"] = inst.urls["test"]["public"]
-                inst.urls["api"]["private"] = inst.urls["test"]["private"]
-            except Exception:
-                pass
-        return inst
-
-    # ------------------------------ Public API ------------------------------ #
-
-    @retry(max_attempts=3, delay=1.0, backoff=2.0)
-    def get_latest_price(self, symbol: str) -> Optional[float]:
-        """Lightweight last price."""
-        sym = self.ccxt.market(symbol)["symbol"]
-        t = self.ccxt.fetch_ticker(sym)
-        p = t.get("last") or t.get("close")
-        return float(p) if p is not None else None
-
-    def _csv_path(self, symbol: str, timeframe: str) -> str:
-        name = f"{_sanitize_symbol_for_file(symbol)}_{timeframe}.csv"
-        return os.path.join(self.base_path, name)
-
-    def _read_local_csv(self, path: str) -> pd.DataFrame:
-        if not os.path.exists(path):
-            return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
-        try:
-            df = pd.read_csv(path, index_col=0, parse_dates=True)
-            # enforce columns and dtypes
-            for c in ["open", "high", "low", "close", "volume"]:
-                if c not in df.columns:
-                    df[c] = float("nan")
-            df = df[["open", "high", "low", "close", "volume"]]
-            df.index = pd.to_datetime(df.index, utc=True)
-            return df
-        except Exception as e:
-            logger.warning(f"Failed reading {path}: {e} (recreating)")
-            return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
-
-    def _write_local_csv(self, path: str, df: pd.DataFrame) -> None:
-        ensure_directory(os.path.dirname(path))
-        df.to_csv(path, index=True)
-
-    @retry(max_attempts=3, delay=1.0, backoff=2.0)
-    def _fetch_ohlcv(
-        self,
-        symbol: str,
-        timeframe: str,
-        since_ms: Optional[int],
-        limit: int,
-    ) -> List[List[float]]:
-        """Wrapper around ccxt.fetch_ohlcv."""
-        sym = self.ccxt.market(symbol)["symbol"]
-        # NOTE: Bybit supports since + limit for many timeframes; limit <= 1000
-        bars = self.ccxt.fetch_ohlcv(sym, timeframe=timeframe, since=since_ms, limit=limit)
-        return bars or []
-
-    def _bars_to_df(self, bars: List[List[float]]) -> pd.DataFrame:
-        if not bars:
-            return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
-        df = pd.DataFrame(bars, columns=["timestamp", "open", "high", "low", "close", "volume"])
-        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
-        df.set_index("timestamp", inplace=True)
-        df = df.astype({
-            "open": "float64",
-            "high": "float64",
-            "low": "float64",
-            "close": "float64",
-            "volume": "float64",
-        })
-        return df
-
-    def _timeframe_ms(self, timeframe: str) -> int:
-        # minimal set we use (5m, 15m)
-        mapping = {
-            "1m": 60_000,
-            "3m": 180_000,
-            "5m": 300_000,
-            "15m": 900_000,
-            "30m": 1_800_000,
-            "1h": 3_600_000,
-            "4h": 14_400_000,
-            "1d": 86_400_000,
-        }
-        if timeframe not in mapping:
-            raise ValueError(f"Unsupported timeframe: {timeframe}")
-        return mapping[timeframe]
-
-    def _trim_tail(self, df: pd.DataFrame, max_bars: int) -> pd.DataFrame:
-        if len(df) <= max_bars:
-            return df
-        return df.iloc[-max_bars:].copy()
-
-    def _calc_next_since(self, df: pd.DataFrame, timeframe: str) -> int:
-        """Return 'since' (ms) for the next REST call so we only get new bars."""
-        if df.empty:
-            # roughly ~900 bars back to fill the file initially
-            return _now_ms() - (self._timeframe_ms(timeframe) * 900)
-        last_ts_ms = int(df.index[-1].timestamp() * 1000)
-        # ask from the next bar
-        return last_ts_ms + self._timeframe_ms(timeframe)
-
-    # ------------------------------ Main entry ------------------------------ #
+    def storage_path(self, symbol: str, timeframe: Literal["5m", "15m"]) -> str:
+        self._assert_tf(timeframe)
+        sym_noslash = self._noslash(symbol)
+        folder = os.path.join(self.data_root, timeframe)
+        ensure_directory(folder)
+        return os.path.join(folder, f"{sym_noslash}.csv.gz")
 
     def load_historical_data(
         self,
         symbol: str,
-        timeframe: str = "5m",
+        timeframe: Literal["5m", "15m"],
         *,
-        max_bars: int = 900,
-        append_increment: int = 5,
+        auto_update: bool = True
     ) -> pd.DataFrame:
         """
-        Return a DataFrame of up to `max_bars` bars, saving latest to disk.
-        Only fetch up to `append_increment` NEW bars from REST (default 5).
+        Load bars from local storage; optionally fetch & append fresh bars first.
+        Returns columns: [timestamp, open, high, low, close, volume], index = pandas.DatetimeIndex (UTC)
         """
-        path = self._csv_path(symbol, timeframe)
-        local = self._read_local_csv(path)
+        self._assert_tf(timeframe)
+        if auto_update:
+            try:
+                self.update_bars(symbol, timeframe)
+            except Exception as e:
+                logger.warning(f"update_bars failed for {symbol} {timeframe}: {e}")
 
-        # Compute the REST request window
-        since = self._calc_next_since(local, timeframe)
-        # Bybit allows up to 1000; keep it small to avoid overfetch
-        limit_cap = self._timeframe_limits.get(timeframe, 1000)
-        limit = max(1, min(append_increment, limit_cap))
+        path = self.storage_path(symbol, timeframe)
+        if not os.path.exists(path):
+            # ensure empty frame with expected columns
+            return self._empty_df()
 
-        # Fetch new tail
         try:
-            new_bars = self._fetch_ohlcv(symbol, timeframe, since_ms=since, limit=limit)
+            with gzip.open(path, "rt", encoding="utf-8") as f:
+                df = pd.read_csv(f)
+            return self._normalize_df(df)
         except Exception as e:
-            logger.warning(f"fetch_ohlcv failed for {symbol} {timeframe}: {e}")
-            new_bars = []
+            logger.error(f"Failed reading {path}: {e}")
+            return self._empty_df()
 
-        if new_bars:
-            df_new = self._bars_to_df(new_bars)
-            # Sometimes the newest bar can overlap (re-run); concat+drop dup
-            combined = pd.concat([local, df_new])
-            combined = combined[~combined.index.duplicated(keep="last")]
-            combined.sort_index(inplace=True)
-            combined = self._trim_tail(combined, max_bars=max_bars)
-            self._write_local_csv(path, combined)
-            return combined
-
-        # No new bars => return local (trimmed) as-is
-        local = self._trim_tail(local, max_bars=max_bars)
-        if not local.empty:
-            # write back trimmed copy to keep file from growing
-            self._write_local_csv(path, local)
-        return local
-
-    # Convenience bulk method for 5m + 15m
-    def load_dual_timeframe(
+    @retry(max_attempts=3, delay=1.0, backoff=2.0)
+    def update_bars(
         self,
         symbol: str,
-        tf_entry: str = "5m",
-        tf_setup: str = "15m",
+        timeframe: Literal["5m", "15m"],
         *,
-        max_bars_entry: int = 900,
-        max_bars_setup: int = 900,
-        append_increment: int = 5,
-    ) -> Tuple[pd.DataFrame, pd.DataFrame]:
-        df_entry = self.load_historical_data(symbol, tf_entry, max_bars=max_bars_entry, append_increment=append_increment)
-        df_setup = self.load_historical_data(symbol, tf_setup, max_bars=max_bars_setup, append_increment=append_increment)
-        return df_entry, df_setup
+        bootstrap_candles: int = 600,  # first-time pull size (kept < 900)
+    ) -> int:
+        """
+        Append only new bars for the symbol/timeframe.
+        Returns number of bars appended.
+        """
+        self._assert_tf(timeframe)
+        path = self.storage_path(symbol, timeframe)
+        tf_ms = TF_TO_MS[timeframe]
+
+        # Load current
+        if os.path.exists(path):
+            with gzip.open(path, "rt", encoding="utf-8") as f:
+                existing = pd.read_csv(f)
+            existing = self._normalize_df(existing)
+            last_ts = int(existing["timestamp"].iloc[-1]) if len(existing) else None
+        else:
+            existing = self._empty_df()
+            last_ts = None
+
+        # Determine since
+        if last_ts is None:
+            # Bootstrap a chunk; keep well under 900
+            limit = min(self.max_request_limit, max(200, bootstrap_candles))
+            since = None
+        else:
+            # Ask for the NEXT candle after the last saved (plus 1 ms to be safe)
+            since = last_ts + 1
+            limit = min(self.max_request_limit, 300)
+
+        new_rows = self._fetch_ohlcv(symbol, timeframe, since=since, limit=limit)
+        if new_rows is None or len(new_rows) == 0:
+            return 0
+
+        new_df = pd.DataFrame(
+            new_rows,
+            columns=["timestamp", "open", "high", "low", "close", "volume"],
+        )
+        # drop any duplicates or overlaps
+        if len(existing):
+            new_df = new_df[new_df["timestamp"] > existing["timestamp"].iloc[-1]]
+
+        if len(new_df) == 0:
+            return 0
+
+        # Ensure candle alignment to timeframe boundary
+        new_df = new_df[new_df["timestamp"] % tf_ms == 0]
+
+        # Append & cap
+        out = pd.concat([existing, new_df], ignore_index=True)
+
+        if self.max_rows_keep and len(out) > self.max_rows_keep:
+            out = out.iloc[-self.max_rows_keep :].reset_index(drop=True)
+
+        self._write_gz_csv(path, out)
+        return len(new_df)
+
+    # ─────────────────────────────
+    # Internals
+    # ─────────────────────────────
+
+    def _fetch_ohlcv(
+        self,
+        symbol: str,
+        timeframe: Literal["5m", "15m"],
+        *,
+        since: Optional[int],
+        limit: int,
+    ):
+        """
+        Fetch bars from exchange (ccxt under the hood via ExchangeAPI).
+        The ExchangeAPI resolves symbol mapping for Bybit automatically.
+        """
+        try:
+            # ExchangeAPI already handles spot/perp symbol normalization.
+            # We cap limit further to be safe.
+            limit = min(int(limit), self.max_request_limit)
+            if limit <= 0:
+                return []
+
+            rows = self.exchange.fetch_ohlcv(symbol, timeframe=timeframe, since=since, limit=limit)
+            # Expect ccxt format: [timestamp, open, high, low, close, volume]
+            return rows or []
+        except Exception as e:
+            logger.warning(f"_fetch_ohlcv error {symbol} {timeframe}: {e}")
+            return []
+
+    def _write_gz_csv(self, path: str, df: pd.DataFrame) -> None:
+        # Always write UTF-8 csv.gz atomically
+        tmp = f"{path}.tmp"
+        csv_bytes = df.to_csv(index=False).encode("utf-8")
+        with gzip.open(tmp, "wb") as f:
+            f.write(csv_bytes)
+        os.replace(tmp, path)
+
+    def _normalize_df(self, df: pd.DataFrame) -> pd.DataFrame:
+        if df is None or df.empty:
+            return self._empty_df()
+        cols = ["timestamp", "open", "high", "low", "close", "volume"]
+        df = df.loc[:, cols].copy()
+        # enforce int timestamp
+        df["timestamp"] = df["timestamp"].astype("int64")
+        # ensure sorted unique
+        df = df.sort_values("timestamp").drop_duplicates("timestamp").reset_index(drop=True)
+        # attach UTC index for plotting/convenience (optional)
+        try:
+            df.index = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
+        except Exception:
+            pass
+        return df
+
+    def _empty_df(self) -> pd.DataFrame:
+        df = pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
+        try:
+            df.index = pd.to_datetime([], utc=True)
+        except Exception:
+            pass
+        return df
+
+    def _assert_tf(self, timeframe: str) -> None:
+        if timeframe not in VALID_TIMEFRAMES:
+            raise ValueError(f"timeframe must be one of {VALID_TIMEFRAMES}, got '{timeframe}'")
+
+    def _noslash(self, symbol: str) -> str:
+        return symbol.replace("/", "").replace(":", "")
