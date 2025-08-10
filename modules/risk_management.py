@@ -8,12 +8,7 @@ import config
 from modules.error_handler import RiskViolationError
 
 logger = logging.getLogger(__name__)
-if not logger.handlers:
-    h = logging.StreamHandler()
-    h.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
-    logger.addHandler(h)
-logger.setLevel(getattr(logging, str(getattr(config, "LOG_LEVEL", "INFO")), logging.INFO)
-                if isinstance(getattr(config, "LOG_LEVEL", "INFO"), str) else getattr(config, "LOG_LEVEL", logging.INFO))
+logger.addHandler(logging.NullHandler())
 
 
 @dataclass
@@ -62,39 +57,38 @@ class RiskManager:
         self.account_balance = float(account_balance)
 
         # Pull defaults from config if not provided
+        # Choose caps by domain profile
+        profile = getattr(config, "EXCHANGE_PROFILE", "spot")
+        caps = getattr(config, "RISK_CAPS", {}).get(
+            "perp" if profile == "perp" else "crypto_spot",
+            {"per_pair_pct": 0.15, "portfolio_concurrent_pct": 0.30},
+        )
+
         self.max_drawdown_limit = (
             max_drawdown_limit
             if max_drawdown_limit is not None
             else getattr(config, "KPI_TARGETS", {}).get("max_drawdown", 0.15)
         )
-
-        # Risk caps by domain/profile
-        # Prefer EXCHANGE_PROFILE + domain override in RISK_CAPS
-        profile = getattr(config, "EXCHANGE_PROFILE", "spot")
-        risk_caps = getattr(config, "RISK_CAPS", {})
-        caps_key = "crypto_spot" if profile == "spot" else "perp" if profile == "perp" else "crypto_spot"
-        caps = risk_caps.get(caps_key, {"per_pair_pct": 0.15, "portfolio_concurrent_pct": 0.30})
-
         self.per_pair_cap_pct = (
             per_pair_cap_pct
             if per_pair_cap_pct is not None
-            else float(caps.get("per_pair_pct", 0.15))
+            else caps.get("per_pair_pct", 0.15)
         )
         self.portfolio_cap_pct = (
             portfolio_cap_pct
             if portfolio_cap_pct is not None
-            else float(caps.get("portfolio_concurrent_pct", 0.30))
+            else caps.get("portfolio_concurrent_pct", 0.30)
         )
         self.base_risk_per_trade_pct = (
             base_risk_per_trade_pct
             if base_risk_per_trade_pct is not None
-            else float(getattr(config, "TRADE_SIZE_PERCENT", 0.05))
+            else getattr(config, "TRADE_SIZE_PERCENT", 0.05)
         )
 
         # Behavior knobs
-        self.min_rr = float(min_rr)
-        self.atr_mult_sl = float(atr_mult_sl)
-        self.atr_mult_tp = float(atr_mult_tp)
+        self.min_rr = min_rr
+        self.atr_mult_sl = atr_mult_sl
+        self.atr_mult_tp = atr_mult_tp
 
         # State
         self.open_positions: Dict[str, PositionRisk] = {}
@@ -102,11 +96,9 @@ class RiskManager:
         self.current_equity = self.account_balance
 
         # Hard guardrails from config
-        self.min_trade_usd = float(getattr(config, "MIN_TRADE_AMOUNT_USD", 10.0))
-        self.max_leverage = int(getattr(config, "MAX_LEVERAGE", 3))  # conservative default
-        fee_model = getattr(config, "FEE_MODEL", {}).get("bybit", {}).get("spot", {})
-        # use taker fee for safety
-        self.fee_rate = float(fee_model.get("taker", getattr(config, "FEE_PERCENTAGE", 0.002)))
+        self.min_trade_usd = getattr(config, "MIN_TRADE_AMOUNT_USD", 10.0)
+        self.max_leverage = getattr(config, "MAX_LEVERAGE", 3)
+        self.fee_rate = getattr(config, "FEE_PERCENTAGE", 0.002)
 
     # ────────────────────────────────────────────────────────────────────────────
     # Equity / Drawdown
@@ -227,7 +219,7 @@ class RiskManager:
             )
 
         # If ATR is given, re-derive SL/TP to align with volatility bands
-        if atr is not None:
+        if atr is not None and atr > 0:
             sl, tp = self.compute_sl_tp_from_atr(side, entry_price, atr, rr_final)
             # Never set SL beyond the proposed stop_price (i.e., never more risk)
             if side == "long":
@@ -293,7 +285,7 @@ class RiskManager:
             if one_r > 0 and advance >= one_r:
                 new_sl = max(new_sl, p.entry_price)  # never below entry
             # ATR trail
-            if atr is not None:
+            if atr is not None and atr > 0:
                 trail = current_price - self.atr_mult_sl * atr
                 new_sl = max(new_sl, trail)
         else:
@@ -301,7 +293,7 @@ class RiskManager:
             one_r = abs(p.stop_loss - p.entry_price)
             if one_r > 0 and advance >= one_r:
                 new_sl = min(new_sl, p.entry_price)  # never above entry for shorts
-            if atr is not None:
+            if atr is not None and atr > 0:
                 trail = current_price + self.atr_mult_sl * atr
                 new_sl = min(new_sl, trail)
 
