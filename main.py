@@ -48,14 +48,6 @@ def run_bot(args: argparse.Namespace) -> int:
     # Exchange + Data
     exchange = ExchangeAPI()
     notifier = TelegramNotifier(disable_async=not config.ASYNC_TELEGRAM)
-    dm = DataManager(
-        exchange=exchange,
-        data_path=config.HISTORICAL_DATA_PATH,
-        max_bars_per_fetch=900,
-        ws_enabled=True,         # Live WS feed for 5m/15m
-        rest_backfill=True,      # REST to backfill gaps
-        prefer_intervals=["5m", "15m"],
-    )
 
     # Wallets
     starting_balance = float(config.SIMULATION_START_BALANCE)
@@ -222,5 +214,6 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
 
 if __name__ == "__main__":
     sys.exit(run_bot(parse_args()))
+
 
 
