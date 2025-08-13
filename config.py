@@ -27,11 +27,11 @@ LOG_FILE = os.getenv("LOG_FILE", "bot.log")
 # ───────────────────────────────────────────────
 # API Keys
 # ───────────────────────────────────────────────
-BYBIT_API_KEY = os.getenv("BYBIT_API_KEY", "I2CQH3mXhPLIuWtS2W")
-BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET", "YmV6jkihwZDTFyIaiOarho1tzRr2QZ9xuNBv")
+BYBIT_API_KEY = os.getenv("BYBIT_API_KEY", "TujcvO0Luboj8ET0tp")
+BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET", "0oT2ENYllETn3sKXx0m42LvWG8zWnEqhN72k")
 
-SIMULATION_BYBIT_API_KEY = os.getenv("SIMULATION_BYBIT_API_KEY", "I2CQH3mXhPLIuWtS2W")
-SIMULATION_BYBIT_API_SECRET = os.getenv("SIMULATION_BYBIT_API_SECRET", "YmV6jkihwZDTFyIaiOarho1tzRr2QZ9xuNBv")
+SIMULATION_BYBIT_API_KEY = os.getenv("SIMULATION_BYBIT_API_KEY", "TujcvO0Luboj8ET0tp")
+SIMULATION_BYBIT_API_SECRET = os.getenv("SIMULATION_BYBIT_API_SECRET", "0oT2ENYllETn3sKXx0m42LvWG8zWnEqhN72k")
 
 # ───────────────────────────────────────────────
 # Telegram
