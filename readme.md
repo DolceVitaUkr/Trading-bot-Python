@@ -53,10 +53,14 @@ Built for **low-risk, scalable, automated trading** with **live** and **simulati
 │ ├── self_learning.py
 │ ├── trade_simulator.py
 │ ├── telegram_bot.py
-│ ├── ui.py
-│ ├── notification_manager.py
-│ └── utils/
-│ └── utilities.py
+│ └── ui.py
+│
+├── forex/
+│ ├── forex_exchange.py
+│ └── forex_strategy.py
+│
+├── options/
+│ └── options_exchange.py
 │
 ├── telemetry/ # Metrics and reports
 │ ├── metrics_exporter.py
@@ -66,8 +70,14 @@ Built for **low-risk, scalable, automated trading** with **live** and **simulati
 │ ├── runtime_state.py
 │ └── position_reconciler.py
 │
-├── historical_data/ # Stored market data
-├── modules.md # API surface & module contracts
+├── utils/
+│ └── utilities.py
+│
+├── data/
+│ └── historical/ # Stored market data
+│
+├── tests/ # Test suite
+├── MODULES_FILES.MD # API surface & module contracts
 └── README.md
 
 yaml

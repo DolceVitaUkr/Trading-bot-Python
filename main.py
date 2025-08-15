@@ -6,7 +6,6 @@ import sys
 import threading
 import time
 from datetime import datetime, timezone
-from feature/testing-and-analysis
 from typing import Optional, Dict, Any
 
 import config
@@ -17,9 +16,7 @@ from modules.trade_executor import TradeExecutor
 from modules.risk_management import RiskManager
 from modules.self_learning import SelfLearningBot
 from modules.top_pairs import TopPairs
-from modules.tui import TradingUI
-
-
+from modules.ui import TradingUI
 from modules.telegram_bot import TelegramNotifier
 from modules.reward_system import RewardSystem
 from scheduler import JobScheduler
@@ -43,8 +40,6 @@ def build_risk_manager(account_balance: float) -> RiskManager:
     return rm
 
 
-
-
 def run_bot(args: argparse.Namespace, test_mode: bool = False, stop_event: Optional[threading.Event] = None) -> int:
 
     configure_logging(config.LOG_LEVEL, config.LOG_FILE)
@@ -54,7 +49,6 @@ def run_bot(args: argparse.Namespace, test_mode: bool = False, stop_event: Optio
     # Exchange + Data
     exchange = ExchangeAPI()
     exchange.load_markets()
-
 
     notifier = TelegramNotifier(disable_async=not config.ASYNC_TELEGRAM)
 
@@ -69,7 +63,6 @@ def run_bot(args: argparse.Namespace, test_mode: bool = False, stop_event: Optio
     # Risk
     risk_manager = build_risk_manager(starting_balance)
 
-
     # Data Manager
     dm = DataManager(exchange=exchange.client)
 
@@ -78,17 +71,9 @@ def run_bot(args: argparse.Namespace, test_mode: bool = False, stop_event: Optio
         exchange=exchange,
         quote="USDT",
         max_pairs=config.MAX_SIMULATION_PAIRS,
-
-    )
-
-    # Data Manager
-    dm = DataManager(exchange=exchange)
-
         ttl_sec=60 * 60,   # re-scan hourly
         min_volume_usd_24h=5_000_000,
     )
-
-
 
     # Reward system
     reward = RewardSystem()
@@ -160,13 +145,12 @@ def run_bot(args: argparse.Namespace, test_mode: bool = False, stop_event: Optio
 
     scheduler.every(minutes=60, name="hourly_top_pairs", func=refresh_pairs_job)
 
-
     # 2) 15m setup scan (secondary timeframe)
     def fifteen_scan_job():
         try:
             symbols = getattr(bot, "top_symbols", None) or [config.DEFAULT_SYMBOL]
             for sym in symbols:
-                dm.ensure_backfill(sym, "15m", bars=300)  # light backfill
+                dm.load_historical_data(sym, "15m", backfill_bars=300)  # light backfill
                 # You can add setup-detection hooks here if needed
         except Exception as e:
             ui.log(f"15m scan error: {e}", level="ERROR")
@@ -174,7 +158,6 @@ def run_bot(args: argparse.Namespace, test_mode: bool = False, stop_event: Optio
     scheduler.every(minutes=15, name="scan_15m_setup", func=fifteen_scan_job)
 
     # 3) Heartbeat → UI metrics
-
     def heartbeat_job():
         try:
             # live balance (if we had real, keep sim for now)
@@ -185,7 +168,7 @@ def run_bot(args: argparse.Namespace, test_mode: bool = False, stop_event: Optio
             ui.update_live_metrics({
                 "balance": live_balance,
                 "equity": portfolio_val,
-                "symbol": bot.default_symbol or config.DEFAULT_SYMBOL,
+                "symbol": bot.symbol or config.DEFAULT_SYMBOL,
                 "timeframe": bot.timeframe,
             })
             ui.update_timeseries(wallet=live_balance, vwallet=portfolio_val, points=reward_pts)
@@ -198,19 +181,14 @@ def run_bot(args: argparse.Namespace, test_mode: bool = False, stop_event: Optio
     scheduler_thread = threading.Thread(target=scheduler.run_forever, daemon=True)
     scheduler_thread.start()
 
-    
     # Agent background loop (5m tick loop, sim execution, live data)
     def agent_loop():
-        last_step = 0.0
         while not (stop_event and stop_event.is_set()):
-=======
-        while True:
-
             try:
                 symbols = getattr(bot, "top_symbols", None) or [config.DEFAULT_SYMBOL]
                 for sym in symbols:
                     # Keep data fresh & light: append-only small pulls
-                    dm.pull_incremental(sym, "5m", max_new_bars=5)  # 1–5 bars each call
+                    dm.load_historical_data(sym, "5m", incremental=True)
                     # Act & learn using the latest state (sim execution)
                     bot.act_and_learn(sym, timestamp=datetime.now(timezone.utc))
                 # Pace loop
@@ -218,19 +196,11 @@ def run_bot(args: argparse.Namespace, test_mode: bool = False, stop_event: Optio
 
                 if test_mode:
                     break # Run only once in test mode
-=======
-
             except Exception as e:
                 logging.getLogger("main").exception(f"agent_loop error: {e}")
                 time.sleep(5)
 
-
-    agent_thread = threading.Thread(target=agent_loop, daemon=True)
-    agent_thread.start()
-
-=======
     threading.Thread(target=agent_loop, daemon=True).start()
-
 
     # Initial top pairs warmup
     try:
@@ -240,11 +210,7 @@ def run_bot(args: argparse.Namespace, test_mode: bool = False, stop_event: Optio
 
     if not test_mode:
         # Start UI (blocking)
-        ui.run()
-
-=======
-    # Start UI (blocking)
-    ui.run_ui()
+        ui.run_ui()
 
     return 0
 

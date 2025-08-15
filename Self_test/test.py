@@ -56,7 +56,6 @@ def main():
 
     # 4) Exchange & TradeExecutor (simulation-friendly)
     try:
-        from modules.trade_executor import TradeExecutor
         execu = TradeExecutor(simulation_mode=True)
         bal0 = execu.get_balance()
         # Use BTC/USDT by default; price fetch falls back to 0 only in extreme cases
@@ -86,7 +85,6 @@ def main():
     # 6) Health monitor quick spin
     try:
         from modules.health_monitor import HealthMonitor
-        from modules.trade_executor import TradeExecutor
 
         execu = TradeExecutor(simulation_mode=True)
 
