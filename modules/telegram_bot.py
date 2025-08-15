@@ -2,10 +2,11 @@
 
 import json
 import logging
-from typing import Dict, Any
 
 from telegram import Bot, Update
-from telegram.ext import Updater, CommandHandler, CallbackContext, filters, MessageHandler
+from telegram.ext import (
+    Updater, CommandHandler, CallbackContext, filters, MessageHandler
+)
 
 import config
 
@@ -25,10 +26,20 @@ class TelegramNotifier:
         chat_id: str = config.TELEGRAM_CHAT_ID,
         disable_async: bool = False
     ):
+        """
+        Initializes the TelegramNotifier.
+
+        Args:
+            token: The Telegram bot token.
+            chat_id: The Telegram chat ID to send notifications to.
+            disable_async: Whether to disable asynchronous sending.
+        """
         self.token = token
         self.chat_id = chat_id
         if not self.token or not self.chat_id:
-            logger.warning("[Telegram] bot token or chat ID not set; notifications will be disabled.")
+            logger.warning(
+                "[Telegram] bot token or chat ID not set; "
+                "notifications will be disabled.")
             self.bot = None
             return
 
@@ -36,6 +47,13 @@ class TelegramNotifier:
         self.use_async = not disable_async
 
     def send_message_sync(self, text: str, format: str = "text"):
+        """
+        Sends a message synchronously.
+
+        Args:
+            text: The text of the message to send.
+            format: The format of the message.
+        """
         if not self.bot:
             return
         try:
@@ -47,6 +65,13 @@ class TelegramNotifier:
             logger.error(f"[Telegram] Failed to send sync message: {e}")
 
     async def send_message_async(self, text: str, format: str = "text"):
+        """
+        Sends a message asynchronously.
+
+        Args:
+            text: The text of the message to send.
+            format: The format of the message.
+        """
         if not self.bot:
             return
         try:
@@ -64,6 +89,13 @@ class TelegramBot(TelegramNotifier):
     """
 
     def __init__(self, token: str, chat_id: str):
+        """
+        Initializes the TelegramBot.
+
+        Args:
+            token: The Telegram bot token.
+            chat_id: The Telegram chat ID.
+        """
         super().__init__(token, chat_id)
         if not self.bot:
             return
@@ -71,22 +103,39 @@ class TelegramBot(TelegramNotifier):
         dp = self.updater.dispatcher
         dp.add_handler(CommandHandler("start", self.start))
         dp.add_handler(CommandHandler("help", self.help))
-        dp.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.echo))
+        dp.add_handler(MessageHandler(
+            filters.TEXT & ~filters.COMMAND, self.echo))
         dp.add_error_handler(self.error)
 
     def start(self, update: Update, context: CallbackContext):
+        """
+        Sends a message when the command /start is issued.
+        """
         update.message.reply_text("Bot started! Use /help for commands.")
 
     def help(self, update: Update, context: CallbackContext):
-        update.message.reply_text("Available commands: /start, /help, /status")
+        """
+        Sends a message when the command /help is issued.
+        """
+        update.message.reply_text(
+            "Available commands: /start, /help, /status")
 
     def echo(self, update: Update, context: CallbackContext):
+        """
+        Echo the user message.
+        """
         update.message.reply_text(f"Echo: {update.message.text}")
 
     def error(self, update: Update, context: CallbackContext):
+        """
+        Log Errors caused by Updates.
+        """
         logger.warning(f'Update "{update}" caused error "{context.error}"')
 
     def run(self):
+        """
+        Run the bot.
+        """
         if not self.bot:
             return
         logger.info("Telegram bot is now polling...")

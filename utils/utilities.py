@@ -7,7 +7,8 @@ import logging
 import functools
 import time
 from datetime import datetime, date, timezone
-from typing import Any, Callable, Iterable, Iterator, Tuple, Type, Union, Optional, List
+from typing import (
+    Any, Callable, Iterable, Iterator, Tuple, Type, Union, Optional, List)
 
 
 # ────────────────────────────────────────────────────────────────────────────────
@@ -16,8 +17,7 @@ from typing import Any, Callable, Iterable, Iterator, Tuple, Type, Union, Option
 
 def ensure_directory(path: str) -> None:
     """
-    Create `path` (and any parent dirs) if it doesn’t already exist,
-    handling race conditions safely.
+    Create `path` if it doesn’t already exist.
     """
     try:
         os.makedirs(path, exist_ok=True)
@@ -26,9 +26,10 @@ def ensure_directory(path: str) -> None:
             raise
 
 
-def write_json(path: str, data: Any, atomic: bool = True, indent: int = 2) -> None:
+def write_json(
+        path: str, data: Any, atomic: bool = True, indent: int = 2) -> None:
     """
-    Safely write JSON to disk. If `atomic=True`, writes to a temp file then os.replace().
+    Safely write JSON to disk.
     """
     ensure_directory(os.path.dirname(path) or ".")
     payload = json.dumps(data, indent=indent, ensure_ascii=False)
@@ -69,14 +70,13 @@ def configure_logging(
     datefmt: str = "%Y-%m-%d %H:%M:%S"
 ) -> None:
     """
-    Configure the root logger. Adds a StreamHandler always, and a FileHandler
-    if `log_file` is provided. Avoids duplicate handlers when called multiple times.
+    Configure the root logger.
     """
     root = logging.getLogger()
-    lvl = level if isinstance(level, int) else getattr(logging, str(level).upper(), logging.INFO)
+    lvl = level if isinstance(
+        level, int) else getattr(logging, str(level).upper(), logging.INFO)
     root.setLevel(lvl)
 
-    # Helper to check if a handler of a given type/path exists
     def _has_handler(predicate: Callable[[logging.Handler], bool]) -> bool:
         return any(predicate(h) for h in root.handlers)
 
@@ -85,7 +85,9 @@ def configure_logging(
         sh.setFormatter(logging.Formatter(fmt=fmt, datefmt=datefmt))
         root.addHandler(sh)
 
-    if log_file and not _has_handler(lambda h: isinstance(h, logging.FileHandler) and getattr(h, 'baseFilename', None) == os.path.abspath(log_file)):
+    if log_file and not _has_handler(
+            lambda h: isinstance(h, logging.FileHandler) and
+            getattr(h, 'baseFilename', None) == os.path.abspath(log_file)):
         ensure_directory(os.path.dirname(log_file) or ".")
         fh = logging.FileHandler(log_file)
         fh.setFormatter(logging.Formatter(fmt=fmt, datefmt=datefmt))
@@ -103,16 +105,14 @@ def utc_now() -> datetime:
 
 def format_timestamp(ts: Union[int, float, datetime, date]) -> str:
     """
-    Turn a UNIX timestamp (seconds or ms), datetime or date into a UTC ISO-8601 string.
+    Turn a timestamp into a UTC ISO-8601 string.
     """
     if isinstance(ts, (int, float)):
-        # assume ms if >1e12
         secs = ts / 1000 if ts > 1e12 else ts
-        dt = datetime.utcfromtimestamp(secs).replace(tzinfo=timezone.utc)
+        dt = datetime.fromtimestamp(secs, tz=timezone.utc)
     elif isinstance(ts, date) and not isinstance(ts, datetime):
         dt = datetime.combine(ts, datetime.min.time(), tzinfo=timezone.utc)
     elif isinstance(ts, datetime):
-        # ensure aware UTC
         dt = ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
     else:
         raise TypeError(f"Cannot format timestamp of type {type(ts)}")
@@ -131,8 +131,7 @@ def retry(
     logger: Optional[logging.Logger] = None,
 ) -> Callable:
     """
-    Decorator to retry a function up to `max_attempts` times on the given
-    exception types, waiting `delay` seconds (then `delay*backoff`, etc.).
+    Decorator to retry a function up to `max_attempts` times.
     """
     log = logger or logging.getLogger(__name__)
 
@@ -146,13 +145,15 @@ def retry(
                     return fn(*args, **kwargs)
                 except exceptions as e:
                     last_exc = e
-                    log.warning(f"[retry] {fn.__name__} failed ({attempt}/{max_attempts}): {e}")
+                    log.warning(
+                        f"[retry] {fn.__name__} failed "
+                        f"({attempt}/{max_attempts}): {e}")
                     if attempt >= max_attempts:
-                        log.error(f"[retry] Exhausted attempts for {fn.__name__}")
+                        log.error(
+                            f"[retry] Exhausted attempts for {fn.__name__}")
                         raise
                     time.sleep(d)
                     d *= backoff
-            # Should never reach here
             raise last_exc  # type: ignore[misc]
         return wrapper
     return decorator
@@ -169,7 +170,7 @@ def clamp(value: float, min_value: float, max_value: float) -> float:
 
 def chunked(iterable: Iterable[Any], n: int) -> Iterator[List[Any]]:
     """
-    Yield lists of size n from an iterable. Last chunk may be shorter.
+    Yield lists of size n from an iterable.
     """
     chunk: List[Any] = []
     for item in iterable:

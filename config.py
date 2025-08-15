@@ -28,17 +28,22 @@ LOG_FILE = os.getenv("LOG_FILE", "bot.log")
 # API Keys
 # ───────────────────────────────────────────────
 BYBIT_API_KEY = os.getenv("BYBIT_API_KEY", "TujcvO0Luboj8ET0tp")
-BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET", "0oT2ENYllETn3sKXx0m42LvWG8zWnEqhN72k")
+BYBIT_API_SECRET = os.getenv(
+    "BYBIT_API_SECRET", "0oT2ENYllETn3sKXx0m42LvWG8zWnEqhN72k")
 
-SIMULATION_BYBIT_API_KEY = os.getenv("SIMULATION_BYBIT_API_KEY", "TujcvO0Luboj8ET0tp")
-SIMULATION_BYBIT_API_SECRET = os.getenv("SIMULATION_BYBIT_API_SECRET", "0oT2ENYllETn3sKXx0m42LvWG8zWnEqhN72k")
+SIMULATION_BYBIT_API_KEY = os.getenv(
+    "SIMULATION_BYBIT_API_KEY", "TujcvO0Luboj8ET0tp")
+SIMULATION_BYBIT_API_SECRET = os.getenv(
+    "SIMULATION_BYBIT_API_SECRET", "0oT2ENYllETn3sKXx0m42LvWG8zWnEqhN72k")
 
 # ───────────────────────────────────────────────
 # Telegram
 # ───────────────────────────────────────────────
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "7611295732:AAHazYz46ynfueYthvQXvQRA9bYlxihEf1c")
+TELEGRAM_BOT_TOKEN = os.getenv(
+    "TELEGRAM_BOT_TOKEN", "7611295732:AAHazYz46ynfueYthvQXvQRA9bYlxihEf1c")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "380533508")
-ASYNC_TELEGRAM = os.getenv("ASYNC_TELEGRAM", "true").lower() in {"1", "true", "yes", "on"}
+ASYNC_TELEGRAM = os.getenv(
+    "ASYNC_TELEGRAM", "true").lower() in {"1", "true", "yes", "on"}
 TELEGRAM_PAPER_RECAP_MIN = int(os.getenv("TELEGRAM_PAPER_RECAP_MIN", "60"))
 TELEGRAM_LIVE_ALERT_LEVEL = os.getenv("TELEGRAM_LIVE_ALERT_LEVEL", "normal")
 TELEGRAM_HEARTBEAT_MIN = int(os.getenv("TELEGRAM_HEARTBEAT_MIN", "10"))
@@ -55,7 +60,8 @@ SIMULATION_ORDER_DELAY = float(os.getenv("SIMULATION_ORDER_DELAY", "0.5"))
 # Trading Defaults
 # ───────────────────────────────────────────────
 DEFAULT_SYMBOL = os.getenv("DEFAULT_SYMBOL", "BTCUSDT")
-SIMULATION_START_BALANCE = float(os.getenv("SIMULATION_START_BALANCE", "1000.0"))
+SIMULATION_START_BALANCE = float(
+    os.getenv("SIMULATION_START_BALANCE", "1000.0"))
 TRADE_SIZE_PERCENT = float(os.getenv("TRADE_SIZE_PERCENT", "0.05"))
 MIN_TRADE_AMOUNT_USD = float(os.getenv("MIN_TRADE_AMOUNT_USD", "10.0"))
 FEE_PERCENTAGE = float(os.getenv("FEE_PERCENTAGE", "0.002"))

@@ -10,13 +10,17 @@ import ccxt
 logger = logging.getLogger(__name__)
 if not logger.handlers:
     h = logging.StreamHandler()
-    h.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+    h.setFormatter(
+        logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
     logger.addHandler(h)
 logger.setLevel(logging.INFO)
 
 
 @dataclass
 class PairStats:
+    """
+    Represents statistics for a trading pair.
+    """
     symbol: str
     base: str
     quote: str
@@ -42,9 +46,12 @@ class TopPairs:
         *,
         quote: str = "USDT",
         min_volume_usd_24h: float = 200_000,  # tune as you like
-        ttl_sec: int = 60 * 60,               # refresh every 60 minutes by default
+        ttl_sec: int = 60 * 60,               # refresh every 60 minutes
         max_pairs: int = 15
     ):
+        """
+        Initializes the TopPairs instance.
+        """
         self.exchange = exchange or ccxt.bybit({"enableRateLimit": True})
         self.quote = quote.upper()
         self.min_volume_usd_24h = float(min_volume_usd_24h)
@@ -74,7 +81,8 @@ class TopPairs:
         bid = t.get("bid")
         last = t.get("last") or (ask if ask else bid)
         # Some markets report only baseVolume; try to estimate quoteVol
-        if (not quote_vol or quote_vol == 0.0) and last and t.get("baseVolume"):
+        if (not quote_vol or quote_vol == 0.0) and last and t.get(
+                "baseVolume"):
             quote_vol = float(t["baseVolume"]) * float(last)
 
         # Use 24h change if present, else compute from open/last
@@ -89,7 +97,9 @@ class TopPairs:
         base = mkt.get("base")
         quote = mkt.get("quote")
 
-        vol_usd = float(quote_vol) if (quote and quote.upper() == "USDT") else float(quote_vol)
+        vol_usd = float(
+            quote_vol) if (quote and quote.upper() == "USDT") else float(
+            quote_vol)
 
         return PairStats(
             symbol=symbol,
@@ -105,9 +115,12 @@ class TopPairs:
         try:
             mkts = self._spot_markets()
             # Filter to preferred quote
-            spot_symbols = [s for s, m in mkts.items() if m.get("quote", "").upper() == self.quote]
+            spot_symbols = [
+                s for s, m in mkts.items()
+                if m.get("quote", "").upper() == self.quote]
             if not spot_symbols:
-                logger.warning(f"No active spot symbols with quote={self.quote}")
+                logger.warning(
+                    f"No active spot symbols with quote={self.quote}")
                 self._cache = []
                 self._cache_ts = time.time()
                 return
@@ -122,31 +135,41 @@ class TopPairs:
                 if not ps:
                     continue
                 # Basic sanity gating
-                if ps.volume_usd_24h is None or ps.volume_usd_24h < self.min_volume_usd_24h:
+                if (ps.volume_usd_24h is None or
+                        ps.volume_usd_24h < self.min_volume_usd_24h):
                     continue
                 stats.append(ps)
 
             # Rank primarily by liquidity, then by positive momentum
-            stats.sort(key=lambda x: (x.volume_usd_24h, x.price_change_24h_pct), reverse=True)
+            stats.sort(
+                key=lambda x: (x.volume_usd_24h, x.price_change_24h_pct),
+                reverse=True)
             self._cache = stats[: self.max_pairs]
             self._cache_ts = time.time()
-            logger.info(f"[TopPairs] Cached {len(self._cache)} pairs for quote={self.quote}")
+            logger.info(
+                f"[TopPairs] Cached {len(self._cache)} pairs for "
+                f"quote={self.quote}")
         except Exception as e:
             logger.warning(f"[TopPairs] refresh failed: {e}")
-            # Don’t nuke old cache on transient failures — just update the timestamp to avoid hot loops
+            # Don’t nuke old cache on transient failures
             self._cache_ts = time.time()
 
     def get_top_pairs(self, *, force: bool = False) -> List[str]:
         """
-        Return a list of top symbols like 'BTC/USDT', sorted by liquidity & 24h change.
-        Cached for ttl_sec to keep REST usage low.
+        Return a list of top symbols like 'BTC/USDT'.
         """
-        if force or (time.time() - self._cache_ts) > self.ttl_sec or not self._cache:
+        if force or (
+                time.time() - self._cache_ts) > self.ttl_sec or not self._cache:
             self._refresh_cache()
         return [p.symbol for p in self._cache]
 
-    def get_top_pairs_with_stats(self, *, force: bool = False) -> List[PairStats]:
-        if force or (time.time() - self._cache_ts) > self.ttl_sec or not self._cache:
+    def get_top_pairs_with_stats(
+            self, *, force: bool = False) -> List[PairStats]:
+        """
+        Return a list of top pairs with statistics.
+        """
+        if force or (
+                time.time() - self._cache_ts) > self.ttl_sec or not self._cache:
             self._refresh_cache()
         return list(self._cache)
 

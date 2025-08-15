@@ -17,29 +17,45 @@ class _Job:
 class JobScheduler:
     """
     Lightweight interval scheduler.
-    - all jobs run in the same thread (this module starts that thread in main.py)
+    - all jobs run in the same thread
     - each job executed sequentially; keep funcs short
     """
 
     def __init__(self):
+        """
+        Initializes the JobScheduler.
+        """
         self._jobs: Dict[str, _Job] = {}
         self._lock = threading.Lock()
         self._running = False
 
-    def every(self, *, seconds: Optional[int] = None, minutes: Optional[int] = None,
-              name: str, func: Callable[[], None]) -> None:
+    def every(self, *,
+              seconds: Optional[int] = None,
+              minutes: Optional[int] = None,
+              name: str,
+              func: Callable[[], None]) -> None:
+        """
+        Schedules a new job.
+        """
         if seconds is None and minutes is None:
             raise ValueError("Provide seconds or minutes")
         interval = float(seconds if seconds is not None else minutes * 60)
         now = time.time()
         with self._lock:
-            self._jobs[name] = _Job(name=name, func=func, interval=interval, next_run=now + interval)
+            self._jobs[name] = _Job(
+                name=name, func=func, interval=interval, next_run=now + interval)
 
     def cancel(self, name: str) -> None:
+        """
+        Cancels a job by name.
+        """
         with self._lock:
             self._jobs.pop(name, None)
 
     def run_pending(self) -> None:
+        """
+        Runs all pending jobs.
+        """
         now = time.time()
         due: list[_Job] = []
         with self._lock:
@@ -54,6 +70,9 @@ class JobScheduler:
                     j.next_run = time.time() + j.interval
 
     def run_forever(self, tick: float = 1.0) -> None:
+        """
+        Runs the scheduler forever.
+        """
         self._running = True
         while self._running:
             try:
@@ -64,4 +83,7 @@ class JobScheduler:
             time.sleep(tick)
 
     def stop(self) -> None:
+        """
+        Stops the scheduler.
+        """
         self._running = False

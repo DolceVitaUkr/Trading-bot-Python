@@ -3,14 +3,15 @@
 import threading
 import time
 import logging
-from typing import Callable, Optional, Dict, Any
+from typing import Callable, Optional, Any
 
 from modules.telegram_bot import TelegramNotifier
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:
     _h = logging.StreamHandler()
-    _h.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+    _h.setFormatter(
+        logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
     logger.addHandler(_h)
 logger.setLevel(logging.INFO)
 
@@ -44,7 +45,8 @@ class HealthMonitor:
     Notes
     -----
     - All timers are best-effort, jitter-free simple threads.
-    - No hard dependency on your bot/exchange. Pass a status provider to enrich recaps.
+    - No hard dependency on your bot/exchange.
+      Pass a status provider to enrich recaps.
     """
 
     def __init__(
@@ -57,10 +59,23 @@ class HealthMonitor:
         watchdog_timeout_sec: int = 30 * 60,
         quiet_heartbeat: bool = True,
     ):
+        """
+        Initializes the HealthMonitor.
+
+        Args:
+            notifier: The TelegramNotifier instance to use for sending messages.
+            mode: The mode of the bot, either "paper" or "live".
+            heartbeat_interval_sec: The interval in seconds to send a
+                                    heartbeat message.
+            recap_interval_sec: The interval in seconds to send a recap message.
+            watchdog_timeout_sec: The timeout in seconds for the watchdog.
+            quiet_heartbeat: Whether to send heartbeat messages quietly.
+        """
         self.notifier = notifier
         self.mode = mode
         self.heartbeat_interval_sec = int(heartbeat_interval_sec)
-        self.recap_interval_sec = int(recap_interval_sec) if recap_interval_sec else None
+        self.recap_interval_sec = (int(recap_interval_sec)
+                                   if recap_interval_sec else None)
         self.watchdog_timeout_sec = int(watchdog_timeout_sec)
         self.quiet_heartbeat = bool(quiet_heartbeat)
 
@@ -76,8 +91,11 @@ class HealthMonitor:
 
     def set_status_provider(self, provider: Callable[[], Any]) -> None:
         """
+        Set the status provider function.
+
         provider() -> dict | str
-        If dict, keys used: balance, equity, open_positions (int), last_trade (str), mode (str), symbol (str)
+        If dict, keys used: balance, equity, open_positions (int),
+        last_trade (str), mode (str), symbol (str)
         """
         self._status_provider = provider
 
@@ -87,19 +105,24 @@ class HealthMonitor:
         logger.debug(f"[HealthMonitor] heartbeat from {source}")
 
     def start(self) -> None:
+        """Starts the health monitor threads."""
         if self._t_heartbeat or self._t_watchdog:
             return
         self._stop_event.clear()
-        self._t_heartbeat = threading.Thread(target=self._heartbeat_loop, daemon=True)
-        self._t_watchdog = threading.Thread(target=self._watchdog_loop, daemon=True)
+        self._t_heartbeat = threading.Thread(
+            target=self._heartbeat_loop, daemon=True)
+        self._t_watchdog = threading.Thread(
+            target=self._watchdog_loop, daemon=True)
         self._t_heartbeat.start()
         self._t_watchdog.start()
         if self.recap_interval_sec:
-            self._t_recap = threading.Thread(target=self._recap_loop, daemon=True)
+            self._t_recap = threading.Thread(
+                target=self._recap_loop, daemon=True)
             self._t_recap.start()
         logger.info("HealthMonitor started")
 
     def stop(self) -> None:
+        """Stops the health monitor threads."""
         self._stop_event.set()
         for t in (self._t_heartbeat, self._t_watchdog, self._t_recap):
             if t and t.is_alive():
@@ -110,7 +133,8 @@ class HealthMonitor:
     # ---------------- Internals ---------------- #
 
     def _heartbeat_loop(self):
-        # Send a quiet ping at interval. Include mode + short status if available.
+        # Send a quiet ping at interval.
+        # Include mode + short status if available.
         # Also initialize last heartbeat so watchdog doesn't scream on boot.
         self._last_heartbeat_ts = time.time()
         while not self._stop_event.wait(self.heartbeat_interval_sec):
@@ -134,9 +158,11 @@ class HealthMonitor:
                     continue
                 silence = time.time() - last
                 if silence >= self.watchdog_timeout_sec:
+                    msg = (f"⚠️ No heartbeat in {int(silence)}s "
+                           f"(mode={self.mode}). "
+                           f"Bot may be stalled/offline.")
                     self.notifier.send_message_sync(
-                        {"type": "ALERT", "message": f"⚠️ No heartbeat in {int(silence)}s (mode={self.mode}). "
-                                                     f'Bot may be stalled/offline.'},
+                        {"type": "ALERT", "message": msg},
                         format="alert"
                     )
                     # After alert, push the threshold forward to avoid spamming
@@ -178,13 +204,14 @@ class HealthMonitor:
 
     def _render_recap(self) -> str:
         if not self._status_provider:
-            return f"🧾 <b>{self.mode.upper()} Recap</b>\n(no status provider wired)"
+            return f"🧾 <b>{self.mode.upper()} Recap</b>\n" \
+                   f"(no status provider wired)"
         st = self._status_provider()
         if isinstance(st, dict):
             lines = [
                 f"🧾 <b>{self.mode.upper()} Recap</b>",
-                f"Balance: ${float(st.get('balance', 0.0)) :,.2f}",
-                f"Equity:  ${float(st.get('equity', 0.0))  :,.2f}",
+                f"Balance: ${float(st.get('balance', 0.0)):,.2f}",
+                f"Equity: ${float(st.get('equity', 0.0)):,.2f}",
                 f"Open positions: {int(st.get('open_positions', 0))}",
             ]
             lt = st.get("last_trade")

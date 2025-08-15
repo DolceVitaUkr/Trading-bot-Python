@@ -6,7 +6,8 @@ from modules.telegram_bot import TelegramNotifier
 logger = logging.getLogger(__name__)
 if not logger.handlers:
     h = logging.StreamHandler()
-    h.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+    h.setFormatter(
+        logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
     logger.addHandler(h)
 logger.setLevel(logging.INFO)
 
@@ -26,6 +27,9 @@ class NotificationManager:
         live_alert_level: str = "normal",   # quiet|normal|verbose
         heartbeat_minutes: int = 30,
     ):
+        """
+        Initializes the NotificationManager.
+        """
         self.notifier = notifier or TelegramNotifier(disable_async=False)
         self.paper_recap_minutes = int(paper_recap_minutes)
         self.live_alert_level = str(live_alert_level).lower()
@@ -42,16 +46,24 @@ class NotificationManager:
     # ----- external API (called by bot/executor) -----
 
     def apply_prefs(self, prefs: Dict[str, Any]):
-        self.paper_recap_minutes = int(prefs.get("paper_recap_minutes", self.paper_recap_minutes))
-        self.live_alert_level = str(prefs.get("live_alert_level", self.live_alert_level)).lower()
+        """
+        Applies notification preferences.
+        """
+        self.paper_recap_minutes = int(
+            prefs.get("paper_recap_minutes", self.paper_recap_minutes))
+        self.live_alert_level = str(
+            prefs.get("live_alert_level", self.live_alert_level)).lower()
 
     def update_metrics_snapshot(self, **kwargs):
-        """Store latest metrics (e.g. balance/equity/price/symbol) to show in recaps."""
-        self._snapshot.update({k: v for k, v in kwargs.items() if v is not None})
+        """
+        Store latest metrics to show in recaps.
+        """
+        self._snapshot.update(
+            {k: v for k, v in kwargs.items() if v is not None})
 
     def notify_trade(self, event: Dict[str, Any]):
         """
-        event: {symbol, side, qty, price, status, opened, closed, pnl, return_pct, leverage, meta:{mode:'paper'|'live'}}
+        Notifies of a trade event.
         """
         mode = ((event.get("meta") or {}).get("mode") or "live").lower()
         if mode == "paper":
@@ -60,7 +72,8 @@ class NotificationManager:
         # live
         lvl = self.live_alert_level
         if lvl == "quiet":
-            if event.get("closed") or (event.get("status") in ("closed", "closed_partial")):
+            if event.get("closed") or (
+                    event.get("status") in ("closed", "closed_partial")):
                 self._send(self._fmt_trade(event))
         elif lvl == "normal":
             if event.get("opened") or event.get("closed"):
@@ -69,18 +82,22 @@ class NotificationManager:
             self._send(self._fmt_trade(event))
 
     def notify_status(self, text: str, importance: str = "info"):
+        """
+        Notifies of a status event.
+        """
         if self.live_alert_level == "quiet" and importance == "info":
             return
         self._send(text)
 
     def notify_error(self, text: str):
+        """
+        Notifies of an error event.
+        """
         self._send({"type": "ALERT", "message": text}, fmt="alert")
 
     def tick(self):
         """
-        Call this periodically from your main loop:
-          - sends heartbeat on cadence
-          - flushes paper recap on cadence
+        Call this periodically from your main loop.
         """
         self._heartbeat_maybe()
         self._maybe_flush_paper()
@@ -126,7 +143,8 @@ class NotificationManager:
         snap = self._snapshot
         head = f"📝 Paper Recap ({n} events, {p_count} closed)"
         if snap:
-            head += f" | equity={snap.get('equity','?')} balance={snap.get('balance','?')}"
+            head += (f" | equity={snap.get('equity', '?')} "
+                     f"balance={snap.get('balance', '?')}")
         lines = [head]
         for e in realized[-10:]:
             lines.append(self._line_trade(e))
@@ -138,13 +156,13 @@ class NotificationManager:
         return f"📊 <b>{title}</b>\n" + self._line_trade(e)
 
     def _line_trade(self, e: Dict[str, Any]) -> str:
-        side = str(e.get("side","")).upper()
+        side = str(e.get("side", "")).upper()
         sym = e.get("symbol")
         qty = e.get("qty")
-        px  = e.get("price")
-        st  = e.get("status","")
+        px = e.get("price")
+        st = e.get("status", "")
         pnl = e.get("pnl")
-        rp  = e.get("return_pct")
+        rp = e.get("return_pct")
         parts = [
             f"Pair: <code>{sym}</code>",
             f"Side: <b>{side}</b>",
@@ -160,6 +178,6 @@ class NotificationManager:
 
     def _send(self, content, fmt: str = "text"):
         try:
-            self.notifier.send_message(content, format=fmt)
+            self.notifier.send_message_sync(content, format=fmt)
         except Exception:
             logger.exception("Notification send failed")
