@@ -3,7 +3,7 @@
 import time
 import logging
 from dataclasses import dataclass
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional
 
 import ccxt
 

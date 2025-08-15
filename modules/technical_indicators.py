@@ -116,6 +116,8 @@ def williams_r(high: List[float], low: List[float], close: List[float],
 # ─────────────────────────────
 def atr(high: List[float], low: List[float], close: List[float], period: int = 14) -> Optional[float]:
     """Average True Range (last value, Wilder smoothing)."""
+    if period <= 0:
+        return None
     n = period
     length = len(close)
     if not (high and low and close) or length < n + 1:
