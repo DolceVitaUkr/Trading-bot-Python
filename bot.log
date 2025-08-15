@@ -1,3 +1,0 @@
-2025-08-11 15:05:36 - main - INFO - Booting Self-Learning Trading Bot…
-2025-08-11 15:05:37 - modules.exchange - WARNING - load_markets failed (continuing): bybit {"retCode":10003,"retMsg":"API key is invalid.","result":{},"retExtInfo":{},"time":1754917537065}
-2025-08-11 15:05:39 - modules.exchange - WARNING - load_markets failed (continuing): bybit {"retCode":10003,"retMsg":"API key is invalid.","result":{},"retExtInfo":{},"time":1754917537882}
