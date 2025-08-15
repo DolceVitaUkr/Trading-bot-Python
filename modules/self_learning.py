@@ -10,19 +10,38 @@ from modules.technical_indicators import TechnicalIndicators
 logger = logging.getLogger(__name__)
 
 class SelfLearningBot:
-    def __init__(self):
-        self.executor = TradeExecutor(simulation_mode=config.USE_SIMULATION)
-        self.data_manager = DataManager()
-        self.indicators = TechnicalIndicators()
-        self.top_pairs = TopPairs()
+    def __init__(self, data_provider, error_handler, reward_system, risk_manager, state_size, action_size, hidden_dims, batch_size, gamma, learning_rate, exploration_max, exploration_min, exploration_decay, memory_size, tau, training, timeframe, symbol):
+        self.data_provider = data_provider
+        self.error_handler = error_handler
+        self.reward_system = reward_system
+        self.risk_manager = risk_manager
+        self.state_size = state_size
+        self.action_size = action_size
+        self.hidden_dims = hidden_dims
+        self.batch_size = batch_size
+        self.gamma = gamma
+        self.learning_rate = learning_rate
+        self.exploration_max = exploration_max
+        self.exploration_min = exploration_min
+        self.exploration_decay = exploration_decay
+        self.memory_size = memory_size
+        self.tau = tau
+        self.training = training
+        self.timeframe = timeframe
+        self.default_symbol = symbol
         self.last_pairs_update = datetime.utcnow() - timedelta(minutes=61)
         self.open_pos_check_interval = timedelta(minutes=1)
+        self.top_symbols = []
+        self.ui_hook = None
 
     def refresh_top_pairs(self):
         if datetime.utcnow() - self.last_pairs_update >= timedelta(minutes=60):
             self.top_pairs.update_top_pairs()
             self.last_pairs_update = datetime.utcnow()
             logger.info("Top pairs list refreshed.")
+
+    def act_and_learn(self, symbol, timestamp):
+        pass
 
     def run(self):
         while True:

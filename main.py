@@ -40,13 +40,14 @@ def build_risk_manager(account_balance: float) -> RiskManager:
     return rm
 
 
-def run_bot(args: argparse.Namespace) -> int:
+def run_bot(args: argparse.Namespace, test_mode: bool = False, stop_event: Optional[threading.Event] = None) -> int:
     configure_logging(config.LOG_LEVEL, config.LOG_FILE)
     log = logging.getLogger("main")
     log.info("Booting Self-Learning Trading Bot…")
 
     # Exchange + Data
     exchange = ExchangeAPI()
+    exchange.load_markets()
     notifier = TelegramNotifier(disable_async=not config.ASYNC_TELEGRAM)
 
     # Wallets
@@ -61,14 +62,14 @@ def run_bot(args: argparse.Namespace) -> int:
     risk_manager = build_risk_manager(starting_balance)
 
     # Top pairs manager
-    top_pairs = TopPairsManager(
+    top_pairs = TopPairs(
         exchange=exchange,
-        base_quote="USDT",
+        quote="USDT",
         max_pairs=config.MAX_SIMULATION_PAIRS,
-        refresh_minutes=60,   # re-scan hourly
-        exclude_leveraged=True,
-        min_24h_volume_usd=5_000_000,
     )
+
+    # Data Manager
+    dm = DataManager(exchange=exchange)
 
     # Reward system
     reward = RewardSystem()
@@ -179,7 +180,7 @@ def run_bot(args: argparse.Namespace) -> int:
     # Agent background loop (5m tick loop, sim execution, live data)
     def agent_loop():
         last_step = 0.0
-        while True:
+        while not (stop_event and stop_event.is_set()):
             try:
                 symbols = getattr(bot, "top_symbols", None) or [config.DEFAULT_SYMBOL]
                 for sym in symbols:
@@ -189,11 +190,15 @@ def run_bot(args: argparse.Namespace) -> int:
                     bot.act_and_learn(sym, timestamp=datetime.now(timezone.utc))
                 # Pace loop
                 time.sleep(max(5, float(config.LIVE_LOOP_INTERVAL)))
+                if test_mode:
+                    break # Run only once in test mode
             except Exception as e:
                 logging.getLogger("main").exception(f"agent_loop error: {e}")
                 time.sleep(5)
 
-    threading.Thread(target=agent_loop, daemon=True).start()
+    agent_thread = threading.Thread(target=agent_loop, daemon=True)
+    agent_thread.start()
+
 
     # Initial top pairs warmup
     try:
@@ -201,8 +206,10 @@ def run_bot(args: argparse.Namespace) -> int:
     except Exception:
         pass
 
-    # Start UI (blocking)
-    ui.run()
+    if not test_mode:
+        # Start UI (blocking)
+        ui.run()
+
     return 0
 
 
@@ -214,6 +221,3 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
 
 if __name__ == "__main__":
     sys.exit(run_bot(parse_args()))
-
-
-
