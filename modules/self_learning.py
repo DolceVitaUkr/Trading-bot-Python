@@ -257,10 +257,8 @@ class SelfLearningBot:
             return
 
         strategy_params = params if params is not None else self.best_strategy_params
-        # TODO: This needs to be implemented
-        # signal = self.indicators.generate_signal(
-        #     df_15m, df_5m, strategy_params)
-        signal = None
+        signal = self.indicators.generate_signal(
+            df_15m, df_5m, strategy_params)
 
         if signal and signal.get("side"):
             self.executor.execute_order(
