@@ -16,7 +16,7 @@ from modules.trade_executor import TradeExecutor
 from modules.risk_management import RiskManager
 from modules.self_learning import SelfLearningBot
 from modules.top_pairs import TopPairs
-from modules.ui import TradingUI
+from modules.tui import TradingUI
 from modules.telegram_bot import TelegramNotifier
 from modules.reward_system import RewardSystem
 from scheduler import JobScheduler
@@ -61,13 +61,12 @@ def run_bot(args: argparse.Namespace) -> int:
     risk_manager = build_risk_manager(starting_balance)
 
     # Top pairs manager
-    top_pairs = TopPairsManager(
+    top_pairs = TopPairs(
         exchange=exchange,
-        base_quote="USDT",
+        quote="USDT",
         max_pairs=config.MAX_SIMULATION_PAIRS,
-        refresh_minutes=60,   # re-scan hourly
-        exclude_leveraged=True,
-        min_24h_volume_usd=5_000_000,
+        ttl_sec=60 * 60,   # re-scan hourly
+        min_volume_usd_24h=5_000_000,
     )
 
     # Reward system
@@ -202,7 +201,7 @@ def run_bot(args: argparse.Namespace) -> int:
         pass
 
     # Start UI (blocking)
-    ui.run()
+    ui.run_ui()
     return 0
 
 
@@ -214,6 +213,3 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
 
 if __name__ == "__main__":
     sys.exit(run_bot(parse_args()))
-
-
-
