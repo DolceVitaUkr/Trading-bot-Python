@@ -4,8 +4,6 @@ import os
 import sys
 import time
 import traceback
-from decimal import Decimal
-
 # Ensure repo root on path when running directly
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:

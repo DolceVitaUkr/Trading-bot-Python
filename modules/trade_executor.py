@@ -94,45 +94,103 @@ class TradeExecutor:
         - paper: rely on _simulate_order with reduce_only=True; apply exit fees here.
         """
         sym = self.exchange._resolve_symbol(symbol)
-        now_iso = datetime.now(timezone.utc).isoformat()
 
         if self.simulation_mode:
-            pos = getattr(self.exchange, "_sim_positions", {}).get(sym)
-            if not pos:
-                return None
-            qty = float(quantity or pos["quantity"])
-            side_for_close = "sell" if pos["side"] == "long" else "buy"
-            px = float(price or self.exchange.get_price(sym) or pos["entry_price"])
+            return self._handle_simulation_close(sym, price, quantity)
+        else:
+            return self._handle_live_close(sym, price)
 
-            res = self.exchange._simulate_order(
-                sym, side_for_close, "market", qty, px, attach_sl=None, attach_tp=None, reduce_only=True
-            )
-            # apply exit fee in paper
+    def execute_order(
+        self,
+        symbol: str,
+        side: str,
+        quantity: Optional[float] = None,
+        price: Optional[float] = None,
+        order_type: str = "market",
+        * ,
+        attach_sl: Optional[float] = None,
+        attach_tp: Optional[float] = None,
+        risk_close: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Execute a trade (open/add/close).
+        - Uses exchange min-notional + precision helpers.
+        - Paper: fees applied locally; SL/TP tracked as shadow orders in ExchangeAPI.
+        - Live: attempts inline SL/TP attach; falls back to separate reduce-only orders.
+
+        Returns a dict with normalized keys:
+          status, symbol, side, quantity, entry_price, exit_price (paper close), profit/fees/return_pct (paper),
+          order_id (live), timestamp
+        """
+        sym = self.exchange._resolve_symbol(symbol)
+        side = side.lower()
+
+        # Resolve a usable price (for validation/precision)
+        mkt_price = float(price) if price is not None else None
+        if mkt_price is None:
             try:
-                exit_notional = px * qty
-                exit_fee = exit_notional * self.fee_rate
-                self.exchange._sim_cash_usd -= exit_fee  # type: ignore[attr-defined]
-            except Exception:
-                pass
+                mkt_price = float(self.exchange.get_price(sym))
+            except Exception as e:
+                raise OrderExecutionError(f"Cannot fetch price for {sym}: {e}")
+        if not mkt_price or mkt_price <= 0:
+            raise OrderExecutionError(f"Invalid price for {sym}: {mkt_price}")
 
-            event = {
-                "symbol": sym,
-                "side": side_for_close,
-                "qty": qty,
-                "price": px,
-                "status": res.get("status"),
-                "opened": None,
-                "closed": now_iso,
-                "pnl": float(res.get("pnl", 0.0)),
-                "return_pct": None,
-                "leverage": None,
-                "meta": {"mode": "paper", "action": "close"},
-            }
-            self._emit_trade_event(event)
-            res["timestamp"] = now_iso
-            return res
+        # Default quantity based on min-notional if not provided
+        min_cost = self.exchange.get_min_cost(sym)
+        min_usd = max(min_cost, float(getattr(config, "MIN_TRADE_AMOUNT_USD", 10.0)))
+        if quantity is None:
+            quantity = max(min_usd / mkt_price, 10 ** -self.exchange.get_amount_precision(sym))
 
-        # live
+        # Round price/amount to venue precision
+        qty_rounded = float(f"{quantity:.{self.exchange.get_amount_precision(sym)}f}")
+        px_rounded = float(f"{mkt_price:.{self.exchange.get_price_precision(sym)}f}")
+
+        if self.simulation_mode:
+            return self._handle_simulation_order(sym, side, order_type, qty_rounded, px_rounded, attach_sl, attach_tp, risk_close)
+        else:
+            return self._handle_live_order(sym, side, order_type, qty_rounded, px_rounded, attach_sl, attach_tp, risk_close)
+
+    # ---------------------------- Internals ---------------------------- #
+
+    def _handle_simulation_close(self, sym, price, quantity):
+        now_iso = datetime.now(timezone.utc).isoformat()
+        pos = getattr(self.exchange, "_sim_positions", {}).get(sym)
+        if not pos:
+            return None
+        qty = float(quantity or pos["quantity"])
+        side_for_close = "sell" if pos["side"] == "long" else "buy"
+        px = float(price or self.exchange.get_price(sym) or pos["entry_price"])
+
+        res = self.exchange._simulate_order(
+            sym, side_for_close, "market", qty, px, attach_sl=None, attach_tp=None, reduce_only=True
+        )
+        # apply exit fee in paper
+        try:
+            exit_notional = px * qty
+            exit_fee = exit_notional * self.fee_rate
+            self.exchange._sim_cash_usd -= exit_fee
+        except Exception:
+            pass
+
+        event = {
+            "symbol": sym,
+            "side": side_for_close,
+            "qty": qty,
+            "price": px,
+            "status": res.get("status"),
+            "opened": None,
+            "closed": now_iso,
+            "pnl": float(res.get("pnl", 0.0)),
+            "return_pct": None,
+            "leverage": None,
+            "meta": {"mode": "paper", "action": "close"},
+        }
+        self._emit_trade_event(event)
+        res["timestamp"] = now_iso
+        return res
+
+    def _handle_live_close(self, sym, price):
+        now_iso = datetime.now(timezone.utc).isoformat()
         try:
             pos_list = self.exchange.fetch_positions(sym)
             if not pos_list:
@@ -170,144 +228,99 @@ class TradeExecutor:
             self._notify_alert(f"Failed to close live position {sym}: {e}")
             raise
 
-    def execute_order(
-        self,
-        symbol: str,
-        side: str,
-        quantity: Optional[float] = None,
-        price: Optional[float] = None,
-        order_type: str = "market",
-        * ,
-        attach_sl: Optional[float] = None,
-        attach_tp: Optional[float] = None,
-        risk_close: bool = False
-    ) -> Dict[str, Any]:
-        """
-        Execute a trade (open/add/close).
-        - Uses exchange min-notional + precision helpers.
-        - Paper: fees applied locally; SL/TP tracked as shadow orders in ExchangeAPI.
-        - Live: attempts inline SL/TP attach; falls back to separate reduce-only orders.
-
-        Returns a dict with normalized keys:
-          status, symbol, side, quantity, entry_price, exit_price (paper close), profit/fees/return_pct (paper),
-          order_id (live), timestamp
-        """
-        sym = self.exchange._resolve_symbol(symbol)
-        side = side.lower()
+    def _handle_simulation_order(self, sym, side, order_type, qty_rounded, px_rounded, attach_sl, attach_tp, risk_close):
         now_iso = datetime.now(timezone.utc).isoformat()
+        try:
+            res = self.exchange._simulate_order(
+                sym, side, order_type.lower(), qty_rounded, px_rounded,
+                attach_sl=attach_sl, attach_tp=attach_tp, reduce_only=risk_close
+            )
 
-        # Resolve a usable price (for validation/precision)
-        mkt_price = float(price) if price is not None else None
-        if mkt_price is None:
+            # Apply fees to cash in paper (both entry/add and exit)
             try:
-                mkt_price = float(self.exchange.get_price(sym))
-            except Exception as e:
-                raise OrderExecutionError(f"Cannot fetch price for {sym}: {e}")
-        if not mkt_price or mkt_price <= 0:
-            raise OrderExecutionError(f"Invalid price for {sym}: {mkt_price}")
-
-        # Default quantity based on min-notional if not provided
-        min_cost = self.exchange.get_min_cost(sym)
-        min_usd = max(min_cost, float(getattr(config, "MIN_TRADE_AMOUNT_USD", 10.0)))
-        if quantity is None:
-            quantity = max(min_usd / mkt_price, 10 ** -self.exchange.get_amount_precision(sym))
-
-        # Round price/amount to venue precision
-        qty_rounded = float(f"{quantity:.{self.exchange.get_amount_precision(sym)}f}")
-        px_rounded = float(f"{mkt_price:.{self.exchange.get_price_precision(sym)}f}")
-
-        # --------- Simulation path --------- #
-        if self.simulation_mode:
-            try:
-                res = self.exchange._simulate_order(
-                    sym, side, order_type.lower(), qty_rounded, px_rounded,
-                    attach_sl=attach_sl, attach_tp=attach_tp, reduce_only=risk_close
-                )
-
-                # Apply fees to cash in paper (both entry/add and exit)
-                try:
-                    if res.get("status") in ("open", "open_added", "open_increased"):
-                        open_notional = px_rounded * qty_rounded
-                        self.exchange._sim_cash_usd -= open_notional * self.fee_rate  # type: ignore[attr-defined]
-                    if res.get("status") in ("closed", "closed_partial"):
-                        exit_notional = px_rounded * float(res.get("quantity", qty_rounded))
-                        self.exchange._sim_cash_usd -= exit_notional * self.fee_rate  # type: ignore[attr-defined]
-                except Exception:
-                    pass
-
-                # Build normalized response + event
+                if res.get("status") in ("open", "open_added", "open_increased"):
+                    open_notional = px_rounded * qty_rounded
+                    self.exchange._sim_cash_usd -= open_notional * self.fee_rate
                 if res.get("status") in ("closed", "closed_partial"):
-                    pnl = float(res.get("pnl", 0.0))
-                    calc = calculate_trade_result(
-                        entry_price=px_rounded,  # reporting approximation
-                        exit_price=px_rounded,
-                        quantity=float(res.get("quantity", qty_rounded)),
-                        fee_percentage=self.fee_rate
-                    )
-                    event = {
-                        "symbol": sym,
-                        "side": side,
-                        "qty": float(res.get("quantity", qty_rounded)),
-                        "price": px_rounded,
-                        "status": res.get("status"),
-                        "opened": None,
-                        "closed": now_iso,
-                        "pnl": pnl,
-                        "return_pct": float(calc["return_pct"]),
-                        "leverage": None,
-                        "meta": {"mode": "paper"},
-                    }
-                    self._emit_trade_event(event)
+                    exit_notional = px_rounded * float(res.get("quantity", qty_rounded))
+                    self.exchange._sim_cash_usd -= exit_notional * self.fee_rate
+            except Exception:
+                pass
 
-                    return {
-                        "status": res.get("status", "simulated"),
-                        "symbol": sym,
-                        "side": side,
-                        "quantity": float(res.get("quantity", qty_rounded)),
-                        "entry_price": float(res.get("price", px_rounded)),
-                        "exit_price": float(res.get("price", px_rounded)),
-                        "profit": float(pnl),
-                        "fees": float(calc["fees"]),
-                        "return_pct": float(calc["return_pct"]),
-                        "timestamp": now_iso,
-                    }
-
-                # Open/added
+            # Build normalized response + event
+            if res.get("status") in ("closed", "closed_partial"):
+                pnl = float(res.get("pnl", 0.0))
+                calc = calculate_trade_result(
+                    entry_price=px_rounded,  # reporting approximation
+                    exit_price=px_rounded,
+                    quantity=float(res.get("quantity", qty_rounded)),
+                    fee_percentage=self.fee_rate
+                )
                 event = {
                     "symbol": sym,
                     "side": side,
                     "qty": float(res.get("quantity", qty_rounded)),
-                    "price": float(res.get("entry_price", px_rounded)),
-                    "status": res.get("status", "open"),
-                    "opened": now_iso,
-                    "closed": None,
-                    "pnl": None,
-                    "return_pct": None,
+                    "price": px_rounded,
+                    "status": res.get("status"),
+                    "opened": None,
+                    "closed": now_iso,
+                    "pnl": pnl,
+                    "return_pct": float(calc["return_pct"]),
                     "leverage": None,
                     "meta": {"mode": "paper"},
                 }
                 self._emit_trade_event(event)
 
                 return {
-                    "status": res.get("status", "open"),
+                    "status": res.get("status", "simulated"),
                     "symbol": sym,
                     "side": side,
                     "quantity": float(res.get("quantity", qty_rounded)),
-                    "entry_price": float(res.get("entry_price", px_rounded)),
-                    "exit_price": None,
-                    "profit": 0.0,
-                    "fees": 0.0,
-                    "return_pct": 0.0,
+                    "entry_price": float(res.get("price", px_rounded)),
+                    "exit_price": float(res.get("price", px_rounded)),
+                    "profit": float(pnl),
+                    "fees": float(calc["fees"]),
+                    "return_pct": float(calc["return_pct"]),
                     "timestamp": now_iso,
                 }
 
-            except (RiskViolationError, OrderExecutionError, APIError):
-                raise
-            except Exception as e:
-                self._notify_alert(f"Simulation error for {sym} {side}: {e}")
-                raise
+            # Open/added
+            event = {
+                "symbol": sym,
+                "side": side,
+                "qty": float(res.get("quantity", qty_rounded)),
+                "price": float(res.get("entry_price", px_rounded)),
+                "status": res.get("status", "open"),
+                "opened": now_iso,
+                "closed": None,
+                "pnl": None,
+                "return_pct": None,
+                "leverage": None,
+                "meta": {"mode": "paper"},
+            }
+            self._emit_trade_event(event)
 
-        # --------- Live path --------- #
+            return {
+                "status": res.get("status", "open"),
+                "symbol": sym,
+                "side": side,
+                "quantity": float(res.get("quantity", qty_rounded)),
+                "entry_price": float(res.get("entry_price", px_rounded)),
+                "exit_price": None,
+                "profit": 0.0,
+                "fees": 0.0,
+                "return_pct": 0.0,
+                "timestamp": now_iso,
+            }
+
+        except (RiskViolationError, OrderExecutionError, APIError):
+            raise
+        except Exception as e:
+            self._notify_alert(f"Simulation error for {sym} {side}: {e}")
+            raise
+
+    def _handle_live_order(self, sym, side, order_type, qty_rounded, px_rounded, attach_sl, attach_tp, risk_close):
+        now_iso = datetime.now(timezone.utc).isoformat()
         try:
             order = self.exchange.create_order(
                 sym, order_type, side, qty_rounded, px_rounded,
@@ -345,8 +358,6 @@ class TradeExecutor:
         except Exception as e:
             self._notify_alert(f"Live order failed for {sym} {side}: {e}")
             raise OrderExecutionError(str(e))
-
-    # ---------------------------- Internals ---------------------------- #
 
     def _emit_trade_event(self, event: Dict[str, Any]):
         """

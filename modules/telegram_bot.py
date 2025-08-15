@@ -1,56 +1,94 @@
 # modules/telegram_bot.py
 
-import logging
 import json
-from typing import Union, Dict, Any, Optional
+import logging
+from typing import Dict, Any
+
+from telegram import Bot, Update
+from telegram.ext import Updater, CommandHandler, CallbackContext, filters, MessageHandler
 
 import config
 
-try:
-    import requests
-except Exception:  # optional dependency
-    requests = None  # type: ignore[assignment]
-
 logger = logging.getLogger(__name__)
-if not logger.handlers:
-    h = logging.StreamHandler()
-    logger.addHandler(h)
-logger.setLevel(getattr(logging, str(getattr(config, "LOG_LEVEL", "INFO")), logging.INFO)
-                if isinstance(getattr(config, "LOG_LEVEL", "INFO"), str) else getattr(config, "LOG_LEVEL", logging.INFO))
 
 
 class TelegramNotifier:
     """
-    Minimal Telegram notifier (sync by default).
-    Set config.ASYNC_TELEGRAM to True to allow async in future (not used here).
+    Minimalist Telegram bot for sending notifications.
+    - Supports synchronous and asynchronous sending.
+    - Can be used directly or within a NotificationManager.
     """
 
-    def __init__(self, disable_async: bool = True):
-        self.token = config.TELEGRAM_BOT_TOKEN
-        self.chat_id = config.TELEGRAM_CHAT_ID
+    def __init__(
+        self,
+        token: str = config.TELEGRAM_BOT_TOKEN,
+        chat_id: str = config.TELEGRAM_CHAT_ID,
+        disable_async: bool = False
+    ):
+        self.token = token
+        self.chat_id = chat_id
         if not self.token or not self.chat_id:
-            logger.info("Telegram credentials missing; notifier disabled.")
-        self.enabled = bool(self.token and self.chat_id)
-
-    def _post(self, text: str) -> None:
-        if not self.enabled:
-            logger.debug(f"[telegram] (disabled) {text}")
+            logger.warning("[Telegram] bot token or chat ID not set; notifications will be disabled.")
+            self.bot = None
             return
-        if requests is None:
-            logger.warning("requests not available; cannot send Telegram messages")
+
+        self.bot = Bot(token=self.token)
+        self.use_async = not disable_async
+
+    def send_message_sync(self, text: str, format: str = "text"):
+        if not self.bot:
             return
         try:
-            url = f"https://api.telegram.org/bot{self.token}/sendMessage"
-            payload = {"chat_id": self.chat_id, "text": text, "parse_mode": "HTML", "disable_web_page_preview": True}
-            r = requests.post(url, json=payload, timeout=10)
-            if r.status_code != 200:
-                logger.warning(f"Telegram send failed: {r.status_code} {r.text}")
+            # Simple formatter for dicts
+            if isinstance(text, dict):
+                text = json.dumps(text, indent=2)
+            self.bot.send_message(chat_id=self.chat_id, text=str(text))
         except Exception as e:
-            logger.warning(f"Telegram send exception: {e}")
+            logger.error(f"[Telegram] Failed to send sync message: {e}")
 
-    def send_message_sync(self, text: Union[str, Dict[str, Any]], *, format: str = "text"):
-        if isinstance(text, dict):
-            pretty = json.dumps(text, indent=2, ensure_ascii=False)
-            self._post(f"<pre>{pretty}</pre>")
-        else:
-            self._post(str(text))
+    async def send_message_async(self, text: str, format: str = "text"):
+        if not self.bot:
+            return
+        try:
+            if isinstance(text, dict):
+                text = json.dumps(text, indent=2)
+            await self.bot.send_message(chat_id=self.chat_id, text=str(text))
+        except Exception as e:
+            logger.error(f"[Telegram] Failed to send async message: {e}")
+
+
+class TelegramBot(TelegramNotifier):
+    """
+    Full-fledged bot with command handlers.
+    (This part is optional if you only need one-way notifications).
+    """
+
+    def __init__(self, token: str, chat_id: str):
+        super().__init__(token, chat_id)
+        if not self.bot:
+            return
+        self.updater = Updater(token=self.token, use_context=True)
+        dp = self.updater.dispatcher
+        dp.add_handler(CommandHandler("start", self.start))
+        dp.add_handler(CommandHandler("help", self.help))
+        dp.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.echo))
+        dp.add_error_handler(self.error)
+
+    def start(self, update: Update, context: CallbackContext):
+        update.message.reply_text("Bot started! Use /help for commands.")
+
+    def help(self, update: Update, context: CallbackContext):
+        update.message.reply_text("Available commands: /start, /help, /status")
+
+    def echo(self, update: Update, context: CallbackContext):
+        update.message.reply_text(f"Echo: {update.message.text}")
+
+    def error(self, update: Update, context: CallbackContext):
+        logger.warning(f'Update "{update}" caused error "{context.error}"')
+
+    def run(self):
+        if not self.bot:
+            return
+        logger.info("Telegram bot is now polling...")
+        self.updater.start_polling()
+        self.updater.idle()

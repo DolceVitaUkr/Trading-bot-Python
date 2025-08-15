@@ -17,6 +17,9 @@ logger.setLevel(getattr(logging, str(getattr(config, "LOG_LEVEL", "INFO")), logg
                 if isinstance(getattr(config, "LOG_LEVEL", "INFO"), str) else getattr(config, "LOG_LEVEL", logging.INFO))
 
 
+from modules.error_handler import ErrorHandler
+
+
 class ExchangeAPI:
     """
     Thin wrapper around ccxt with an in-memory paper engine that mirrors
@@ -46,6 +49,7 @@ class ExchangeAPI:
         self.profile = getattr(config, "EXCHANGE_PROFILE", "spot")
         self.fee_rate = float(getattr(config, "FEE_PERCENTAGE", 0.002))
         self.sim_delay = float(getattr(config, "SIMULATION_ORDER_DELAY", 0.5))
+        self.error_handler = ErrorHandler()
 
         # --- ccxt client (Bybit) ---
         # We prefer spot unless explicitly perp.
@@ -68,15 +72,17 @@ class ExchangeAPI:
 
         # Load markets once (best-effort)
         self._markets = {}
-        try:
-            self._markets = self.client.load_markets()
-        except Exception as e:
-            logger.warning(f"load_markets failed (continuing): {e}")
 
         # --- Paper engine state ---
         self._sim_cash_usd: float = float(getattr(config, "SIMULATION_START_BALANCE", 1000.0))
         self._sim_positions: Dict[str, Dict[str, Any]] = {}
         self._last_price: Dict[str, float] = {}
+
+    def load_markets(self):
+        try:
+            self._markets = self.client.load_markets()
+        except Exception as e:
+            logger.warning(f"load_markets failed (continuing): {e}")
 
     # ──────────────────────────────────────────────────────────────────────
     # Helpers / Normalization

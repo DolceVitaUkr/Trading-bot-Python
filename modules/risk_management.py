@@ -166,6 +166,31 @@ class RiskManager:
             )
         return allowed_usd
 
+    def _get_risk_parameters(self, risk_percent, rr, regime):
+        risk_pct, rr_final = self._apply_regime_adjustments(
+            risk_percent if risk_percent is not None else self.base_risk_per_trade_pct,
+            rr if rr is not None else self.min_rr,
+            regime,
+        )
+        dollar_risk = self.account_balance * risk_pct
+        return risk_pct, rr_final, dollar_risk
+
+    def _calculate_initial_units(self, dollar_risk, entry_price, stop_price):
+        price_risk = abs(entry_price - stop_price)
+        if price_risk <= 0:
+            raise RiskViolationError("Zero price risk (entry == stop)")
+
+        fee_buffer = 2 * self.fee_rate * entry_price
+        eff_risk_per_unit = price_risk + fee_buffer
+        return dollar_risk / eff_risk_per_unit
+
+    def _adjust_units_for_caps(self, units, entry_price, symbol):
+        desired_usd_exposure = units * entry_price
+        allowed_usd = self.size_position_usd_capped(symbol, desired_usd_exposure)
+        if allowed_usd < desired_usd_exposure:
+            units = allowed_usd / entry_price
+        return units
+
     def calculate_position_size(
         self,
         symbol: str,
@@ -184,32 +209,9 @@ class RiskManager:
         """
         self._validate_prices(entry_price, stop_price)
 
-        # Regime-aware nudges
-        risk_pct, rr_final = self._apply_regime_adjustments(
-            risk_percent if risk_percent is not None else self.base_risk_per_trade_pct,
-            rr if rr is not None else self.min_rr,
-            regime,
-        )
-
-        # Dollar risk for this position
-        dollar_risk = self.account_balance * risk_pct
-
-        # Convert risk (USD) to units at current SL distance
-        price_risk = abs(entry_price - stop_price)
-        if price_risk <= 0:
-            raise RiskViolationError("Zero price risk (entry == stop)")
-
-        # Add fee safety margin (entry + exit taker fees)
-        fee_buffer = 2 * self.fee_rate * entry_price
-        eff_risk_per_unit = price_risk + fee_buffer
-
-        units = dollar_risk / eff_risk_per_unit
-        desired_usd_exposure = units * entry_price
-
-        # Apply exposure caps
-        allowed_usd = self.size_position_usd_capped(symbol, desired_usd_exposure)
-        if allowed_usd < desired_usd_exposure:
-            units = allowed_usd / entry_price
+        risk_pct, rr_final, dollar_risk = self._get_risk_parameters(risk_percent, rr, regime)
+        units = self._calculate_initial_units(dollar_risk, entry_price, stop_price)
+        units = self._adjust_units_for_caps(units, entry_price, symbol)
 
         # Leverage sanity (approximate initial margin)
         margin_required = (units * entry_price) / max(self.max_leverage, 1)
