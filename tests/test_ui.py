@@ -1,56 +1,110 @@
-from unittest.mock import MagicMock, patch
-from main import TradingUI
+import pytest
+from unittest.mock import MagicMock, AsyncMock, patch, call
 
-@patch('tkinter.Tk')
-@patch('tkinter.ttk.Style')
-@patch('tkinter.IntVar')
-@patch('tkinter.StringVar')
-@patch('tkinter.scrolledtext.ScrolledText')
-@patch('matplotlib.figure.Figure')
-@patch('matplotlib.backends.backend_tkagg.FigureCanvasTkAgg')
-def test_ui_methods(MockFigureCanvas, MockFigure, MockScrolledText, MockStringVar, MockIntVar, MockStyle, MockTk):
-    # Arrange
-    mock_bot = MagicMock()
+from modules.ui import TradingUI
+from textual.widgets import Static, Sparkline
 
-    # Configure mocks
-    def string_var_side_effect(*args, **kwargs):
-        return MagicMock()
-    MockStringVar.side_effect = string_var_side_effect
+@pytest.fixture
+def mock_bot():
+    """Fixture for a mocked bot instance."""
+    bot = MagicMock()
+    bot.is_connected = True
+    bot.training = False
+    bot.trading = True
+    bot.last_heartbeat = 1672531200  # Example timestamp
+    return bot
 
-    with patch('modules.ui.tk.Spinbox'), patch('modules.ui.ttk.Combobox'):
-        ui = TradingUI(bot=mock_bot)
+@pytest.mark.asyncio
+async def test_ui_initialization(mock_bot):
+    """Test if the TradingUI initializes correctly."""
+    app = TradingUI(bot=mock_bot)
+    assert app.bot is not None
+    assert app.title == "Textual Trading Bot"
 
-    # Act
-    ui.update_live_metrics({
-        "balance": 1234.56,
-        "equity": 5432.10,
-        "symbol": "BTC/USDT",
-        "timeframe": "15m",
-    })
+@pytest.mark.asyncio
+async def test_ui_live_metrics_update(mock_bot):
+    """Test updating live metrics on the UI."""
+    app = TradingUI(bot=mock_bot)
 
-    # Assert
-    ui.balance_var.set.assert_called_with("$1,234.56")
-    ui.value_var.set.assert_called_with("$5,432.10")
-    ui.symbol_var.set.assert_called_with("BTC/USDT")
-    ui.tf_var.set.assert_called_with("15m")
+    with patch.object(app, 'query_one') as mock_query_one:
+        mock_widget = MagicMock()
+        mock_query_one.return_value = mock_widget
 
-@patch('tkinter.Tk')
-@patch('tkinter.ttk.Style')
-@patch('tkinter.IntVar')
-@patch('tkinter.StringVar')
-@patch('tkinter.scrolledtext.ScrolledText')
-@patch('matplotlib.figure.Figure')
-@patch('matplotlib.backends.backend_tkagg.FigureCanvasTkAgg')
-def test_ui_logs(MockFigureCanvas, MockFigure, MockScrolledText, MockStringVar, MockIntVar, MockStyle, MockTk):
-    # Arrange
-    mock_bot = MagicMock()
-    with patch('modules.ui.tk.Spinbox'), patch('modules.ui.ttk.Combobox'):
-        ui = TradingUI(bot=mock_bot)
+        metrics = {
+            "balance": 1234.56,
+            "equity": 5432.10,
+            "symbol": "BTC/USDT",
+            "timeframe": "15m",
+        }
+        app._update_live_metrics(metrics)
 
-    # Act
-    ui.log("This is a test message", level="INFO")
+        mock_query_one.assert_any_call("#wallet-balance", Static)
+        mock_query_one.return_value.update.assert_any_call("$1,234.56")
+        mock_query_one.assert_any_call("#portfolio-value", Static)
+        mock_query_one.return_value.update.assert_any_call("$5,432.10")
+        mock_query_one.assert_any_call("#current-symbol", Static)
+        mock_query_one.return_value.update.assert_any_call("BTC/USDT")
+        mock_query_one.assert_any_call("#current-timeframe", Static)
+        mock_query_one.return_value.update.assert_any_call("15m")
 
-    # Assert
-    ui.log_text.insert.assert_called()
-    args, kwargs = ui.log_text.insert.call_args
-    assert "This is a test message" in args[1]
+@pytest.mark.asyncio
+async def test_ui_timeseries_update(mock_bot):
+    """Test updating timeseries data on the UI."""
+    app = TradingUI(bot=mock_bot)
+
+    with patch.object(app, 'query_one') as mock_query_one:
+        mock_sparkline_wallet = MagicMock()
+        mock_sparkline_vwallet = MagicMock()
+        mock_sparkline_points = MagicMock()
+
+        def query_one_side_effect(selector, widget_type):
+            if selector == "#wallet-sparkline":
+                return mock_sparkline_wallet
+            elif selector == "#vwallet-sparkline":
+                return mock_sparkline_vwallet
+            elif selector == "#points-sparkline":
+                return mock_sparkline_points
+            return MagicMock()
+
+        mock_query_one.side_effect = query_one_side_effect
+
+        app._update_timeseries(wallet=100.0, vwallet=200.0, points=50.0)
+
+        assert app._wallet_hist_data[-1] == 100.0
+        assert app._vwallet_hist_data[-1] == 200.0
+        assert app._points_hist_data[-1] == 50.0
+
+        assert mock_sparkline_wallet.data == app._wallet_hist_data
+        assert mock_sparkline_vwallet.data == app._vwallet_hist_data
+        assert mock_sparkline_points.data == app._points_hist_data
+
+
+@pytest.mark.asyncio
+async def test_ui_logging(mock_bot):
+    """Test logging messages to the UI."""
+    app = TradingUI(bot=mock_bot)
+    app.call_soon = AsyncMock()
+
+    with patch.object(app, '_loop', MagicMock()), patch.object(app, 'query_one') as mock_query_one:
+        mock_log_widget = AsyncMock()
+        mock_query_one.return_value = mock_log_widget
+        await app.log("Test log message", level="INFO")
+
+    app.call_soon.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_button_press_handler(mock_bot):
+    """Test that button presses trigger the correct handlers."""
+    app = TradingUI(bot=mock_bot)
+
+    mock_handler = MagicMock()
+    app.add_action_handler("start_training", mock_handler)
+
+    from textual.widgets import Button
+    button = Button("Start Training", id="start_training")
+
+    with patch('asyncio.run') as mock_run:
+        app.on_button_pressed(Button.Pressed(button))
+
+    mock_handler.assert_called_once()

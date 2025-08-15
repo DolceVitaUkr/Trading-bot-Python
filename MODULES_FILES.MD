@@ -177,28 +177,16 @@ Supports async sending for low-latency notifications.
 Configurable verbosity (quiet, normal, verbose).
 
 14. ui.py
-Purpose: Bot control panel.
+Purpose: A Textual-based UI for the Trading Bot.
 Key Features:
 
-Buttons for "Start Trading", "Stop Trading", "Reinforcement Learning".
-
-Button color changes after click (shows last action taken).
-
-Three live graphs:
-
-Real wallet balance.
-
-Virtual wallet balance.
-
-Reward points over time.
-
-Resizable log & statistics panels.
+Buttons for starting/stopping training and trading.
+Live-updating status bar with connection, mode, and heartbeat.
+Log view for real-time monitoring.
+Sparkline charts for wallet balance, portfolio value, and reward points.
 
 15. forex/
 forex_exchange.py — API interface for Forex brokers (future IBKR integration).
-
-forex_data.py — Fetches Forex market data.
-
 forex_strategy.py — Forex-specific strategies.
 
 16. options/
@@ -206,34 +194,23 @@ options_exchange.py — Interface for options trading.
 
 17. telemetry/
 metrics_exporter.py — Exports metrics to files or dashboard.
-
 report_generator.py — Generates KPI and strategy performance reports.
 
 18. state/
 runtime_state.py — Saves/restores bot state between runs.
-
 position_reconciler.py — Syncs open trades with exchange to ensure accuracy.
 
 19. rollout_manager.py
 Purpose: Manages staged rollout from simulation → full live trading.
 Stages:
+- Data only.
+- Simulated trades.
+- Canary small trades.
+- Scaled positions.
+- Full deployment.
 
-Data only.
-
-Simulated trades.
-
-Canary small trades.
-
-Scaled positions.
-
-Full deployment.
-
-20. optimization/
+20. modules/parameter_optimization.py
 Purpose: Model optimization & parameter tuning.
 Key Features:
-
 Supports grid search, random search, and evolutionary algorithms.
-
 Works with RL/ML modules to improve strategies.
-
-Do you want me to now follow this with the final batch of updated modules so that everything in this list matches your repo exactly? That way there’s no “circling” back again.
