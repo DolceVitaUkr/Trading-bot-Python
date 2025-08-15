@@ -47,6 +47,11 @@ class TradeExecutor:
         self.notifications = notifications
         self.fee_rate = float(getattr(config, "FEE_PERCENTAGE", 0.002))
 
+        # Simulation state
+        self.total_trades = 0
+        self.winning_trades = 0
+        self.realized_pnl = 0.0
+
     # ---------------------------- Public API ---------------------------- #
 
     def get_balance(self) -> float:
@@ -115,6 +120,12 @@ class TradeExecutor:
             except Exception:
                 pass
 
+            pnl = float(res.get("pnl", 0.0))
+            self.realized_pnl += pnl
+            self.total_trades += 1
+            if pnl > 0:
+                self.winning_trades += 1
+
             event = {
                 "symbol": sym,
                 "side": side_for_close,
@@ -123,7 +134,7 @@ class TradeExecutor:
                 "status": res.get("status"),
                 "opened": None,
                 "closed": now_iso,
-                "pnl": float(res.get("pnl", 0.0)),
+                "pnl": pnl,
                 "return_pct": None,
                 "leverage": None,
                 "meta": {"mode": "paper", "action": "close"},
@@ -238,6 +249,10 @@ class TradeExecutor:
                 # Build normalized response + event
                 if res.get("status") in ("closed", "closed_partial"):
                     pnl = float(res.get("pnl", 0.0))
+                    self.realized_pnl += pnl
+                    self.total_trades += 1
+                    if pnl > 0:
+                        self.winning_trades += 1
                     calc = calculate_trade_result(
                         entry_price=px_rounded,  # reporting approximation
                         exit_price=px_rounded,
@@ -399,3 +414,38 @@ class TradeExecutor:
             self.notifier.send_message_sync({"type": "ALERT", "message": text}, format="alert")
         except Exception as e:
             logger.warning(f"Telegram alert notify failed: {e}")
+
+    # ---------------------------- Simulation Helpers ---------------------------- #
+    def reset_simulation(self):
+        """
+        Resets the simulation state (balance, positions, PnL) for a new training run.
+        This is crucial for testing strategies from a clean slate.
+        """
+        if not self.simulation_mode:
+            return
+
+        initial_balance = float(config.SIMULATION_START_BALANCE)
+        self.exchange._sim_cash_usd = initial_balance
+        self.exchange._sim_positions = {}
+        self.total_trades = 0
+        self.winning_trades = 0
+        self.realized_pnl = 0.0
+        logger.info(f"Simulation reset. Balance: {initial_balance}")
+
+    def get_pnl(self) -> float:
+        """Returns the total realized PnL for the simulation run."""
+        if not self.simulation_mode:
+            return 0.0
+        return self.realized_pnl
+
+    def get_total_trades(self) -> int:
+        """Returns the total number of trades executed in the simulation."""
+        if not self.simulation_mode:
+            return 0
+        return self.total_trades
+
+    def get_win_rate(self) -> float:
+        """Returns the win rate for the simulation run."""
+        if not self.simulation_mode or self.total_trades == 0:
+            return 0.0
+        return self.winning_trades / self.total_trades

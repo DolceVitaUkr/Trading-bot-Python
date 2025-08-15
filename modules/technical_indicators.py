@@ -309,6 +309,91 @@ class TechnicalIndicators:
             return None
 
     @staticmethod
+    def generate_signal(df_15m, df_5m, params: Optional[Dict] = None) -> Dict:
+        """
+        Generates a trading signal using a multi-timeframe EMA/RSI strategy.
+
+        Args:
+            df_15m: DataFrame for the 15-minute timeframe.
+            df_5m: DataFrame for the 5-minute timeframe.
+            params: Dictionary of strategy parameters.
+
+        Returns:
+            A dictionary containing the signal ('buy', 'sell', or None)
+            and TP/SL levels.
+        """
+        if params is None:
+            params = {
+                "ema_long_period": 21,
+                "ema_short_period_1": 8,
+                "ema_short_period_2": 13,
+                "rsi_period": 14,
+                "rsi_level": 50,
+                "atr_period": 14,
+                "tp_atr_multiplier": 2.0,
+                "sl_atr_multiplier": 1.5,
+            }
+
+        # 15m Trend Analysis
+        close_15m = df_15m['close']
+        ema_long = TechnicalIndicators.ema(close_15m, window=params["ema_long_period"])
+        rsi = TechnicalIndicators.rsi(close_15m, window=params["rsi_period"])
+
+        if ema_long is None or rsi is None:
+            return {"side": None}
+
+        last_close_15m = close_15m.iloc[-1]
+        last_ema_long = ema_long.iloc[-1]
+        last_rsi = rsi.iloc[-1]
+
+        is_bullish_trend = last_close_15m > last_ema_long and last_rsi > params["rsi_level"]
+        is_bearish_trend = last_close_15m < last_ema_long and last_rsi < params["rsi_level"]
+
+        # 5m Entry Signal
+        close_5m = df_5m['close']
+        ema_short_1 = TechnicalIndicators.ema(close_5m, window=params["ema_short_period_1"])
+        ema_short_2 = TechnicalIndicators.ema(close_5m, window=params["ema_short_period_2"])
+
+        if ema_short_1 is None or ema_short_2 is None:
+            return {"side": None}
+
+        # Check for crossover in the last 2 candles
+        cross_up = (ema_short_1.iloc[-2] < ema_short_2.iloc[-2]) and \
+                   (ema_short_1.iloc[-1] > ema_short_2.iloc[-1])
+        cross_down = (ema_short_1.iloc[-2] > ema_short_2.iloc[-2]) and \
+                     (ema_short_1.iloc[-1] < ema_short_2.iloc[-1])
+
+        signal = {"side": None}
+
+        # Generate signal with TP/SL
+        if is_bullish_trend and cross_up:
+            signal["side"] = "buy"
+        elif is_bearish_trend and cross_down:
+            signal["side"] = "sell"
+        else:
+            return signal # No trade
+
+        # Calculate TP/SL using 15m ATR
+        atr_series_15m = TechnicalIndicators.atr(
+            df_15m['high'],
+            df_15m['low'],
+            df_15m['close'],
+            period=params["atr_period"]
+        )
+
+        if atr_series_15m is not None and not atr_series_15m.empty:
+            atr_15m = atr_series_15m.iloc[-1]
+            last_close_5m = close_5m.iloc[-1]
+            if signal["side"] == "buy":
+                signal["sl"] = last_close_5m - (atr_15m * params["sl_atr_multiplier"])
+                signal["tp"] = last_close_5m + (atr_15m * params["tp_atr_multiplier"])
+            else: # sell
+                signal["sl"] = last_close_5m + (atr_15m * params["sl_atr_multiplier"])
+                signal["tp"] = last_close_5m - (atr_15m * params["tp_atr_multiplier"])
+
+        return signal
+
+    @staticmethod
     def sma(series, window: int):
         s = TechnicalIndicators._to_series(series)
         if s is None:
@@ -339,6 +424,29 @@ class TechnicalIndicators:
             down = (-delta.clip(upper=0)).rolling(window=window, min_periods=window).mean()
             rs = up / down.replace(0, float("inf"))
             return 100 - (100 / (1 + rs))
+        except Exception:
+            return None
+
+    @staticmethod
+    def atr(high, low, close, period: int = 14):
+        s_high = TechnicalIndicators._to_series(high)
+        s_low = TechnicalIndicators._to_series(low)
+        s_close = TechnicalIndicators._to_series(close)
+
+        if s_high is None or s_low is None or s_close is None:
+            return None
+
+        try:
+            import pandas as pd
+            high_low = s_high - s_low
+            high_close = (s_high - s_close.shift()).abs()
+            low_close = (s_low - s_close.shift()).abs()
+
+            tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+
+            # Wilder's smoothing (RMA)
+            atr_series = tr.ewm(alpha=1/period, adjust=False, min_periods=period).mean()
+            return atr_series
         except Exception:
             return None
 

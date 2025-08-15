@@ -60,14 +60,16 @@ def run_bot(args: argparse.Namespace) -> int:
     # Risk
     risk_manager = build_risk_manager(starting_balance)
 
+    # Data Manager
+    dm = DataManager(exchange=exchange.client)
+
     # Top pairs manager
-    top_pairs = TopPairsManager(
-        exchange=exchange,
-        base_quote="USDT",
+    top_pairs = TopPairs(
+        exchange=exchange.client,
+        quote="USDT",
         max_pairs=config.MAX_SIMULATION_PAIRS,
-        refresh_minutes=60,   # re-scan hourly
-        exclude_leveraged=True,
-        min_24h_volume_usd=5_000_000,
+        ttl_sec=60 * 60,  # re-scan hourly
+        min_volume_usd_24h=5_000_000,
     )
 
     # Reward system
@@ -140,19 +142,7 @@ def run_bot(args: argparse.Namespace) -> int:
 
     scheduler.every(minutes=60, name="hourly_top_pairs", func=refresh_pairs_job)
 
-    # 2) 15m setup scan (secondary timeframe)
-    def fifteen_scan_job():
-        try:
-            symbols = getattr(bot, "top_symbols", None) or [config.DEFAULT_SYMBOL]
-            for sym in symbols:
-                dm.ensure_backfill(sym, "15m", bars=300)  # light backfill
-                # You can add setup-detection hooks here if needed
-        except Exception as e:
-            ui.log(f"15m scan error: {e}", level="ERROR")
-
-    scheduler.every(minutes=15, name="scan_15m_setup", func=fifteen_scan_job)
-
-    # 3) Heartbeat → UI metrics
+    # 2) Heartbeat → UI metrics
     def heartbeat_job():
         try:
             # live balance (if we had real, keep sim for now)
@@ -176,24 +166,8 @@ def run_bot(args: argparse.Namespace) -> int:
     scheduler_thread = threading.Thread(target=scheduler.run_forever, daemon=True)
     scheduler_thread.start()
 
-    # Agent background loop (5m tick loop, sim execution, live data)
-    def agent_loop():
-        last_step = 0.0
-        while True:
-            try:
-                symbols = getattr(bot, "top_symbols", None) or [config.DEFAULT_SYMBOL]
-                for sym in symbols:
-                    # Keep data fresh & light: append-only small pulls
-                    dm.pull_incremental(sym, "5m", max_new_bars=5)  # 1–5 bars each call
-                    # Act & learn using the latest state (sim execution)
-                    bot.act_and_learn(sym, timestamp=datetime.now(timezone.utc))
-                # Pace loop
-                time.sleep(max(5, float(config.LIVE_LOOP_INTERVAL)))
-            except Exception as e:
-                logging.getLogger("main").exception(f"agent_loop error: {e}")
-                time.sleep(5)
-
-    threading.Thread(target=agent_loop, daemon=True).start()
+    # Agent background loop
+    threading.Thread(target=bot.run, daemon=True).start()
 
     # Initial top pairs warmup
     try:
@@ -214,6 +188,3 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
 
 if __name__ == "__main__":
     sys.exit(run_bot(parse_args()))
-
-
-

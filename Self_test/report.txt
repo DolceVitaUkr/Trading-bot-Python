@@ -1,0 +1,9 @@
+==== Self Test Report ====
+Duration: 10.93s
+OK: 6 | FAIL: 0
+[OK] config import - ok
+[OK] core modules import - ok
+[OK] technical_indicators basic - ok
+[OK] trade_executor sim - bal0=1000.00 bal1=999.94
+[OK] telegram send - skipped (no token/chat env)
+[OK] health_monitor basic - ok
