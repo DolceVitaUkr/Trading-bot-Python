@@ -7,6 +7,9 @@ from typing import Optional
 
 @dataclass
 class RewardParams:
+    """
+    Parameters for the reward system.
+    """
     base_per_trade: float = 0.0
     profit_multiplier: float = 1.0
     risk_adjusted_boost: float = 1.15
@@ -19,6 +22,9 @@ class RewardSystem:
     Simple additive reward scoring used by SelfLearningBot.
     """
     def __init__(self, params: Optional[RewardParams] = None):
+        """
+        Initializes the RewardSystem.
+        """
         self.params = params or RewardParams()
         self.total_points: float = 0.0
 
@@ -47,6 +53,9 @@ class RewardSystem:
         stop_loss_triggered: bool = False,
         risk_adjusted: bool = True
     ) -> float:
+        """
+        Calculates and adds points to the total score.
+        """
         pts = calculate_points(
             profit=profit_pct,
             entry_time=entry_time,

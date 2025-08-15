@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import math
 import time
 from dataclasses import dataclass
 from decimal import Decimal
@@ -70,7 +69,7 @@ class ForexExchange:
         self._last_price: Dict[str, Decimal] = {}
 
         # Price hook (can be fed by forex_data adapter)
-        self._price_provider: Optional[callable] = None  # async func(symbol) -> Decimal
+        self._price_provider: Optional[callable] = None
 
         # Simple ID counter
         self._oid = 0
@@ -131,7 +130,7 @@ class ForexExchange:
         Sim execution model (no leverage by default):
           - 'buy' opens/adds LONG, 'sell' opens/adds SHORT (netted per symbol).
           - reduce_only closes position in the opposite direction up to qty.
-          - market fills at current price; limit fills immediately at given price (sim).
+          - market fills at current price; limit fills at given price (sim).
         """
         sym = symbol.upper()
         now = self._now_ms()
@@ -150,10 +149,6 @@ class ForexExchange:
             ts_ms=now,
             status="open",
         )
-
-        # Simple cash/position model (no margin, 1x notionals)
-        # Notional in USD approximated by: qty * price (assuming XXX/USD pairs)
-        notional = order.qty * px
 
         pos = self._positions.get(sym)
         opened = False
@@ -183,7 +178,8 @@ class ForexExchange:
             if side == "buy":
                 if pos and pos.side == "long":
                     new_qty = pos.qty + order.qty
-                    pos.entry_price = (pos.entry_price * pos.qty + px * order.qty) / new_qty
+                    pos.entry_price = (pos.entry_price * pos.qty +
+                                       px * order.qty) / new_qty
                     pos.qty = new_qty
                 elif pos and pos.side == "short":
                     # netting against short
@@ -196,14 +192,17 @@ class ForexExchange:
                     # residual becomes new long
                     residual = order.qty - close_qty
                     if residual > 0:
-                        self._positions[sym] = _FxPosition(sym, "long", residual, px, now)
+                        self._positions[sym] = _FxPosition(
+                            sym, "long", residual, px, now)
                 else:
-                    self._positions[sym] = _FxPosition(sym, "long", order.qty, px, now)
+                    self._positions[sym] = _FxPosition(
+                        sym, "long", order.qty, px, now)
                 opened = True
             else:  # sell → short/open or net against long
                 if pos and pos.side == "short":
                     new_qty = pos.qty + order.qty
-                    pos.entry_price = (pos.entry_price * pos.qty + px * order.qty) / new_qty
+                    pos.entry_price = (pos.entry_price * pos.qty +
+                                       px * order.qty) / new_qty
                     pos.qty = new_qty
                 elif pos and pos.side == "long":
                     close_qty = min(order.qty, pos.qty)
@@ -214,9 +213,11 @@ class ForexExchange:
                         self._positions.pop(sym, None)
                     residual = order.qty - close_qty
                     if residual > 0:
-                        self._positions[sym] = _FxPosition(sym, "short", residual, px, now)
+                        self._positions[sym] = _FxPosition(
+                            sym, "short", residual, px, now)
                 else:
-                    self._positions[sym] = _FxPosition(sym, "short", order.qty, px, now)
+                    self._positions[sym] = _FxPosition(
+                        sym, "short", order.qty, px, now)
                 opened = True
 
             order.status = "open" if opened else order.status
@@ -237,7 +238,9 @@ class ForexExchange:
             "client_id": client_id,
         }
 
-    async def cancel_order_async(self, symbol: str, order_id: str) -> Dict[str, Any]:
+    async def cancel_order_async(self,
+                                 symbol: str,
+                                 order_id: str) -> Dict[str, Any]:
         o = self._orders.get(order_id)
         if not o:
             return {"id": order_id, "status": "not_found"}
@@ -245,7 +248,9 @@ class ForexExchange:
         o.status = "canceled"
         return {"id": order_id, "status": "canceled"}
 
-    async def get_open_positions_async(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
+    async def get_open_positions_async(self,
+                                       symbol: Optional[str] = None
+                                       ) -> List[Dict[str, Any]]:
         if symbol:
             pos = self._positions.get(symbol.upper())
             return [pos.__dict__] if pos else []

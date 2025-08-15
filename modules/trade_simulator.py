@@ -11,22 +11,17 @@ from modules.reward_system import calculate_points
 logger = logging.getLogger(__name__)
 if not logger.handlers:
     h = logging.StreamHandler()
-    h.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+    h.setFormatter(
+        logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
     logger.addHandler(h)
-logger.setLevel(getattr(logging, str(getattr(config, "LOG_LEVEL", "INFO")), logging.INFO)
-                if isinstance(getattr(config, "LOG_LEVEL", "INFO"), str) else getattr(config, "LOG_LEVEL", logging.INFO))
+log_level_str = str(getattr(config, "LOG_LEVEL", "INFO"))
+log_level = getattr(logging, log_level_str, logging.INFO)
+logger.setLevel(log_level)
 
 
 class TradeSimulator:
     """
-    Backtester that replays historical OHLCV data through the TradeExecutor in simulation mode.
-
-    Each run starts with `starting_balance` USD and `starting_points` points.
-    Tracks:
-      - wallet_balance
-      - points
-      - portfolio_value
-      - trade_history
+    Backtester that replays historical OHLCV data through the TradeExecutor.
     """
 
     def __init__(
@@ -38,9 +33,12 @@ class TradeSimulator:
         trade_fee: float = None,
         symbol: str = "SIM"
     ):
-        # Constants (pull from config if not supplied)
-        self.starting_balance = float(initial_wallet if initial_wallet is not None
-                                      else getattr(config, "SIMULATION_START_BALANCE", 1000.0))
+        """
+        Initializes the TradeSimulator.
+        """
+        self.starting_balance = float(
+            initial_wallet if initial_wallet is not None
+            else getattr(config, "SIMULATION_START_BALANCE", 1000.0))
         self.starting_points = float(initial_points)
         self.symbol = symbol
 
@@ -51,11 +49,13 @@ class TradeSimulator:
         self.trade_history: List[Dict[str, Any]] = []
 
         # Strategy params
-        self.trade_size_percent = float(trade_size_percent if trade_size_percent is not None
-                                        else getattr(config, "TRADE_SIZE_PERCENT", 0.05))
+        self.trade_size_percent = float(
+            trade_size_percent if trade_size_percent is not None
+            else getattr(config, "TRADE_SIZE_PERCENT", 0.05))
         self.slippage = float(slippage)
-        self.trade_fee = float(trade_fee if trade_fee is not None
-                               else getattr(config, "FEE_PERCENTAGE", 0.002))
+        self.trade_fee = float(
+            trade_fee if trade_fee is not None
+            else getattr(config, "FEE_PERCENTAGE", 0.002))
 
         # Trade executor in simulation mode (always)
         self.executor = TradeExecutor(simulation_mode=True)
@@ -66,11 +66,11 @@ class TradeSimulator:
 
     # -------------------- PUBLIC API -------------------- #
 
-    def run(self, market_data: List[List[Any]], notify_summary: Optional[callable] = None) -> None:
+    def run(self,
+            market_data: List[List[Any]],
+            notify_summary: Optional[callable] = None) -> None:
         """
-        Run backtest on market_data: list of [timestamp, open, high, low, close, volume].
-
-        Optionally pass `notify_summary` to receive a compact run summary at the end.
+        Run backtest on market_data.
         """
         if not market_data:
             logger.info("No market_data provided to TradeSimulator.run()")
@@ -101,8 +101,9 @@ class TradeSimulator:
             elif signals.get("sell") and self.symbol in self._entry_info:
                 self._execute_sell(ts, close_price)
 
-            # Update portfolio value: wallet + position * current price
-            qty = self.executor.exchange.positions.get(self.symbol, {}).get("quantity", 0)
+            # Update portfolio value
+            qty = self.executor.exchange._sim_positions.get(
+                self.symbol, {}).get("quantity", 0)
             self.portfolio_value = self.wallet_balance + qty * close_price
 
         # Summary
@@ -115,7 +116,6 @@ class TradeSimulator:
     def _generate_trading_signals(self, kline: List[Any]) -> Dict[str, bool]:
         """
         Override in subclasses or tests to return {"buy": bool, "sell": bool}.
-        Default: no-op.
         """
         return {"buy": False, "sell": False}
 
@@ -127,8 +127,8 @@ class TradeSimulator:
         qty = (self.wallet_balance * self.trade_size_percent) / (
             price * (1 + self.slippage + self.trade_fee)
         )
-        result = self.executor.execute_order(self.symbol, "buy", quantity=qty, price=price)
-        # ExchangeAPI internal sim balance reflects fee debits; mirror to UI balance
+        result = self.executor.execute_order(
+            self.symbol, "buy", quantity=qty, price=price)
         self.wallet_balance = self.executor.get_balance()
         entry_time = datetime.fromtimestamp(timestamp / 1000)
         self._entry_info[self.symbol] = {"price": price, "time": entry_time}
@@ -141,7 +141,8 @@ class TradeSimulator:
     def _execute_sell(self, timestamp: int, price: float):
         if price <= 0:
             return
-        result = self.executor.execute_order(self.symbol, "sell", price=price)
+        result = self.executor.execute_order(
+            self.symbol, "sell", price=price)
         self.wallet_balance = self.executor.get_balance()
         entry = self._entry_info.pop(self.symbol, None)
         pnl = float(result.get("profit", 0.0))
@@ -157,9 +158,11 @@ class TradeSimulator:
             )
         self.points += points
 
-        self.trade_history.append({**result, "timestamp": timestamp, "points": points})
+        self.trade_history.append(
+            {**result, "timestamp": timestamp, "points": points})
         self._summary_events.append(
-            f"Closed {self.symbol} LONG @ {price:.2f} | PnL ${pnl:.2f} | {points:.2f} pts"
+            f"Closed {self.symbol} LONG @ {price:.2f} | "
+            f"PnL ${pnl:.2f} | {points:.2f} pts"
         )
 
     def _format_summary(self) -> str:

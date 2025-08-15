@@ -66,7 +66,8 @@ def observe_latency(endpoint: str, ms: float) -> None:
         logger.exception("Failed to observe latency")
 
 
-def set_gauge(name: str, value: float, labels: Optional[Dict[str, str]] = None) -> None:
+def set_gauge(
+        name: str, value: float, labels: Optional[Dict[str, str]] = None) -> None:
     """
     Set a numeric gauge value.
     Args:
@@ -78,7 +79,8 @@ def set_gauge(name: str, value: float, labels: Optional[Dict[str, str]] = None) 
         full_name = f"bot_{name}"
         if full_name not in GAUGES:
             if labels:
-                GAUGES[full_name] = Gauge(full_name, f"Gauge {name}", list(labels.keys()))
+                GAUGES[full_name] = Gauge(
+                    full_name, f"Gauge {name}", list(labels.keys()))
             else:
                 GAUGES[full_name] = Gauge(full_name, f"Gauge {name}")
         if labels:

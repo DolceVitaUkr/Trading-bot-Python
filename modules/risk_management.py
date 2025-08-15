@@ -115,8 +115,10 @@ class RiskManager:
         dd = (self.peak_equity - self.current_equity) / self.peak_equity
         if dd > self.max_drawdown_limit:
             msg = (
-                f"Max drawdown exceeded: {dd:.2%} > limit {self.max_drawdown_limit:.2%} "
-                f"(peak={self.peak_equity:.2f}, equity={self.current_equity:.2f})"
+                f"Max drawdown exceeded: {dd:.2%} > "
+                f"limit {self.max_drawdown_limit:.2%} "
+                f"(peak={self.peak_equity:.2f}, "
+                f"equity={self.current_equity:.2f})"
             )
             logger.critical(msg)
             raise RiskViolationError(msg, context={"drawdown": dd})
@@ -144,7 +146,8 @@ class RiskManager:
             tp = entry_price - rr * (sl - entry_price)
         return (sl, tp)
 
-    def size_position_usd_capped(self, symbol: str, desired_usd: float) -> float:
+    def size_position_usd_capped(
+            self, symbol: str, desired_usd: float) -> float:
         """
         Apply per-pair & portfolio caps to a desired USD exposure.
         Returns the allowed USD exposure.
@@ -155,20 +158,23 @@ class RiskManager:
 
         # Portfolio concurrent exposure cap
         portfolio_used = self.portfolio_exposure_usd()
-        portfolio_free = max(0.0, self.portfolio_cap_pct * self.account_balance - portfolio_used)
+        portfolio_free = max(
+            0.0, self.portfolio_cap_pct * self.account_balance - portfolio_used)
         allowed_usd = min(allowed_usd, portfolio_free)
 
         # Respect minimum trade size
         if allowed_usd < self.min_trade_usd:
             raise RiskViolationError(
-                f"Size {allowed_usd:.2f} below minimum trade USD {self.min_trade_usd:.2f}",
+                f"Size {allowed_usd:.2f} below minimum trade USD "
+                f"{self.min_trade_usd:.2f}",
                 context={"symbol": symbol}
             )
         return allowed_usd
 
     def _get_risk_parameters(self, risk_percent, rr, regime):
         risk_pct, rr_final = self._apply_regime_adjustments(
-            risk_percent if risk_percent is not None else self.base_risk_per_trade_pct,
+            risk_percent if risk_percent is not None
+            else self.base_risk_per_trade_pct,
             rr if rr is not None else self.min_rr,
             regime,
         )
@@ -186,7 +192,8 @@ class RiskManager:
 
     def _adjust_units_for_caps(self, units, entry_price, symbol):
         desired_usd_exposure = units * entry_price
-        allowed_usd = self.size_position_usd_capped(symbol, desired_usd_exposure)
+        allowed_usd = self.size_position_usd_capped(
+            symbol, desired_usd_exposure)
         if allowed_usd < desired_usd_exposure:
             units = allowed_usd / entry_price
         return units
@@ -209,21 +216,25 @@ class RiskManager:
         """
         self._validate_prices(entry_price, stop_price)
 
-        risk_pct, rr_final, dollar_risk = self._get_risk_parameters(risk_percent, rr, regime)
-        units = self._calculate_initial_units(dollar_risk, entry_price, stop_price)
+        risk_pct, rr_final, dollar_risk = self._get_risk_parameters(
+            risk_percent, rr, regime)
+        units = self._calculate_initial_units(
+            dollar_risk, entry_price, stop_price)
         units = self._adjust_units_for_caps(units, entry_price, symbol)
 
         # Leverage sanity (approximate initial margin)
         margin_required = (units * entry_price) / max(self.max_leverage, 1)
         if margin_required > self.account_balance:
             raise RiskViolationError(
-                f"Insufficient margin: need {margin_required:.2f} > balance {self.account_balance:.2f}"
+                f"Insufficient margin: need {margin_required:.2f} > "
+                f"balance {self.account_balance:.2f}"
             )
 
         # If ATR is given, re-derive SL/TP to align with volatility bands
         if atr is not None and atr > 0:
-            sl, tp = self.compute_sl_tp_from_atr(side, entry_price, atr, rr_final)
-            # Never set SL beyond the proposed stop_price (i.e., never more risk)
+            sl, tp = self.compute_sl_tp_from_atr(
+                side, entry_price, atr, rr_final)
+            # Never set SL beyond the proposed stop_price
             if side == "long":
                 stop_price = max(stop_price, sl)
             else:
@@ -252,7 +263,7 @@ class RiskManager:
         return pos
 
     def register_open_position(self, key: str, position: PositionRisk) -> None:
-        """Store newly opened position under a stable key (e.g., symbol or symbol|id)."""
+        """Store newly opened position under a stable key."""
         self.open_positions[key] = position
 
     def unregister_position(self, key: str) -> None:
@@ -294,7 +305,7 @@ class RiskManager:
             advance = max(0.0, p.entry_price - current_price)
             one_r = abs(p.stop_loss - p.entry_price)
             if one_r > 0 and advance >= one_r:
-                new_sl = min(new_sl, p.entry_price)  # never above entry for shorts
+                new_sl = min(new_sl, p.entry_price)
             if atr is not None and atr > 0:
                 trail = current_price + self.atr_mult_sl * atr
                 new_sl = min(new_sl, trail)
@@ -305,11 +316,13 @@ class RiskManager:
         else:
             new_sl = min(new_sl, p.stop_loss)
 
-        # Recompute TP to maintain R:R from entry (optional policy: keep TP static)
+        # Recompute TP to maintain R:R from entry
         if p.side == "long":
-            new_tp = p.entry_price + p.risk_reward_ratio * (p.entry_price - new_sl)
+            new_tp = p.entry_price + \
+                p.risk_reward_ratio * (p.entry_price - new_sl)
         else:
-            new_tp = p.entry_price - p.risk_reward_ratio * (new_sl - p.entry_price)
+            new_tp = p.entry_price - \
+                p.risk_reward_ratio * (new_sl - p.entry_price)
 
         updated = PositionRisk(
             symbol=p.symbol,
@@ -331,16 +344,24 @@ class RiskManager:
     # Portfolio stats
     # ────────────────────────────────────────────────────────────────────────────
     def portfolio_exposure_usd(self) -> float:
-        return sum(p.position_size * p.entry_price for p in self.open_positions.values())
+        """
+        Returns the total USD exposure of all open positions.
+        """
+        return sum(p.position_size * p.entry_price
+                   for p in self.open_positions.values())
 
     def portfolio_risk_snapshot(self) -> Dict[str, float]:
+        """
+        Returns a snapshot of the portfolio's risk.
+        """
         expo = self.portfolio_exposure_usd()
         return {
             "equity": self.current_equity,
             "exposure_usd": expo,
             "exposure_pct": expo / max(self.account_balance, 1e-9),
             "concurrent_positions": float(len(self.open_positions)),
-            "drawdown": (self.peak_equity - self.current_equity) / max(self.peak_equity, 1e-9),
+            "drawdown": (self.peak_equity - self.current_equity) / max(
+                self.peak_equity, 1e-9),
         }
 
     # ────────────────────────────────────────────────────────────────────────────
@@ -359,12 +380,11 @@ class RiskManager:
         regime: Optional[Literal["trend", "range"]],
     ) -> tuple[float, float]:
         """
-        Adjust risk and RR by regime:
-          - In trend: slightly reduce exploration & widen SL → higher RR target
-          - In range: tighten SL a bit → slightly lower RR target to take profits quicker
+        Adjust risk and RR by regime.
         """
         if regime == "trend":
-            risk_adj = max(0.5 * risk_pct, 0.5 * self.base_risk_per_trade_pct)
+            risk_adj = max(
+                0.5 * risk_pct, 0.5 * self.base_risk_per_trade_pct)
             rr_adj = max(rr, self.min_rr + 0.5)
             return (risk_adj, rr_adj)
         if regime == "range":

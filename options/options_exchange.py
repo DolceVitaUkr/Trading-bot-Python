@@ -1,6 +1,7 @@
 from decimal import Decimal
 from typing import Literal, Optional
 
+
 class OptionsExchange:
     """
     Options Exchange adapter for options instruments (crypto or FX).
@@ -26,9 +27,10 @@ class OptionsExchange:
             expiry: Expiry date in YYYY-MM-DD format
 
         Returns:
-            List of options contracts (dicts with strikes, type, bid/ask, etc.)
+            List of options contracts
         """
-        raise NotImplementedError("Option chain retrieval not yet implemented.")
+        raise NotImplementedError(
+            "Option chain retrieval not yet implemented.")
 
     async def create_order_async(
         self,
@@ -56,11 +58,11 @@ class OptionsExchange:
         Returns:
             Order confirmation dict from the exchange
         """
-        raise NotImplementedError("Options order placement not yet implemented.")
+        raise NotImplementedError(
+            "Options order placement not yet implemented.")
 
     async def reconcile_async(self) -> None:
         """
         Reconcile open options positions and orders after restart.
-        Intended to re-attach SL/TP or clean stale orders.
         """
         raise NotImplementedError("Options reconcile not yet implemented.")

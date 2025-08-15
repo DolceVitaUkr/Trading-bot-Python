@@ -6,7 +6,7 @@ import sys
 import threading
 import time
 from datetime import datetime, timezone
-from typing import Optional, Dict, Any
+from typing import Optional
 
 import config
 from utils.utilities import configure_logging
@@ -23,6 +23,15 @@ from scheduler import JobScheduler
 
 
 def build_risk_manager(account_balance: float) -> RiskManager:
+    """
+    Builds a RiskManager instance based on the configuration.
+
+    Args:
+        account_balance: The current account balance.
+
+    Returns:
+        A RiskManager instance.
+    """
     caps = config.RISK_CAPS.get(
         "crypto_spot" if config.EXCHANGE_PROFILE == "spot" else "perp",
         {"per_pair_pct": 0.15, "portfolio_concurrent_pct": 0.30},
@@ -40,8 +49,20 @@ def build_risk_manager(account_balance: float) -> RiskManager:
     return rm
 
 
-def run_bot(args: argparse.Namespace, test_mode: bool = False, stop_event: Optional[threading.Event] = None) -> int:
+def run_bot(args: argparse.Namespace,
+            test_mode: bool = False,
+            stop_event: Optional[threading.Event] = None) -> int:
+    """
+    Initializes and runs the trading bot.
 
+    Args:
+        args: The command-line arguments.
+        test_mode: Whether to run in test mode.
+        stop_event: An event to stop the bot.
+
+    Returns:
+        The exit code.
+    """
     configure_logging(config.LOG_LEVEL, config.LOG_FILE)
     log = logging.getLogger("main")
     log.info("Booting Self-Learning Trading Bot…")
@@ -71,7 +92,7 @@ def run_bot(args: argparse.Namespace, test_mode: bool = False, stop_event: Optio
         exchange=exchange,
         quote="USDT",
         max_pairs=config.MAX_SIMULATION_PAIRS,
-        ttl_sec=60 * 60,   # re-scan hourly
+        ttl_sec=60 * 60,  # re-scan hourly
         min_volume_usd_24h=5_000_000,
     )
 
@@ -96,8 +117,8 @@ def run_bot(args: argparse.Namespace, test_mode: bool = False, stop_event: Optio
         memory_size=100_000,
         tau=0.005,
         training=True,
-        timeframe="5m",                        # Primary loop on 5m
-        symbol=config.DEFAULT_SYMBOL,          # Fallback if top-pairs empty
+        timeframe="5m",  # Primary loop on 5m
+        symbol=config.DEFAULT_SYMBOL,  # Fallback if top-pairs empty
     )
 
     # UI
@@ -139,18 +160,22 @@ def run_bot(args: argparse.Namespace, test_mode: bool = False, stop_event: Optio
         try:
             pairs = top_pairs.get_top_pairs()  # triggers refresh if stale
             bot.top_symbols = pairs or [config.DEFAULT_SYMBOL]
-            ui.log(f"Top pairs refreshed: {', '.join(bot.top_symbols)}", level="INFO")
+            ui.log(f"Top pairs refreshed: {', '.join(bot.top_symbols)}",
+                   level="INFO")
         except Exception as e:
             ui.log(f"Top pairs refresh failed: {e}", level="ERROR")
 
-    scheduler.every(minutes=60, name="hourly_top_pairs", func=refresh_pairs_job)
+    scheduler.every(minutes=60, name="hourly_top_pairs",
+                    func=refresh_pairs_job)
 
     # 2) 15m setup scan (secondary timeframe)
     def fifteen_scan_job():
         try:
-            symbols = getattr(bot, "top_symbols", None) or [config.DEFAULT_SYMBOL]
+            symbols = getattr(bot, "top_symbols",
+                                None) or [config.DEFAULT_SYMBOL]
             for sym in symbols:
-                dm.load_historical_data(sym, "15m", backfill_bars=300)  # light backfill
+                dm.load_historical_data(
+                    sym, "15m", backfill_bars=300)  # light backfill
                 # You can add setup-detection hooks here if needed
         except Exception as e:
             ui.log(f"15m scan error: {e}", level="ERROR")
@@ -163,7 +188,8 @@ def run_bot(args: argparse.Namespace, test_mode: bool = False, stop_event: Optio
             # live balance (if we had real, keep sim for now)
             live_balance = trade_executor.get_balance()
             # sim portfolio value from agent perspective
-            portfolio_val = getattr(bot, "portfolio_value", float(starting_balance))
+            portfolio_val = getattr(bot, "portfolio_value",
+                                    float(starting_balance))
             reward_pts = getattr(bot.reward_system, "total_points", 0.0)
             ui.update_live_metrics({
                 "balance": live_balance,
@@ -171,31 +197,37 @@ def run_bot(args: argparse.Namespace, test_mode: bool = False, stop_event: Optio
                 "symbol": bot.symbol or config.DEFAULT_SYMBOL,
                 "timeframe": bot.timeframe,
             })
-            ui.update_timeseries(wallet=live_balance, vwallet=portfolio_val, points=reward_pts)
+            ui.update_timeseries(wallet=live_balance,
+                                  vwallet=portfolio_val,
+                                  points=reward_pts)
         except Exception as e:
             logging.getLogger("main").debug(f"Heartbeat err: {e}")
 
-    scheduler.every(seconds=max(5, int(config.LIVE_LOOP_INTERVAL)), name="heartbeat", func=heartbeat_job)
+    scheduler.every(seconds=max(5, int(config.LIVE_LOOP_INTERVAL)),
+                    name="heartbeat", func=heartbeat_job)
 
     # Start scheduler thread
-    scheduler_thread = threading.Thread(target=scheduler.run_forever, daemon=True)
+    scheduler_thread = threading.Thread(target=scheduler.run_forever,
+                                        daemon=True)
     scheduler_thread.start()
 
     # Agent background loop (5m tick loop, sim execution, live data)
     def agent_loop():
         while not (stop_event and stop_event.is_set()):
             try:
-                symbols = getattr(bot, "top_symbols", None) or [config.DEFAULT_SYMBOL]
+                symbols = getattr(bot, "top_symbols",
+                                    None) or [config.DEFAULT_SYMBOL]
                 for sym in symbols:
                     # Keep data fresh & light: append-only small pulls
                     dm.load_historical_data(sym, "5m", incremental=True)
                     # Act & learn using the latest state (sim execution)
-                    bot.act_and_learn(sym, timestamp=datetime.now(timezone.utc))
+                    bot.act_and_learn(sym,
+                                      timestamp=datetime.now(timezone.utc))
                 # Pace loop
                 time.sleep(max(5, float(config.LIVE_LOOP_INTERVAL)))
 
                 if test_mode:
-                    break # Run only once in test mode
+                    break  # Run only once in test mode
             except Exception as e:
                 logging.getLogger("main").exception(f"agent_loop error: {e}")
                 time.sleep(5)
@@ -216,8 +248,19 @@ def run_bot(args: argparse.Namespace, test_mode: bool = False, stop_event: Optio
 
 
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
+    """
+    Parses command-line arguments.
+
+    Args:
+        argv: The list of command-line arguments.
+
+    Returns:
+        The parsed arguments.
+    """
     p = argparse.ArgumentParser(description="Self-Learning AI Trading Bot")
-    p.add_argument("--mode", choices=["simulation", "production"], default=config.ENVIRONMENT)
+    p.add_argument("--mode",
+                   choices=["simulation", "production"],
+                   default=config.ENVIRONMENT)
     return p.parse_args(argv)
 
 

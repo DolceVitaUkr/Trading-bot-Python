@@ -14,7 +14,8 @@ getcontext().prec = 28
 logger = logging.getLogger(__name__)
 if not logger.handlers:
     handler = logging.StreamHandler()
-    handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
     logger.addHandler(handler)
 logger.setLevel(logging.INFO)
 
@@ -29,7 +30,8 @@ def calculate_trade_result(
     Basic trade P&L calculation with fees.
     Returns profit, fees, and return percentage.
     """
-    fee_percentage = fee_percentage or getattr(config, "DEFAULT_TRADE_FEE", 0.002)
+    fee_percentage = fee_percentage or getattr(
+        config, "DEFAULT_TRADE_FEE", 0.002)
     try:
         entry = Decimal(str(entry_price))
         exit_p = Decimal(str(exit_price))
@@ -39,7 +41,10 @@ def calculate_trade_result(
         gross_profit = (exit_p - entry) * qty
         fees = (entry + exit_p) * qty * fee_rate
         net_profit = gross_profit - fees
-        return_pct = (net_profit / (entry * qty) * Decimal('100')) if entry * qty != 0 else Decimal('0')
+        if entry * qty != 0:
+            return_pct = (net_profit / (entry * qty) * Decimal('100'))
+        else:
+            return_pct = Decimal('0')
 
         return {
             'profit': float(net_profit),
@@ -53,7 +58,7 @@ def calculate_trade_result(
 
 class AdvancedTradeCalculator:
     """
-    Institutional-grade calculations including leverage, fees, interest, slippage,
+    Calculations including leverage, fees, interest, slippage,
     and optional reward points.
     """
     def __init__(
@@ -63,10 +68,17 @@ class AdvancedTradeCalculator:
         maintenance_margin: Decimal = None,
         daily_interest_rate: Decimal = None
     ):
-        self.maker_fee = maker_fee or Decimal(str(getattr(config, "MAKER_FEE", 0.0002)))
-        self.taker_fee = taker_fee or Decimal(str(getattr(config, "TAKER_FEE", 0.0006)))
-        self.maintenance_margin = maintenance_margin or Decimal(str(getattr(config, "MAINTENANCE_MARGIN", 0.005)))
-        self.daily_interest_rate = daily_interest_rate or Decimal(str(getattr(config, "DAILY_INTEREST_RATE", 0.00025)))
+        """
+        Initializes the AdvancedTradeCalculator.
+        """
+        self.maker_fee = maker_fee or Decimal(
+            str(getattr(config, "MAKER_FEE", 0.0002)))
+        self.taker_fee = taker_fee or Decimal(
+            str(getattr(config, "TAKER_FEE", 0.0006)))
+        self.maintenance_margin = maintenance_margin or Decimal(
+            str(getattr(config, "MAINTENANCE_MARGIN", 0.005)))
+        self.daily_interest_rate = daily_interest_rate or Decimal(
+            str(getattr(config, "DAILY_INTEREST_RATE", 0.00025)))
 
     def calculate_trade(
         self,
@@ -104,13 +116,19 @@ class AdvancedTradeCalculator:
 
         price_diff = effective_exit - effective_entry
         gross_pnl = position_size * price_diff
-        interest_cost = risk_capital * Decimal(leverage) * self.daily_interest_rate * Decimal(holding_days)
+        interest_cost = (risk_capital * Decimal(leverage) *
+                         self.daily_interest_rate * Decimal(holding_days))
         net_pnl = gross_pnl - total_fee - interest_cost
 
-        effective_roi = (net_pnl / risk_capital) * Decimal('100') if risk_capital != 0 else Decimal('0')
+        if risk_capital != 0:
+            effective_roi = (net_pnl / risk_capital) * Decimal('100')
+        else:
+            effective_roi = Decimal('0')
 
         if leverage > 1:
-            liq_price = effective_entry - (effective_entry * (self.maintenance_margin / (Decimal(leverage) - self.maintenance_margin)))
+            liq_price = effective_entry - (
+                effective_entry * (self.maintenance_margin /
+                                   (Decimal(leverage) - self.maintenance_margin)))
         else:
             liq_price = Decimal('0')
 

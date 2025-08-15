@@ -6,7 +6,8 @@ from typing import List, Tuple, Dict, Optional
 # NOTE: This module exposes a *function* API (sma, ema, rsi, atr, etc.)
 # AND a wrapper class `TechnicalIndicators` with pandas-aware static methods.
 # - Functions: operate on plain Python lists, return scalars/series-likes.
-# - Class methods: accept pandas Series (preferred) or lists; return pandas Series.
+# - Class methods: accept pandas Series (preferred) or lists;
+#   return pandas Series.
 
 
 # ─────────────────────────────
@@ -33,10 +34,13 @@ def ema(data: List[float], window: int) -> Optional[float]:
 
 # Backwards-compat aliases
 def moving_average(data: List[float], period: int) -> Optional[float]:
+    """Alias for sma."""
     return sma(data, period)
 
 
-def exponential_moving_average(data: List[float], period: int) -> Optional[float]:
+def exponential_moving_average(
+        data: List[float], period: int) -> Optional[float]:
+    """Alias for ema."""
     return ema(data, period)
 
 
@@ -92,7 +96,8 @@ def stochastic_oscillator(
             k_val = (close[i] - low_min) / denom * 100.0
             k_line[i] = k_val
             if i + 1 >= k_period + d_period - 1:
-                window = [v for v in k_line[i + 1 - d_period:i + 1] if v is not None]
+                window = [
+                    v for v in k_line[i + 1 - d_period:i + 1] if v is not None]
                 if window:
                     d_line[i] = sum(window) / len(window)
     return k_line, d_line
@@ -114,7 +119,10 @@ def williams_r(high: List[float], low: List[float], close: List[float],
 # ─────────────────────────────
 # Trend / Volatility (list API)
 # ─────────────────────────────
-def atr(high: List[float], low: List[float], close: List[float], period: int = 14) -> Optional[float]:
+def atr(high: List[float],
+        low: List[float],
+        close: List[float],
+        period: int = 14) -> Optional[float]:
     """Average True Range (last value, Wilder smoothing)."""
     if period <= 0:
         return None
@@ -192,7 +200,10 @@ def cci(high: List[float], low: List[float], close: List[float],
     return (tp[-1] - sma_tp) / (0.015 * mean_dev)
 
 
-def bollinger_bands(close: List[float], period: int = 20, num_std: float = 2.0) -> Optional[Tuple[float, float, float]]:
+def bollinger_bands(
+        close: List[float],
+        period: int = 20,
+        num_std: float = 2.0) -> Optional[Tuple[float, float, float]]:
     """Bollinger Bands (middle SMA, upper, lower) for the last bar."""
     if not close or len(close) < period:
         return None
@@ -205,7 +216,9 @@ def bollinger_bands(close: List[float], period: int = 20, num_std: float = 2.0) 
     return mid, upper, lower
 
 
-def entropy_volatility(close: List[float], period: int = 14) -> Optional[List[Optional[float]]]:
+def entropy_volatility(
+        close: List[float],
+        period: int = 14) -> Optional[List[Optional[float]]]:
     """Rolling entropy of absolute returns over `period` (list API)."""
     length = len(close)
     if not close or length < period + 1:
@@ -267,7 +280,10 @@ def fibonacci_retracement(
     }
 
 
-def market_regime(close: List[float], short_period: int = 50, long_period: int = 200) -> Optional[List[Optional[int]]]:
+def market_regime(
+        close: List[float],
+        short_period: int = 50,
+        long_period: int = 200) -> Optional[List[Optional[int]]]:
     """Market regime series (list API). +1 if short SMA > long SMA, else -1."""
     length = len(close)
     if not close or length < long_period:
@@ -275,10 +291,11 @@ def market_regime(close: List[float], short_period: int = 50, long_period: int =
     regime: List[Optional[int]] = [None] * length
     for i in range(length):
         if i + 1 >= long_period:
-            short_sma = sum(close[i + 1 - short_period:i + 1]) / short_period if i + 1 >= short_period else None
-            long_sma = sum(close[i + 1 - long_period:i + 1]) / long_period
-            if short_sma is not None:
-                regime[i] = 1 if short_sma > long_sma else -1
+            short_sma_val = (sum(close[i + 1 - short_period:i + 1]) /
+                             short_period if i + 1 >= short_period else None)
+            long_sma_val = sum(close[i + 1 - long_period:i + 1]) / long_period
+            if short_sma_val is not None:
+                regime[i] = 1 if short_sma_val > long_sma_val else -1
     return regime
 
 
@@ -286,19 +303,6 @@ def market_regime(close: List[float], short_period: int = 50, long_period: int =
 # Pandas-aware wrapper class (single definition)
 # ─────────────────────────────
 class TechnicalIndicators:
-    sma = staticmethod(sma)
-    ema = staticmethod(ema)
-    rsi = staticmethod(rsi)
-    atr = staticmethod(atr)
-    adx = staticmethod(adx)
-    cci = staticmethod(cci)
-    williams_r = staticmethod(williams_r)
-    obv = staticmethod(obv)
-    stochastic_oscillator = staticmethod(stochastic_oscillator)
-    bollinger_bands = staticmethod(bollinger_bands)
-    fibonacci_retracement = staticmethod(fibonacci_retracement)
-    market_regime = staticmethod(market_regime)
-    entropy_volatility = staticmethod(entropy_volatility)
 
     @staticmethod
     def _to_series(x):
@@ -314,15 +318,6 @@ class TechnicalIndicators:
     def generate_signal(df_15m, df_5m, params: Optional[Dict] = None) -> Dict:
         """
         Generates a trading signal using a multi-timeframe EMA/RSI strategy.
-
-        Args:
-            df_15m: DataFrame for the 15-minute timeframe.
-            df_5m: DataFrame for the 5-minute timeframe.
-            params: Dictionary of strategy parameters.
-
-        Returns:
-            A dictionary containing the signal ('buy', 'sell', or None)
-            and TP/SL levels.
         """
         if params is None:
             params = {
@@ -338,48 +333,52 @@ class TechnicalIndicators:
 
         # 15m Trend Analysis
         close_15m = df_15m['close']
-        ema_long = TechnicalIndicators.ema(close_15m, window=params["ema_long_period"])
-        rsi = TechnicalIndicators.rsi(close_15m, window=params["rsi_period"])
+        ema_long = TechnicalIndicators.ema(
+            close_15m, window=params["ema_long_period"])
+        rsi_15m = TechnicalIndicators.rsi(
+            close_15m, window=params["rsi_period"])
 
-        if ema_long is None or rsi is None:
+        if ema_long is None or rsi_15m is None:
             return {"side": None}
 
         last_close_15m = close_15m.iloc[-1]
         last_ema_long = ema_long.iloc[-1]
-        last_rsi = rsi.iloc[-1]
+        last_rsi = rsi_15m.iloc[-1]
 
-        is_bullish_trend = last_close_15m > last_ema_long and last_rsi > params["rsi_level"]
-        is_bearish_trend = last_close_15m < last_ema_long and last_rsi < params["rsi_level"]
+        is_bullish = (last_close_15m > last_ema_long and
+                      last_rsi > params["rsi_level"])
+        is_bearish = (last_close_15m < last_ema_long and
+                      last_rsi < params["rsi_level"])
 
         # 5m Entry Signal
         close_5m = df_5m['close']
-        ema_short_1 = TechnicalIndicators.ema(close_5m, window=params["ema_short_period_1"])
-        ema_short_2 = TechnicalIndicators.ema(close_5m, window=params["ema_short_period_2"])
+        ema_short_1 = TechnicalIndicators.ema(
+            close_5m, window=params["ema_short_period_1"])
+        ema_short_2 = TechnicalIndicators.ema(
+            close_5m, window=params["ema_short_period_2"])
 
         if ema_short_1 is None or ema_short_2 is None:
             return {"side": None}
 
         # Check for crossover in the last 2 candles
-        cross_up = (ema_short_1.iloc[-2] < ema_short_2.iloc[-2]) and \
-                   (ema_short_1.iloc[-1] > ema_short_2.iloc[-1])
-        cross_down = (ema_short_1.iloc[-2] > ema_short_2.iloc[-2]) and \
-                     (ema_short_1.iloc[-1] < ema_short_2.iloc[-1])
+        cross_up = ((ema_short_1.iloc[-2] < ema_short_2.iloc[-2]) and
+                    (ema_short_1.iloc[-1] > ema_short_2.iloc[-1]))
+        cross_down = ((ema_short_1.iloc[-2] > ema_short_2.iloc[-2]) and
+                      (ema_short_1.iloc[-1] < ema_short_2.iloc[-1]))
 
         signal = {"side": None}
 
         # Generate signal with TP/SL
-        if is_bullish_trend and cross_up:
+        if is_bullish and cross_up:
             signal["side"] = "buy"
-        elif is_bearish_trend and cross_down:
+        elif is_bearish and cross_down:
             signal["side"] = "sell"
         else:
-            return signal # No trade
+            return signal  # No trade
 
         # Calculate TP/SL using 15m ATR
         atr_series_15m = TechnicalIndicators.atr(
-            df_15m['high'],
-            df_15m['low'],
-            df_15m['close'],
+            df_15m['high'], df_15m['low'], df_15m['close'],
             period=params["atr_period"]
         )
 
@@ -387,16 +386,23 @@ class TechnicalIndicators:
             atr_15m = atr_series_15m.iloc[-1]
             last_close_5m = close_5m.iloc[-1]
             if signal["side"] == "buy":
-                signal["sl"] = last_close_5m - (atr_15m * params["sl_atr_multiplier"])
-                signal["tp"] = last_close_5m + (atr_15m * params["tp_atr_multiplier"])
-            else: # sell
-                signal["sl"] = last_close_5m + (atr_15m * params["sl_atr_multiplier"])
-                signal["tp"] = last_close_5m - (atr_15m * params["tp_atr_multiplier"])
+                signal["sl"] = last_close_5m - \
+                    (atr_15m * params["sl_atr_multiplier"])
+                signal["tp"] = last_close_5m + \
+                    (atr_15m * params["tp_atr_multiplier"])
+            else:  # sell
+                signal["sl"] = last_close_5m + \
+                    (atr_15m * params["sl_atr_multiplier"])
+                signal["tp"] = last_close_5m - \
+                    (atr_15m * params["tp_atr_multiplier"])
 
         return signal
 
     @staticmethod
     def sma(series, window: int):
+        """
+        Calculates the Simple Moving Average (SMA) of a series.
+        """
         s = TechnicalIndicators._to_series(series)
         if s is None:
             return None
@@ -407,23 +413,32 @@ class TechnicalIndicators:
 
     @staticmethod
     def ema(series, window: int):
+        """
+        Calculates the Exponential Moving Average (EMA) of a series.
+        """
         s = TechnicalIndicators._to_series(series)
         if s is None:
             return None
         try:
-            return s.ewm(span=window, adjust=False, min_periods=window).mean()
+            return s.ewm(
+                span=window, adjust=False, min_periods=window).mean()
         except Exception:
             return None
 
     @staticmethod
     def rsi(series, window: int = 14):
+        """
+        Calculates the Relative Strength Index (RSI) of a series.
+        """
         s = TechnicalIndicators._to_series(series)
         if s is None:
             return None
         try:
             delta = s.diff()
-            up = delta.clip(lower=0).rolling(window=window, min_periods=window).mean()
-            down = (-delta.clip(upper=0)).rolling(window=window, min_periods=window).mean()
+            up = delta.clip(lower=0).rolling(
+                window=window, min_periods=window).mean()
+            down = (-delta.clip(upper=0)).rolling(
+                window=window, min_periods=window).mean()
             rs = up / down.replace(0, float("inf"))
             return 100 - (100 / (1 + rs))
         except Exception:
@@ -431,6 +446,9 @@ class TechnicalIndicators:
 
     @staticmethod
     def atr(high, low, close, period: int = 14):
+        """
+        Calculates the Average True Range (ATR) of a series.
+        """
         s_high = TechnicalIndicators._to_series(high)
         s_low = TechnicalIndicators._to_series(low)
         s_close = TechnicalIndicators._to_series(close)
@@ -444,11 +462,12 @@ class TechnicalIndicators:
             high_close = (s_high - s_close.shift()).abs()
             low_close = (s_low - s_close.shift()).abs()
 
-            tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+            tr = pd.concat(
+                [high_low, high_close, low_close], axis=1).max(axis=1)
 
             # Wilder's smoothing (RMA)
-            atr_series = tr.ewm(alpha=1/period, adjust=False, min_periods=period).mean()
+            atr_series = tr.ewm(
+                alpha=1/period, adjust=False, min_periods=period).mean()
             return atr_series
         except Exception:
             return None
-

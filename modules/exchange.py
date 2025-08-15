@@ -7,17 +7,17 @@ from typing import Any, Dict, Optional
 
 import ccxt
 import config
+from modules.error_handler import ErrorHandler
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:
     h = logging.StreamHandler()
-    h.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+    h.setFormatter(
+        logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
     logger.addHandler(h)
-logger.setLevel(getattr(logging, str(getattr(config, "LOG_LEVEL", "INFO")), logging.INFO)
-                if isinstance(getattr(config, "LOG_LEVEL", "INFO"), str) else getattr(config, "LOG_LEVEL", logging.INFO))
-
-
-from modules.error_handler import ErrorHandler
+log_level_str = str(getattr(config, "LOG_LEVEL", "INFO"))
+log_level = getattr(logging, log_level_str, logging.INFO)
+logger.setLevel(log_level)
 
 
 class ExchangeAPI:
@@ -31,31 +31,37 @@ class ExchangeAPI:
       - get_min_cost(symbol)
       - get_amount_precision(symbol)
       - get_price_precision(symbol)
-      - fetch_positions(symbol)         # live only → list[dict]; paper returns internal
-      - create_order(symbol, type, side, amount, price, attach_sl/attach_tp, reduce_only)
-      - _simulate_order(...)            # paper engine for TradeExecutor
+      - fetch_positions(symbol)
+      - create_order(...)
+      - _simulate_order(...)
 
     Notes
     -----
     • Symbols use the ccxt standard with slash, e.g. "BTC/USDT".
     • In SIM mode, we keep:
-        _sim_cash_usd  : float  (starting from SIMULATION_START_BALANCE)
+        _sim_cash_usd  : float
         _sim_positions : dict[symbol] -> {side, quantity, entry_price, sl, tp}
-        _last_price    : dict[symbol] -> float   (simple cache from last get_price)
+        _last_price    : dict[symbol] -> float
     """
 
     def __init__(self):
+        """
+        Initializes the ExchangeAPI.
+        """
         self.is_testnet = bool(getattr(config, "USE_TESTNET", True))
         self.profile = getattr(config, "EXCHANGE_PROFILE", "spot")
         self.fee_rate = float(getattr(config, "FEE_PERCENTAGE", 0.002))
-        self.sim_delay = float(getattr(config, "SIMULATION_ORDER_DELAY", 0.5))
+        self.sim_delay = float(
+            getattr(config, "SIMULATION_ORDER_DELAY", 0.5))
         self.error_handler = ErrorHandler()
 
         # --- ccxt client (Bybit) ---
         # We prefer spot unless explicitly perp.
         bybit_kwargs = {
-            "apiKey": config.SIMULATION_BYBIT_API_KEY if self.is_testnet else config.BYBIT_API_KEY,
-            "secret": config.SIMULATION_BYBIT_API_SECRET if self.is_testnet else config.BYBIT_API_SECRET,
+            "apiKey": (config.SIMULATION_BYBIT_API_KEY if self.is_testnet
+                       else config.BYBIT_API_KEY),
+            "secret": (config.SIMULATION_BYBIT_API_SECRET if self.is_testnet
+                       else config.BYBIT_API_SECRET),
             "enableRateLimit": True,
             "options": {
                 "defaultType": "spot" if self.profile == "spot" else "swap",
@@ -74,11 +80,15 @@ class ExchangeAPI:
         self._markets = {}
 
         # --- Paper engine state ---
-        self._sim_cash_usd: float = float(getattr(config, "SIMULATION_START_BALANCE", 1000.0))
+        self._sim_cash_usd: float = float(
+            getattr(config, "SIMULATION_START_BALANCE", 1000.0))
         self._sim_positions: Dict[str, Dict[str, Any]] = {}
         self._last_price: Dict[str, float] = {}
 
     def load_markets(self):
+        """
+        Loads the markets from the exchange.
+        """
         try:
             self._markets = self.client.load_markets()
         except Exception as e:
@@ -101,6 +111,9 @@ class ExchangeAPI:
     # Live-ish helpers
     # ──────────────────────────────────────────────────────────────────────
     def get_price(self, symbol: str) -> Optional[float]:
+        """
+        Gets the price of a symbol.
+        """
         sym = self._resolve_symbol(symbol)
         # Try ticker first
         try:
@@ -116,6 +129,9 @@ class ExchangeAPI:
         return self._last_price.get(sym)
 
     def get_balance(self) -> float:
+        """
+        Gets the balance of the account.
+        """
         if self.is_testnet or getattr(config, "USE_SIMULATION", True):
             return float(self._sim_cash_usd)
         try:
@@ -131,6 +147,9 @@ class ExchangeAPI:
             return 0.0
 
     def get_min_cost(self, symbol: str) -> float:
+        """
+        Gets the minimum cost of a trade for a symbol.
+        """
         sym = self._resolve_symbol(symbol)
         m = self._markets.get(sym)
         if not m:
@@ -149,6 +168,9 @@ class ExchangeAPI:
         return float(min_cost)
 
     def get_amount_precision(self, symbol: str) -> int:
+        """
+        Gets the amount precision for a symbol.
+        """
         sym = self._resolve_symbol(symbol)
         m = self._markets.get(sym)
         if not m:
@@ -164,6 +186,9 @@ class ExchangeAPI:
         return int(prec)
 
     def get_price_precision(self, symbol: str) -> int:
+        """
+        Gets the price precision for a symbol.
+        """
         sym = self._resolve_symbol(symbol)
         m = self._markets.get(sym)
         if not m:
@@ -197,7 +222,8 @@ class ExchangeAPI:
             }]
         try:
             # Not all venues support fetch_positions for spot; handle gracefully
-            positions = self.client.fetch_positions([self._resolve_symbol(symbol)])
+            positions = self.client.fetch_positions(
+                [self._resolve_symbol(symbol)])
             return positions or []
         except Exception as e:
             logger.debug(f"fetch_positions not supported/failed: {e}")
@@ -215,7 +241,7 @@ class ExchangeAPI:
         attach_tp: Optional[float] = None,
         reduce_only: bool = False
     ) -> Dict[str, Any]:
-        """Live path only; paper is handled by TradeExecutor via _simulate_order()."""
+        """Live path only; paper is handled by TradeExecutor."""
         sym = self._resolve_symbol(symbol)
         try:
             params = {}
@@ -224,15 +250,17 @@ class ExchangeAPI:
 
             # Some ccxt/venue combos require price for limit only
             if type.lower() == "market":
-                order = self.client.create_order(sym, "market", side, amount, None, params)
+                order = self.client.create_order(
+                    sym, "market", side, amount, None, params)
             else:
-                order = self.client.create_order(sym, "limit", side, amount, price, params)
+                order = self.client.create_order(
+                    sym, "limit", side, amount, price, params)
 
             # Inline SL/TP: best-effort, many venues require separate orders
             # so we skip here to keep compatibility.
 
             return order
-        except Exception as e:
+        except Exception:
             # surface exception; TradeExecutor will wrap it
             raise
 
@@ -253,8 +281,8 @@ class ExchangeAPI:
     ) -> Dict[str, Any]:
         """
         Very lightweight spot-like simulator:
-         - Long or Short "positions" (we allow short notionally for strategy testing)
-         - Open: deduct entry notional from cash (fees applied in TradeExecutor)
+         - Long or Short "positions"
+         - Open: deduct entry notional from cash
          - Close: release notional and realize PnL to cash
          - Average price when adding to existing position of same side
          - If opening opposite side, we close existing (simple netting)
@@ -265,7 +293,6 @@ class ExchangeAPI:
         """
         sym = self._resolve_symbol(symbol)
         side = side.lower()
-        order_type = order_type.lower()
 
         # Artificial delay to feel realistic
         try:
@@ -302,7 +329,8 @@ class ExchangeAPI:
             if new_qty <= 0:
                 return {"status": "rejected", "reason": "nonpositive_qty"}
 
-            avg_entry = (pos["entry_price"] * pos["quantity"] + px * qty) / new_qty
+            avg_entry = (
+                pos["entry_price"] * pos["quantity"] + px * qty) / new_qty
             pos["quantity"] = new_qty
             pos["entry_price"] = avg_entry
             if attach_sl is not None:
@@ -339,9 +367,7 @@ class ExchangeAPI:
         sl: Optional[float], tp: Optional[float]
     ):
         """
-        Open a notional position:
-          - We “reserve” notional by moving it out of cash, but actual fee
-            handling is performed by TradeExecutor (so we don’t double-count).
+        Open a notional position.
         """
         notional = float(qty * price)
         # Reserve: move cash down by notional (naive spot-like accounting)
@@ -357,7 +383,11 @@ class ExchangeAPI:
             "tp": float(tp) if tp else None,
         }
 
-    def _close_position(self, symbol: str, price: float, qty: float) -> Dict[str, Any]:
+    def _close_position(
+            self, symbol: str, price: float, qty: float) -> Dict[str, Any]:
+        """
+        Closes a position.
+        """
         pos = self._sim_positions.get(symbol)
         if not pos:
             return {"status": "noop", "symbol": symbol}
@@ -377,7 +407,7 @@ class ExchangeAPI:
             # Notional release mirrors how we "reserved" at open:
             notional_release = entry * close_qty  # conservative
 
-        # Return notional + PnL to cash (fees added by TradeExecutor separately)
+        # Return notional + PnL to cash
         try:
             self._sim_cash_usd += notional_release + pnl
         except Exception:

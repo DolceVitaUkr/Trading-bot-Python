@@ -1,8 +1,9 @@
 import pytest
-from unittest.mock import MagicMock, AsyncMock, patch, call
+from unittest.mock import MagicMock, AsyncMock, patch
 
 from modules.ui import TradingUI
-from textual.widgets import Static, Sparkline
+from textual.widgets import Static
+
 
 @pytest.fixture
 def mock_bot():
@@ -14,12 +15,14 @@ def mock_bot():
     bot.last_heartbeat = 1672531200  # Example timestamp
     return bot
 
+
 @pytest.mark.asyncio
 async def test_ui_initialization(mock_bot):
     """Test if the TradingUI initializes correctly."""
     app = TradingUI(bot=mock_bot)
     assert app.bot is not None
     assert app.title == "Textual Trading Bot"
+
 
 @pytest.mark.asyncio
 async def test_ui_live_metrics_update(mock_bot):
@@ -46,6 +49,7 @@ async def test_ui_live_metrics_update(mock_bot):
         mock_query_one.return_value.update.assert_any_call("BTC/USDT")
         mock_query_one.assert_any_call("#current-timeframe", Static)
         mock_query_one.return_value.update.assert_any_call("15m")
+
 
 @pytest.mark.asyncio
 async def test_ui_timeseries_update(mock_bot):
@@ -85,7 +89,8 @@ async def test_ui_logging(mock_bot):
     app = TradingUI(bot=mock_bot)
     app.call_soon = AsyncMock()
 
-    with patch.object(app, '_loop', MagicMock()), patch.object(app, 'query_one') as mock_query_one:
+    with patch.object(app, '_loop', MagicMock()), \
+            patch.object(app, 'query_one') as mock_query_one:
         mock_log_widget = AsyncMock()
         mock_query_one.return_value = mock_log_widget
         await app.log("Test log message", level="INFO")
@@ -104,7 +109,7 @@ async def test_button_press_handler(mock_bot):
     from textual.widgets import Button
     button = Button("Start Training", id="start_training")
 
-    with patch('asyncio.run') as mock_run:
+    with patch('asyncio.run'):
         app.on_button_pressed(Button.Pressed(button))
 
     mock_handler.assert_called_once()

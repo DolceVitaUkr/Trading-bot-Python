@@ -4,6 +4,7 @@ import os
 import sys
 import time
 import traceback
+
 # Ensure repo root on path when running directly
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
@@ -58,11 +59,13 @@ def main():
     try:
         execu = TradeExecutor(simulation_mode=True)
         bal0 = execu.get_balance()
-        # Use BTC/USDT by default; price fetch falls back to 0 only in extreme cases
+        # Use BTC/USDT by default
         price = execu.exchange.get_price("BTC/USDT") or 50_000
-        res_open = execu.execute_order("BTC/USDT", "buy", quantity=Decimal("0.0003"), price=Decimal(str(price)))
+        res_open = execu.execute_order("BTC/USDT", "buy",
+                                       quantity=0.0003,
+                                       price=price)
         assert res_open["status"] in ("open", "simulated")
-        res_close = execu.close_position("BTC/USDT")
+        execu.close_position("BTC/USDT")
         bal1 = execu.get_balance()
         _ok("trade_executor sim", f"bal0={bal0:.2f} bal1={bal1:.2f}")
     except Exception:
@@ -75,7 +78,8 @@ def main():
         if token and chat:
             from modules.telegram_bot import TelegramNotifier
             tn = TelegramNotifier(disable_async=True)
-            tn.send_message_sync("🧪 Self-test: Telegram notifier looks good.", format="text")
+            tn.send_message_sync("🧪 Self-test: Telegram notifier looks good.",
+                                  format="text")
             _ok("telegram send")
         else:
             _ok("telegram send", "skipped (no token/chat env)")
@@ -90,10 +94,13 @@ def main():
 
         def status_provider():
             # Best-effort status dict
+            positions = []
+            if hasattr(execu.exchange, "fetch_positions"):
+                positions = execu.exchange.fetch_positions()
             return {
                 "balance": execu.get_balance(),
-                "equity": execu.get_balance(),  # unrealized not tracked here
-                "open_positions": len(execu.exchange.fetch_positions() if hasattr(execu.exchange, "fetch_positions") else []),
+                "equity": execu.get_balance(),
+                "open_positions": len(positions),
                 "symbol": "BTC/USDT",
                 "last_trade": "n/a",
             }
@@ -112,7 +119,7 @@ def main():
         for _ in range(3):
             hm.record_heartbeat("self_test")
             time.sleep(1.0)
-        # allow one recap to attempt (will log to stdout if no telegram creds)
+        # allow one recap to attempt
         time.sleep(4.0)
         hm.stop()
         _ok("health_monitor basic")

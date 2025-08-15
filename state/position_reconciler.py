@@ -4,7 +4,7 @@ import asyncio
 import logging
 from typing import List, Dict, Any, Optional
 
-from modules.exchange import ExchangeAPI  # uses reconcile_open_state()
+from modules.exchange import ExchangeAPI
 from state.runtime_state import RuntimeState
 
 try:
@@ -37,15 +37,6 @@ async def reconcile_all_async(
     - Calls each exchange's reconcile method.
     - Optionally updates RuntimeState open_positions.
     - Optionally sends a compact Telegram summary.
-
-    Returns a merged summary:
-    {
-      "exchanges": [
-        {"idx": 0, "summary": {...}},
-        ...
-      ],
-      "actions": int_total_actions
-    }
     """
     merged: Dict[str, Any] = {"exchanges": [], "actions": 0}
 
@@ -56,7 +47,8 @@ async def reconcile_all_async(
             merged["actions"] += len(s.get("actions", []))
             return s
         except Exception as e:
-            logger.exception("reconcile failed for exchange idx=%s: %s", idx, e)
+            logger.exception(
+                "reconcile failed for exchange idx=%s: %s", idx, e)
             merged["exchanges"].append({"idx": idx, "error": str(e)})
             return {}
 
@@ -75,13 +67,18 @@ async def reconcile_all_async(
                         state.upsert_open_position("crypto", sym, pos)
             state.save()
         except Exception:
-            logger.exception("Failed to persist reconciled positions to state")
+            logger.exception(
+                "Failed to persist reconciled positions to state")
 
     # Optional notifier summary
     if notifier is not None:
         try:
-            total_pos = sum(len((x.get("summary") or {}).get("positions", [])) for x in merged["exchanges"])
-            total_ord = sum(len((x.get("summary") or {}).get("orders", [])) for x in merged["exchanges"])
+            total_pos = sum(len(
+                (x.get("summary") or {}).get("positions", []))
+                for x in merged["exchanges"])
+            total_ord = sum(len(
+                (x.get("summary") or {}).get("orders", []))
+                for x in merged["exchanges"])
             total_act = merged.get("actions", 0)
             txt = (
                 f"🔄 <b>Reconciliation Summary</b>\n"
@@ -92,6 +89,7 @@ async def reconcile_all_async(
             )
             notifier.send_message_sync(txt, format="text")
         except Exception:
-            logger.exception("Failed to send reconciliation summary to Telegram")
+            logger.exception(
+                "Failed to send reconciliation summary to Telegram")
 
     return merged

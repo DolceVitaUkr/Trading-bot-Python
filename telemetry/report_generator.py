@@ -1,9 +1,6 @@
 # telemetry/report_generator.py
 """
-Generates daily and weekly portfolio reports for Telegram and file storage.
-
-- daily_snapshot(): lightweight dict for daily KPIs
-- weekly_report(): saves CSV & PNG charts, returns file paths
+Generates daily and weekly portfolio reports.
 """
 
 import os
@@ -21,7 +18,7 @@ def daily_snapshot(portfolios: Dict) -> Dict:
     """
     Build a dictionary snapshot of key metrics for all portfolios.
     Args:
-        portfolios: dict {market: {"balance": float, "pnl": float, "trades": int, "win_rate": float}}
+        portfolios: dict of portfolio stats
     Returns:
         dict with daily metrics summary
     """
@@ -39,11 +36,12 @@ def daily_snapshot(portfolios: Dict) -> Dict:
     return snapshot
 
 
-def weekly_report(portfolios: Dict, out_dir: str = "reports") -> List[str]:
+def weekly_report(
+        portfolios: Dict, out_dir: str = "reports") -> List[str]:
     """
     Generate a weekly report with CSV and PNG graphs for each market.
     Args:
-        portfolios: dict {market: {"history": list[dict]}} where history contains daily balance/pnl
+        portfolios: dict {market: {"history": list[dict]}}
         out_dir: output folder
     Returns:
         List of file paths created.
@@ -79,6 +77,8 @@ def weekly_report(portfolios: Dict, out_dir: str = "reports") -> List[str]:
         plt.close()
         generated_files.append(png_path)
 
-        logger.info("Generated weekly report for %s: %s, %s", market, csv_path, png_path)
+        logger.info(
+            "Generated weekly report for %s: %s, %s",
+            market, csv_path, png_path)
 
     return generated_files
