@@ -4,8 +4,6 @@ from datetime import datetime, timedelta
 import config
 from modules.top_pairs import TopPairs
 from modules.trade_executor import TradeExecutor
-from modules.data_manager import DataManager
-from modules.technical_indicators import TechnicalIndicators
 
 logger = logging.getLogger(__name__)
 
@@ -33,10 +31,13 @@ class SelfLearningBot:
         self.open_pos_check_interval = timedelta(minutes=1)
         self.top_symbols = []
         self.ui_hook = None
+        self.top_pairs = TopPairs()
+        self.executor = TradeExecutor()
+        self.indicators = TechnicalIndicators()
 
     def refresh_top_pairs(self):
         if datetime.utcnow() - self.last_pairs_update >= timedelta(minutes=60):
-            self.top_pairs.update_top_pairs()
+            self.top_symbols = self.top_pairs.get_top_pairs(force=True)
             self.last_pairs_update = datetime.utcnow()
             logger.info("Top pairs list refreshed.")
 
@@ -46,27 +47,28 @@ class SelfLearningBot:
     def run(self):
         while True:
             self.refresh_top_pairs()
-            pairs = self.top_pairs.get_pairs(limit=config.MAX_SIMULATION_PAIRS)
+            pairs = self.top_symbols
 
             for symbol in pairs:
-                if symbol in self.executor.open_positions:
+                if symbol in self.executor.exchange._sim_positions:
                     continue
 
-                df_15m = self.data_manager.get_klines(symbol, "15m", limit=200)
-                df_5m = self.data_manager.get_klines(symbol, "5m", limit=200)
+                df_15m = self.data_provider.load_historical_data(symbol, "15m")
+                df_5m = self.data_provider.load_historical_data(symbol, "5m")
 
-                if df_15m is None or df_5m is None:
+                if df_15m is None or df_5m is None or df_15m.empty or df_5m.empty:
                     continue
 
-                signal = self.indicators.generate_signal(df_15m, df_5m)
+                # TODO: Implement signal generation logic
+                signal = None
+
                 if signal:
-                    self.executor.execute_trade(
+                    self.executor.execute_order(
                         symbol,
                         side=signal["side"],
-                        size_usd=config.MIN_TRADE_AMOUNT_USD,
-                        tp=signal.get("tp"),
-                        sl=signal.get("sl")
+                        quantity=config.MIN_TRADE_AMOUNT_USD / df_5m['close'].iloc[-1],
+                        price=df_5m['close'].iloc[-1],
+                        order_type="market"
                     )
 
-            self.executor.check_positions()
             time.sleep(config.LIVE_LOOP_INTERVAL)

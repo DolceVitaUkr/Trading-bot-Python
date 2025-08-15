@@ -1,7 +1,4 @@
-import pytest
 from unittest.mock import MagicMock, patch
-import threading
-import time
 from main import TradingUI
 
 @patch('tkinter.Tk')

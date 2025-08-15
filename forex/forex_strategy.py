@@ -1,89 +1,66 @@
-# forex/forex_strategy.py
+import logging
+from typing import Dict, Any, List
+import pandas as pd
 
-from __future__ import annotations
+from modules.technical_indicators import TechnicalIndicators
+from modules.trade_executor import TradeExecutor
+from data.data_manager import DataManager
 
-from dataclasses import dataclass
-from decimal import Decimal
-from typing import Literal, Optional, Dict, Any, List
+class ForexStrategy:
+    def __init__(self, executor: TradeExecutor, data_manager: DataManager):
+        self.executor = executor
+        self.data_manager = data_manager
+        self.indicators = TechnicalIndicators()
+        self.logger = logging.getLogger(__name__)
 
-from modules.technical_indicators import sma, rsi  # using function API per your module
-
-
-Side = Literal["long", "short"]
-
-
-@dataclass
-class TradeDecision:
-    symbol: str
-    side: Side
-    confidence: float
-    entry: Optional[Decimal]
-    ttl_s: int
-    attach_tp: Optional[Decimal]
-    attach_sl: Optional[Decimal]
-    is_exploration: bool = False
-
-
-class ForexStrategyAdapter:
-    """
-    Tiny example strategy:
-      - Uses 20/50 SMA cross + RSI(14) filter.
-      - Returns a TradeDecision or None.
-
-    This is intentionally simple—just enough to exercise the pipeline.
-    """
-
-    def __init__(self, min_confidence: float = 0.55):
-        self.min_conf = float(min_confidence)
-
-    def decide(self, bars: "pandas.DataFrame") -> Optional[TradeDecision]:
+    def generate_signals(self, symbol: str) -> Dict[str, Any]:
         """
-        bars: DataFrame with columns ['open','high','low','close','volume']
-        index: datetime or int timestamps (ignored here)
+        Generates trading signals for a given forex symbol.
+        This is a placeholder and should be replaced with a real strategy.
         """
+        self.logger.info(f"Generating signals for {symbol}...")
+
+        # Example: Fetching data and generating a simple moving average crossover signal
+        df = self.data_manager.get_data(symbol, "1H")
+        if df is None or df.empty:
+            return {}
+
+        short_window = 20
+        long_window = 50
+
+        df['short_mavg'] = df['close'].rolling(window=short_window, min_periods=1).mean()
+        df['long_mavg'] = df['close'].rolling(window=long_window, min_periods=1).mean()
+
+        if df['short_mavg'].iloc[-1] > df['long_mavg'].iloc[-1] and df['short_mavg'].iloc[-2] <= df['long_mavg'].iloc[-2]:
+            return {"side": "buy", "price": df['close'].iloc[-1]}
+        elif df['short_mavg'].iloc[-1] < df['long_mavg'].iloc[-1] and df['short_mavg'].iloc[-2] >= df['long_mavg'].iloc[-2]:
+            return {"side": "sell", "price": df['close'].iloc[-1]}
+
+        return {}
+
+    def execute_strategy(self, symbol: str, signals: Dict[str, Any]):
+        """
+        Executes trades based on the generated signals.
+        """
+        if not signals:
+            return
+
+        self.logger.info(f"Executing strategy for {symbol} with signals: {signals}")
+
+        # Example: Executing a trade
         try:
-            close = bars["close"].tolist()
-            if len(close) < 60:
-                return None
-
-            sma20 = sma(close, 20)
-            sma50 = sma(close, 50)
-            rsi14 = rsi(close, 14)
-
-            if sma20 is None or sma50 is None or rsi14 is None:
-                return None
-
-            px = Decimal(str(close[-1]))
-            conf: float = 0.5
-            side: Optional[Side] = None
-
-            if sma20 > sma50 and 45 <= rsi14 <= 70:
-                side = "long"
-                conf = 0.6
-            elif sma20 < sma50 and 30 <= rsi14 <= 55:
-                side = "short"
-                conf = 0.6
-
-            if side is None or conf < self.min_conf:
-                return None
-
-            # naive TP/SL: 50–80 pips depending on side (for demo)
-            pip = Decimal("0.0001")
-            tp_pips = Decimal("0.0080") if side == "long" else Decimal("0.0080")
-            sl_pips = Decimal("0.0050")
-
-            attach_tp = (px + tp_pips) if side == "long" else (px - tp_pips)
-            attach_sl = (px - sl_pips) if side == "long" else (px + sl_pips)
-
-            return TradeDecision(
-                symbol="N/A",  # fill by caller
-                side=side,
-                confidence=conf,
-                entry=px,
-                ttl_s=60 * 30,
-                attach_tp=attach_tp,
-                attach_sl=attach_sl,
-                is_exploration=False,
+            self.executor.execute_order(
+                symbol=symbol,
+                side=signals['side'],
+                order_type="market",
+                quantity=0.01  # Example quantity
             )
-        except Exception:
-            return None
+        except Exception as e:
+            self.logger.error(f"Failed to execute trade for {symbol}: {e}")
+
+    def run_strategy(self, symbol: str):
+        """
+        Runs the full trading strategy for a given symbol.
+        """
+        signals = self.generate_signals(symbol)
+        self.execute_strategy(symbol, signals)

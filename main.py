@@ -6,7 +6,7 @@ import sys
 import threading
 import time
 from datetime import datetime, timezone
-from typing import Optional, Dict, Any
+from typing import Optional
 
 import config
 from utils.utilities import configure_logging
