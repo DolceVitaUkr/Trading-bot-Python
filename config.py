@@ -117,11 +117,14 @@ MAX_SIMULATION_PAIRS = int(os.getenv("MAX_SIMULATION_PAIRS", "5"))
 # ───────────────────────────────────────────────
 OPTIMIZATION_METHOD = os.getenv("OPTIMIZATION_METHOD", "grid_search")
 OPTIMIZATION_PARAMETERS = {
-    "ema_short": {"min": 5, "max": 20},
-    "ema_long": {"min": 20, "max": 100},
-    "rsi_period": {"min": 5, "max": 30},
-    "rsi_overbought": [70, 75, 80],
-    "rsi_oversold": [20, 25, 30]
+    "ema_long_period": [21, 50],
+    "ema_short_period_1": [5, 8],
+    "ema_short_period_2": [13, 21],
+    "rsi_period": [14],
+    "rsi_level": [50],
+    "atr_period": [14],
+    "tp_atr_multiplier": [2.0, 2.5],
+    "sl_atr_multiplier": [1.5]
 }
 EA_POPULATION_SIZE = int(os.getenv("EA_POPULATION_SIZE", "20"))
 EA_CROSSOVER_PROB = float(os.getenv("EA_CROSSOVER_PROB", "0.5"))

@@ -7,10 +7,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from feature/testing-and-analysis
-
-
 from typing import Optional, Dict, Any
-
 
 import config
 from utils.utilities import configure_logging
@@ -20,10 +17,8 @@ from modules.trade_executor import TradeExecutor
 from modules.risk_management import RiskManager
 from modules.self_learning import SelfLearningBot
 from modules.top_pairs import TopPairs
-from feature/testing-and-analysis
-from modules.ui import TradingUI
-=======
 from modules.tui import TradingUI
+
 
 from modules.telegram_bot import TelegramNotifier
 from modules.reward_system import RewardSystem
@@ -49,9 +44,8 @@ def build_risk_manager(account_balance: float) -> RiskManager:
 
 
 
+
 def run_bot(args: argparse.Namespace, test_mode: bool = False, stop_event: Optional[threading.Event] = None) -> int:
-=======
-def run_bot(args: argparse.Namespace) -> int:
 
     configure_logging(config.LOG_LEVEL, config.LOG_FILE)
     log = logging.getLogger("main")
@@ -59,9 +53,8 @@ def run_bot(args: argparse.Namespace) -> int:
 
     # Exchange + Data
     exchange = ExchangeAPI()
-
     exchange.load_markets()
-=======
+
 
     notifier = TelegramNotifier(disable_async=not config.ASYNC_TELEGRAM)
 
@@ -76,6 +69,10 @@ def run_bot(args: argparse.Namespace) -> int:
     # Risk
     risk_manager = build_risk_manager(starting_balance)
 
+
+    # Data Manager
+    dm = DataManager(exchange=exchange.client)
+
     # Top pairs manager
     top_pairs = TopPairs(
         exchange=exchange,
@@ -87,10 +84,10 @@ def run_bot(args: argparse.Namespace) -> int:
     # Data Manager
     dm = DataManager(exchange=exchange)
 
-=======
         ttl_sec=60 * 60,   # re-scan hourly
         min_volume_usd_24h=5_000_000,
     )
+
 
 
     # Reward system
@@ -163,6 +160,7 @@ def run_bot(args: argparse.Namespace) -> int:
 
     scheduler.every(minutes=60, name="hourly_top_pairs", func=refresh_pairs_job)
 
+
     # 2) 15m setup scan (secondary timeframe)
     def fifteen_scan_job():
         try:
@@ -176,6 +174,7 @@ def run_bot(args: argparse.Namespace) -> int:
     scheduler.every(minutes=15, name="scan_15m_setup", func=fifteen_scan_job)
 
     # 3) Heartbeat → UI metrics
+
     def heartbeat_job():
         try:
             # live balance (if we had real, keep sim for now)
@@ -199,6 +198,7 @@ def run_bot(args: argparse.Namespace) -> int:
     scheduler_thread = threading.Thread(target=scheduler.run_forever, daemon=True)
     scheduler_thread.start()
 
+    
     # Agent background loop (5m tick loop, sim execution, live data)
     def agent_loop():
         last_step = 0.0
@@ -237,7 +237,6 @@ def run_bot(args: argparse.Namespace) -> int:
         refresh_pairs_job()
     except Exception:
         pass
-
 
     if not test_mode:
         # Start UI (blocking)
