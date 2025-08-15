@@ -6,7 +6,11 @@ import sys
 import threading
 import time
 from datetime import datetime, timezone
-from typing import Optional
+from feature/testing-and-analysis
+
+
+from typing import Optional, Dict, Any
+
 
 import config
 from utils.utilities import configure_logging
@@ -16,7 +20,11 @@ from modules.trade_executor import TradeExecutor
 from modules.risk_management import RiskManager
 from modules.self_learning import SelfLearningBot
 from modules.top_pairs import TopPairs
+from feature/testing-and-analysis
 from modules.ui import TradingUI
+=======
+from modules.tui import TradingUI
+
 from modules.telegram_bot import TelegramNotifier
 from modules.reward_system import RewardSystem
 from scheduler import JobScheduler
@@ -40,14 +48,21 @@ def build_risk_manager(account_balance: float) -> RiskManager:
     return rm
 
 
+
 def run_bot(args: argparse.Namespace, test_mode: bool = False, stop_event: Optional[threading.Event] = None) -> int:
+=======
+def run_bot(args: argparse.Namespace) -> int:
+
     configure_logging(config.LOG_LEVEL, config.LOG_FILE)
     log = logging.getLogger("main")
     log.info("Booting Self-Learning Trading Bot…")
 
     # Exchange + Data
     exchange = ExchangeAPI()
+
     exchange.load_markets()
+=======
+
     notifier = TelegramNotifier(disable_async=not config.ASYNC_TELEGRAM)
 
     # Wallets
@@ -66,10 +81,17 @@ def run_bot(args: argparse.Namespace, test_mode: bool = False, stop_event: Optio
         exchange=exchange,
         quote="USDT",
         max_pairs=config.MAX_SIMULATION_PAIRS,
+
     )
 
     # Data Manager
     dm = DataManager(exchange=exchange)
+
+=======
+        ttl_sec=60 * 60,   # re-scan hourly
+        min_volume_usd_24h=5_000_000,
+    )
+
 
     # Reward system
     reward = RewardSystem()
@@ -181,6 +203,9 @@ def run_bot(args: argparse.Namespace, test_mode: bool = False, stop_event: Optio
     def agent_loop():
         last_step = 0.0
         while not (stop_event and stop_event.is_set()):
+=======
+        while True:
+
             try:
                 symbols = getattr(bot, "top_symbols", None) or [config.DEFAULT_SYMBOL]
                 for sym in symbols:
@@ -190,14 +215,21 @@ def run_bot(args: argparse.Namespace, test_mode: bool = False, stop_event: Optio
                     bot.act_and_learn(sym, timestamp=datetime.now(timezone.utc))
                 # Pace loop
                 time.sleep(max(5, float(config.LIVE_LOOP_INTERVAL)))
+
                 if test_mode:
                     break # Run only once in test mode
+=======
+
             except Exception as e:
                 logging.getLogger("main").exception(f"agent_loop error: {e}")
                 time.sleep(5)
 
+
     agent_thread = threading.Thread(target=agent_loop, daemon=True)
     agent_thread.start()
+
+=======
+    threading.Thread(target=agent_loop, daemon=True).start()
 
 
     # Initial top pairs warmup
@@ -206,9 +238,14 @@ def run_bot(args: argparse.Namespace, test_mode: bool = False, stop_event: Optio
     except Exception:
         pass
 
+
     if not test_mode:
         # Start UI (blocking)
         ui.run()
+
+=======
+    # Start UI (blocking)
+    ui.run_ui()
 
     return 0
 
