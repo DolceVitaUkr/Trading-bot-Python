@@ -76,7 +76,6 @@ def main():
         token = os.getenv("TELEGRAM_BOT_TOKEN", "")
         chat = os.getenv("TELEGRAM_CHAT_ID", "")
         if token and chat:
-            from modules.telegram_bot import TelegramNotifier
             tn = TelegramNotifier(disable_async=True)
             tn.send_message_sync("🧪 Self-test: Telegram notifier looks good.",
                                   format="text")
@@ -88,8 +87,6 @@ def main():
 
     # 6) Health monitor quick spin
     try:
-        from modules.health_monitor import HealthMonitor
-
         execu = TradeExecutor(simulation_mode=True)
 
         def status_provider():

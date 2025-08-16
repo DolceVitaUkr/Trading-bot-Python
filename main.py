@@ -16,7 +16,6 @@ from modules.trade_executor import TradeExecutor
 from modules.risk_management import RiskManager
 from modules.self_learning import SelfLearningBot
 from modules.top_pairs import TopPairs
-from modules.ui import TradingUI
 from modules.telegram_bot import TelegramNotifier
 from modules.reward_system import RewardSystem
 from scheduler import JobScheduler
@@ -69,7 +68,8 @@ def run_bot(args: argparse.Namespace,
 
     # Exchange + Data
     exchange = ExchangeAPI()
-    exchange.load_markets()
+    if not test_mode:
+        exchange.load_markets()
 
     notifier = TelegramNotifier(disable_async=not config.ASYNC_TELEGRAM)
 
@@ -85,7 +85,7 @@ def run_bot(args: argparse.Namespace,
     risk_manager = build_risk_manager(starting_balance)
 
     # Data Manager
-    dm = DataManager(exchange=exchange.client)
+    dm = DataManager(exchange=exchange)
 
     # Top pairs manager
     top_pairs = TopPairs(
@@ -121,37 +121,6 @@ def run_bot(args: argparse.Namespace,
         symbol=config.DEFAULT_SYMBOL,  # Fallback if top-pairs empty
     )
 
-    # UI
-    ui = TradingUI(bot=bot)
-    ui.set_title("AI Trading Terminal (Simulation)")
-    bot.ui_hook = ui  # let the agent push UI metrics
-
-    # Expose a couple of handlers for UI buttons
-    def start_training():
-        bot.training = True
-        ui.log("Training started.", level="SUCCESS")
-        ui.set_button_active("start_training")
-
-    def stop_training():
-        bot.training = False
-        ui.log("Training stopped.", level="WARN")
-        ui.set_button_active("stop_training")
-
-    def start_trading():
-        bot.training = True
-        ui.log("Trading loop (simulation) started.", level="SUCCESS")
-        ui.set_button_active("start_trading")
-
-    def stop_trading():
-        bot.training = False
-        ui.log("Trading loop (simulation) stopped.", level="WARN")
-        ui.set_button_active("stop_trading")
-
-    ui.add_action_handler("start_training", start_training)
-    ui.add_action_handler("stop_training", stop_training)
-    ui.add_action_handler("start_trading", start_trading)
-    ui.add_action_handler("stop_trading", stop_trading)
-
     # Scheduler jobs
     scheduler = JobScheduler()
 
@@ -160,51 +129,42 @@ def run_bot(args: argparse.Namespace,
         try:
             pairs = top_pairs.get_top_pairs()  # triggers refresh if stale
             bot.top_symbols = pairs or [config.DEFAULT_SYMBOL]
-            ui.log(f"Top pairs refreshed: {', '.join(bot.top_symbols)}",
-                   level="INFO")
+            logging.info(f"Top pairs refreshed: {', '.join(bot.top_symbols)}")
         except Exception as e:
-            ui.log(f"Top pairs refresh failed: {e}", level="ERROR")
+            logging.error(f"Top pairs refresh failed: {e}")
 
-    scheduler.every(minutes=60, name="hourly_top_pairs",
-                    func=refresh_pairs_job)
+    scheduler.every(
+        minutes=60, name="hourly_top_pairs", func=refresh_pairs_job
+    )
 
     # 2) 15m setup scan (secondary timeframe)
     def fifteen_scan_job():
         try:
-            symbols = getattr(bot, "top_symbols",
-                                None) or [config.DEFAULT_SYMBOL]
+            symbols = getattr(bot, "top_symbols", None) or [
+                config.DEFAULT_SYMBOL
+            ]
             for sym in symbols:
                 dm.load_historical_data(
-                    sym, "15m", backfill_bars=300)  # light backfill
+                    sym, "15m", backfill_bars=300
+                )  # light backfill
                 # You can add setup-detection hooks here if needed
         except Exception as e:
-            ui.log(f"15m scan error: {e}", level="ERROR")
+            logging.error(f"15m scan error: {e}")
 
-    scheduler.every(minutes=15, name="scan_15m_setup", func=fifteen_scan_job)
+    scheduler.every(
+        minutes=15, name="scan_15m_setup", func=fifteen_scan_job
+    )
 
     # 3) Heartbeat → UI metrics
     def heartbeat_job():
-        try:
-            # live balance (if we had real, keep sim for now)
-            live_balance = trade_executor.get_balance()
-            # sim portfolio value from agent perspective
-            portfolio_val = getattr(bot, "portfolio_value",
-                                    float(starting_balance))
-            reward_pts = getattr(bot.reward_system, "total_points", 0.0)
-            ui.update_live_metrics({
-                "balance": live_balance,
-                "equity": portfolio_val,
-                "symbol": bot.symbol or config.DEFAULT_SYMBOL,
-                "timeframe": bot.timeframe,
-            })
-            ui.update_timeseries(wallet=live_balance,
-                                  vwallet=portfolio_val,
-                                  points=reward_pts)
-        except Exception as e:
-            logging.getLogger("main").debug(f"Heartbeat err: {e}")
+        # The dashboard will pull metrics directly from the bot
+        pass
 
-    scheduler.every(seconds=max(5, int(config.LIVE_LOOP_INTERVAL)),
-                    name="heartbeat", func=heartbeat_job)
+    scheduler.every(
+        seconds=max(5, int(config.LIVE_LOOP_INTERVAL)),
+        name="heartbeat",
+        func=heartbeat_job,
+    )
 
     # Start scheduler thread
     scheduler_thread = threading.Thread(target=scheduler.run_forever,
@@ -241,8 +201,10 @@ def run_bot(args: argparse.Namespace,
         pass
 
     if not test_mode:
-        # Start UI (blocking)
-        ui.run_ui()
+        # In a real application, you would have a UI or some other way to
+        # interact with the bot.
+        while True:
+            time.sleep(1)
 
     return 0
 

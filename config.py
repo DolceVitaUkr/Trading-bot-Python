@@ -141,3 +141,6 @@ EA_GENERATIONS = int(os.getenv("EA_GENERATIONS", "10"))
 # Misc
 # ───────────────────────────────────────────────
 USE_TESTNET = USE_SIMULATION
+USE_MAINNET_IN_SIMULATION = os.getenv(
+    "USE_MAINNET_IN_SIMULATION", "false"
+).lower() in {"1", "true", "yes", "on"}
