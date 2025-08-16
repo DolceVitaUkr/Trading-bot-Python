@@ -10,6 +10,8 @@ from datetime import datetime, date, timezone
 from typing import (
     Any, Callable, Iterable, Iterator, Tuple, Type, Union, Optional, List)
 
+# Import the new logging setup function
+from modules.Logger_Config import setup_logging as new_setup_logging
 
 # ────────────────────────────────────────────────────────────────────────────────
 # Filesystem helpers
@@ -65,33 +67,15 @@ def read_json(path: str, default: Any = None) -> Any:
 
 def configure_logging(
     level: Union[int, str] = logging.INFO,
-    log_file: Optional[str] = None,
+    log_file: Optional[str] = None, # log_file is now handled by the new setup
     fmt: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     datefmt: str = "%Y-%m-%d %H:%M:%S"
 ) -> None:
     """
-    Configure the root logger.
+    Configure the root logger using the new setup from Logger_Config.
     """
-    root = logging.getLogger()
-    lvl = level if isinstance(
-        level, int) else getattr(logging, str(level).upper(), logging.INFO)
-    root.setLevel(lvl)
-
-    def _has_handler(predicate: Callable[[logging.Handler], bool]) -> bool:
-        return any(predicate(h) for h in root.handlers)
-
-    if not _has_handler(lambda h: isinstance(h, logging.StreamHandler)):
-        sh = logging.StreamHandler()
-        sh.setFormatter(logging.Formatter(fmt=fmt, datefmt=datefmt))
-        root.addHandler(sh)
-
-    if log_file and not _has_handler(
-            lambda h: isinstance(h, logging.FileHandler) and
-            getattr(h, 'baseFilename', None) == os.path.abspath(log_file)):
-        ensure_directory(os.path.dirname(log_file) or ".")
-        fh = logging.FileHandler(log_file)
-        fh.setFormatter(logging.Formatter(fmt=fmt, datefmt=datefmt))
-        root.addHandler(fh)
+    log_level = level if isinstance(level, int) else getattr(logging, str(level).upper(), logging.INFO)
+    new_setup_logging(log_level=log_level)
 
 
 # ────────────────────────────────────────────────────────────────────────────────

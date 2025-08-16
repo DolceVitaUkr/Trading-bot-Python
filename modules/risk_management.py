@@ -4,6 +4,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional, Tuple, Any
 
 import config
+# Import KillSwitch for integration
+from modules.Kill_Switch import KillSwitch
 
 logger = logging.getLogger(__name__)
 
@@ -20,20 +22,30 @@ class RiskManager:
     """
     Handles all non-sizing related risk checks, such as cooldowns,
     daily loss limits, and final proposal validation.
+    Integrates KillSwitch and funding/carry cost filters.
     """
 
-    def __init__(self, account_balance: float, sizing_policy: Dict[str, Any], notifier=None):
+    def __init__(self,
+                 account_balance: float,
+                 sizing_policy: Dict[str, Any],
+                 kill_switch: KillSwitch,
+                 data_provider: Any, # Using Any to avoid circular dependency
+                 notifier=None):
         """
         Initializes the RiskManager.
 
         Args:
             account_balance (float): The starting total equity.
             sizing_policy (Dict[str, Any]): The sizing policy dictionary.
+            kill_switch (KillSwitch): The KillSwitch instance.
+            data_provider (Any): The data provider for fetching funding rates.
             notifier ([type], optional): Notifier instance. Defaults to None.
         """
         self.equity = float(account_balance)
-        self.notifier = notifier
         self.sizing_policy = sizing_policy
+        self.kill_switch = kill_switch
+        self.data_provider = data_provider
+        self.notifier = notifier
         self.asset_caps = sizing_policy.get("asset_caps", {})
 
         # --- State Tracking ---
@@ -56,6 +68,8 @@ class RiskManager:
     def allow(self,
               proposal: Dict[str, Any],
               asset_class: str,
+              symbol: str,
+              side: str,
               price: float,
               mode: Optional[str] = None,
               session: Optional[str] = None) -> Tuple[bool, str]:
@@ -63,8 +77,10 @@ class RiskManager:
         Performs final risk validation on a trade proposal.
 
         Args:
-            proposal (Dict[str, Any]): The trade proposal from the Sizer ({size_usd, leverage, sl_distance}).
+            proposal (Dict[str, Any]): The trade proposal from the Sizer.
             asset_class (str): The asset class of the trade (e.g., 'PERP').
+            symbol (str): The symbol for the trade.
+            side (str): The side of the trade ('buy' or 'sell').
             price (float): The current price of the asset.
             mode (str, optional): The trading mode.
             session (str, optional): The market session.
@@ -72,13 +88,39 @@ class RiskManager:
         Returns:
             Tuple[bool, str]: (is_allowed, reason_string)
         """
+        # 1. Kill Switch Check
+        if self.kill_switch.is_active(asset_class):
+            reason = self.kill_switch.active_kill_switches[asset_class]
+            logger.critical(f"Trade for {symbol} rejected: Kill switch is active for {asset_class}. Reason: {reason}", extra={'action': 'reject', 'symbol': symbol, 'reason': f"Kill switch: {reason}"})
+            return False, f"Kill switch active for {asset_class}: {reason}"
+
+        # 2. Standard Cooldown and Drawdown Checks
         self._check_daily_reset()
-
         if not self._is_not_in_cooldown():
-            return False, f"Trade disallowed: In cooldown until {self.in_cooldown_until}."
+            reason = f"In cooldown until {self.in_cooldown_until}"
+            logger.warning(f"Trade disallowed for {symbol}: {reason}", extra={'action': 'reject', 'symbol': symbol, 'reason': reason})
+            return False, reason
         if not self._is_within_daily_loss_limit():
-            return False, f"Trade disallowed: Daily loss limit of {self.daily_loss_limit_pct:.2%} hit."
+            reason = f"Daily loss limit of {self.daily_loss_limit_pct:.2%} hit"
+            logger.warning(f"Trade disallowed for {symbol}: {reason}", extra={'action': 'reject', 'symbol': symbol, 'reason': reason})
+            return False, reason
 
+        # 3. Funding/Carry Filter
+        if asset_class in ["PERP", "FOREX"]:
+            funding_rate = self.data_provider.get_funding_rate(symbol)
+            funding_rate_threshold = self.asset_caps.get(asset_class, {}).get("funding_rate_threshold", -0.0002)
+
+            if side == 'buy' and funding_rate < funding_rate_threshold:
+                reason = f"High negative funding rate: {funding_rate:.4%}"
+                logger.warning(f"Trade for {symbol} (long) rejected: {reason}", extra={'action': 'reject', 'symbol': symbol, 'reason': reason})
+                return False, reason
+
+            if side == 'sell' and funding_rate > abs(funding_rate_threshold):
+                reason = f"High positive funding rate: {funding_rate:.4%}"
+                logger.warning(f"Trade for {symbol} (short) rejected: {reason}", extra={'action': 'reject', 'symbol': symbol, 'reason': reason})
+                return False, reason
+
+        # 4. Leverage and Liquidation Buffer Checks
         asset_cap_info = self.asset_caps.get(asset_class, {})
         max_leverage = asset_cap_info.get('max_leverage', 1.0)
         if proposal['leverage'] > max_leverage:

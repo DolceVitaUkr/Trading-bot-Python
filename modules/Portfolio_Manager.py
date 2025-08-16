@@ -177,3 +177,33 @@ class PortfolioManager:
         # In simulation, update WalletSync's balance to reflect new total equity
         if self.wallet_sync and not getattr(self.wallet_sync, 'is_live', True):
             self.wallet_sync.set_simulation_balance(asset, ledger["total"])
+
+    def get_open_positions(self) -> list:
+        """
+        Returns a list of symbols for all open positions.
+        NOTE: This is a placeholder. A real implementation would track open positions.
+        """
+        # This should be implemented by tracking active positions.
+        # For now, returning an empty list as a placeholder.
+        return []
+
+    def get_total_equity(self, asset: str) -> float:
+        """
+        Returns the total equity for a given asset class.
+
+        Args:
+            asset (str): The asset class (e.g., 'SPOT').
+
+        Returns:
+            float: The total equity in USD for the asset class.
+        """
+        ledger = self.ledgers.get(asset)
+        if not ledger:
+            logger.warning(f"No ledger found for asset class: {asset}")
+            return 0.0
+
+        # In live mode, the true source of equity is the wallet sync
+        if self.wallet_sync and getattr(self.wallet_sync, 'is_live', False):
+            return self.wallet_sync.get_equity(asset)
+
+        return ledger["total"]
