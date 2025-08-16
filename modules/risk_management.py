@@ -1,15 +1,15 @@
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple, Any
 
 import config
-from modules.error_handler import RiskViolationError
 
 logger = logging.getLogger(__name__)
 
 @dataclass
 class PositionRisk:
+    """Represents the risk associated with a single open position."""
     symbol: str
     quantity: float
     entry_price: float
@@ -18,15 +18,27 @@ class PositionRisk:
 
 class RiskManager:
     """
-    Handles all risk-related checks and calculations.
+    Handles all non-sizing related risk checks, such as cooldowns,
+    daily loss limits, and final proposal validation.
     """
 
-    def __init__(self, account_balance: float, notifier=None, per_pair_cap_pct=None, portfolio_cap_pct=None):
+    def __init__(self, account_balance: float, sizing_policy: Dict[str, Any], notifier=None):
+        """
+        Initializes the RiskManager.
+
+        Args:
+            account_balance (float): The starting total equity.
+            sizing_policy (Dict[str, Any]): The sizing policy dictionary.
+            notifier ([type], optional): Notifier instance. Defaults to None.
+        """
         self.equity = float(account_balance)
         self.notifier = notifier
+        self.sizing_policy = sizing_policy
+        self.asset_caps = sizing_policy.get("asset_caps", {})
 
         # --- State Tracking ---
         self.peak_equity = self.equity
+        # NOTE: This is now for high-level tracking. PortfolioManager is the source of truth for exposure.
         self.open_positions: Dict[str, PositionRisk] = {}
 
         # --- Daily Loss Limit ---
@@ -39,21 +51,47 @@ class RiskManager:
         self.in_cooldown_until = None
         self.cooldown_rules = {3: {"duration_minutes": 30}, 5: {"duration_minutes": -1}}
 
-        # --- Risk Parameters ---
-        self.base_per_trade_risk_pct = config.PER_TRADE_RISK_PERCENT
-        self.drawdown_reduction_threshold = 0.06 # 6% drawdown
-
-        # --- Portfolio Caps ---
-        caps = config.RISK_CAPS.get("crypto_spot", {})
-        self.per_pair_cap_pct = per_pair_cap_pct if per_pair_cap_pct is not None else caps.get("per_pair_cap_pct", 0.15)
-        self.portfolio_cap_pct = portfolio_cap_pct if portfolio_cap_pct is not None else caps.get("portfolio_concurrent_pct", 0.30)
-
     # --- Public Methods ---
 
-    def is_trade_allowed(self) -> bool:
-        """Checks if a new trade is permitted based on master risk rules."""
+    def allow(self,
+              proposal: Dict[str, Any],
+              asset_class: str,
+              price: float,
+              mode: Optional[str] = None,
+              session: Optional[str] = None) -> Tuple[bool, str]:
+        """
+        Performs final risk validation on a trade proposal.
+
+        Args:
+            proposal (Dict[str, Any]): The trade proposal from the Sizer ({size_usd, leverage, sl_distance}).
+            asset_class (str): The asset class of the trade (e.g., 'PERP').
+            price (float): The current price of the asset.
+            mode (str, optional): The trading mode.
+            session (str, optional): The market session.
+
+        Returns:
+            Tuple[bool, str]: (is_allowed, reason_string)
+        """
         self._check_daily_reset()
-        return self._is_not_in_cooldown() and self._is_within_daily_loss_limit()
+
+        if not self._is_not_in_cooldown():
+            return False, f"Trade disallowed: In cooldown until {self.in_cooldown_until}."
+        if not self._is_within_daily_loss_limit():
+            return False, f"Trade disallowed: Daily loss limit of {self.daily_loss_limit_pct:.2%} hit."
+
+        asset_cap_info = self.asset_caps.get(asset_class, {})
+        max_leverage = asset_cap_info.get('max_leverage', 1.0)
+        if proposal['leverage'] > max_leverage:
+            return False, f"Proposed leverage {proposal['leverage']:.1f}x exceeds asset class cap of {max_leverage:.1f}x."
+
+        if asset_class == "PERP":
+            liq_buffer_pct = asset_cap_info.get('liq_buffer_pct', 0.0)
+            if price > 0:
+                sl_distance_pct = proposal['sl_distance'] / price
+                if sl_distance_pct < liq_buffer_pct:
+                    return False, f"Stop loss distance {sl_distance_pct:.2%} is below required liquidation buffer of {liq_buffer_pct:.2%}."
+
+        return True, "Trade is allowed."
 
     def record_trade_closure(self, pnl: float, new_equity: float):
         """Records the outcome of a closed trade to update risk states."""
@@ -69,87 +107,23 @@ class RiskManager:
                 logger.info("Winning trade recorded, resetting consecutive loss counter.")
                 self.consecutive_losses = 0
 
-    def calculate_position_size(self, symbol: str, entry_price: float, sl_price: float) -> Optional[tuple[float, float]]:
-        """
-        Calculates position size in units, applying all risk checks.
-        Returns a tuple of (quantity, dollar_risk) or (None, None).
-        """
-        if not self.is_trade_allowed():
-            return None, None
-
-        # 1. Determine effective risk for this trade
-        effective_risk_pct = self._get_effective_risk_pct()
-        dollar_risk = self.equity * effective_risk_pct
-
-        # 2. Calculate initial quantity based on risk
-        price_risk_per_unit = abs(entry_price - sl_price)
-        if price_risk_per_unit <= 1e-9:
-            logger.error("Stop loss cannot be the same as entry price.")
-            return None, None
-        quantity = dollar_risk / price_risk_per_unit
-
-        # 3. Apply portfolio and per-pair caps
-        quantity = self._apply_caps(symbol, quantity, entry_price)
-
-        # 4. Enforce minimum trade size
-        if quantity * entry_price < config.MIN_TRADE_AMOUNT_USD:
-            logger.warning(f"Sized position for {symbol} is below minimum trade value. Aborting.")
-            return None, None
-
-        return quantity, dollar_risk
-
     def register_position(self, symbol: str, quantity: float, entry_price: float, dollar_risk: float):
-        """Adds an open position to the tracker."""
+        """(May be deprecated) Adds an open position to the local tracker."""
         if symbol in self.open_positions:
             logger.warning(f"Position for {symbol} already registered. Overwriting.")
         self.open_positions[symbol] = PositionRisk(
-            symbol=symbol,
-            quantity=quantity,
-            entry_price=entry_price,
-            dollar_risk=dollar_risk,
-            value_usd=quantity * entry_price
+            symbol=symbol, quantity=quantity, entry_price=entry_price,
+            dollar_risk=dollar_risk, value_usd=quantity * entry_price
         )
-        logger.info(f"Registered new position: {self.open_positions[symbol]}")
+        logger.info(f"Registered new position in RiskManager: {self.open_positions[symbol]}")
 
     def unregister_position(self, symbol: str):
-        """Removes a closed position."""
+        """(May be deprecated) Removes a closed position from the local tracker."""
         if symbol in self.open_positions:
-            logger.info(f"Unregistering position for {symbol}.")
+            logger.info(f"Unregistering position from RiskManager for {symbol}.")
             del self.open_positions[symbol]
 
     # --- Private Helper Methods ---
-
-    def _get_effective_risk_pct(self) -> float:
-        """Gets the per-trade risk, adjusted for current drawdown."""
-        drawdown = (self.peak_equity - self.equity) / self.peak_equity
-        if drawdown > self.drawdown_reduction_threshold:
-            logger.warning(
-                f"Drawdown of {drawdown:.2%} exceeds threshold of {self.drawdown_reduction_threshold:.2%}. "
-                f"Reducing trade risk by 50%."
-            )
-            return self.base_per_trade_risk_pct / 2
-        return self.base_per_trade_risk_pct
-
-    def _apply_caps(self, symbol: str, quantity: float, entry_price: float) -> float:
-        """Reduces quantity if it violates portfolio or per-pair caps."""
-        desired_usd = quantity * entry_price
-
-        # Per-pair cap
-        pair_cap_usd = self.equity * self.per_pair_cap_pct
-        current_pair_exposure = self.open_positions.get(symbol, PositionRisk("",0,0,0,0)).value_usd
-        allowed_for_pair = max(0, pair_cap_usd - current_pair_exposure)
-
-        # Portfolio cap
-        portfolio_cap_usd = self.equity * self.portfolio_cap_pct
-        current_portfolio_exposure = sum(p.value_usd for p in self.open_positions.values())
-        allowed_for_portfolio = max(0, portfolio_cap_usd - current_portfolio_exposure)
-
-        allowed_usd = min(desired_usd, allowed_for_pair, allowed_for_portfolio)
-
-        if allowed_usd < desired_usd:
-            logger.warning(f"Position size for {symbol} reduced from {desired_usd:.2f} USD to {allowed_usd:.2f} USD due to exposure caps.")
-            return allowed_usd / entry_price
-        return quantity
 
     def _check_daily_reset(self):
         """Resets daily loss tracking if a new day has started."""
@@ -165,15 +139,16 @@ class RiskManager:
     def _is_not_in_cooldown(self) -> bool:
         """Checks if the bot is currently in a cooldown period."""
         if self.in_cooldown_until:
-            if self.in_cooldown_until.year == 9999:
+            if self.in_cooldown_until.year == 9999: # Sentinel for session-long stop
                 return False
             if datetime.now(timezone.utc) < self.in_cooldown_until:
                 return False
-            self.in_cooldown_until = None
+            self.in_cooldown_until = None # Cooldown has expired
         return True
 
     def _is_within_daily_loss_limit(self) -> bool:
         """Checks if the daily loss is within the defined limit."""
+        if self.daily_start_equity <= 0: return True # Avoid division by zero
         current_loss_pct = (self.daily_start_equity - self.equity) / self.daily_start_equity
         if current_loss_pct >= self.daily_loss_limit_pct:
             logger.critical(f"Daily loss limit hit! Loss: {current_loss_pct:.2%}")

@@ -1,92 +1,57 @@
-# modules/reward_system.py
+import logging
+from typing import Dict, Any
 
-from dataclasses import dataclass
-from datetime import datetime
-from typing import Optional
-
-
-@dataclass
-class RewardParams:
-    """
-    Parameters for the reward system.
-    """
-    base_per_trade: float = 0.0
-    profit_multiplier: float = 1.0
-    risk_adjusted_boost: float = 1.15
-    sl_penalty: float = 0.5        # if stop loss triggered
-    time_bonus_per_hour: float = 0.0
-
+logger = logging.getLogger(__name__)
 
 class RewardSystem:
     """
-    Simple additive reward scoring used by SelfLearningBot.
+    Tracks the bot's performance over time using net P&L.
+    It maintains a simple wallet balance and a points system.
     """
-    def __init__(self, params: Optional[RewardParams] = None):
+    def __init__(self, starting_balance: float = 0.0, points_multiplier: float = 1.0):
         """
         Initializes the RewardSystem.
+
+        Args:
+            starting_balance (float, optional): The initial wallet balance. Defaults to 0.0.
+            points_multiplier (float, optional): A multiplier to convert P&L to points. Defaults to 1.0.
         """
-        self.params = params or RewardParams()
+        self.wallet_balance: float = starting_balance
         self.total_points: float = 0.0
+        self.points_multiplier = points_multiplier
+        logger.info(f"RewardSystem initialized with starting balance: {starting_balance:.2f}")
 
-    def calculate_reward(
-        self,
-        entry_price: float,
-        exit_price: float,
-        position_size: float,
-        entry_time: datetime,
-        exit_time: datetime,
-        max_drawdown: float,
-        volatility: float,
-        stop_loss_triggered: bool = False,
-    ) -> float:
+    def update(self, pnl_net_usd: float, context: Dict[str, Any]):
         """
-        Monetary reward proxy: net PnL in quote currency.
-        """
-        pnl = (exit_price - entry_price) * position_size
-        return float(pnl)
+        Updates the wallet and points based on the net P&L of a completed trade.
 
-    def add_points(
-        self,
-        profit_pct: float,
-        entry_time: datetime,
-        exit_time: datetime,
-        stop_loss_triggered: bool = False,
-        risk_adjusted: bool = True
-    ) -> float:
+        Args:
+            pnl_net_usd (float): The net profit or loss from the trade.
+            context (Dict[str, Any]): The context of the trade (asset, mode, etc.).
+                                       This is for future enhancements.
         """
-        Calculates and adds points to the total score.
-        """
-        pts = calculate_points(
-            profit=profit_pct,
-            entry_time=entry_time,
-            exit_time=exit_time,
-            stop_loss_triggered=stop_loss_triggered,
-            risk_adjusted=risk_adjusted
+        # Update wallet balance
+        self.wallet_balance += pnl_net_usd
+
+        # Update points based on net P&L
+        points_earned = pnl_net_usd * self.points_multiplier
+        self.total_points += points_earned
+
+        logger.info(
+            f"RewardSystem updated: PnL={pnl_net_usd:.2f}, "
+            f"Points Earned={points_earned:.2f}, "
+            f"New Wallet Balance={self.wallet_balance:.2f}, "
+            f"Total Points={self.total_points:.2f}"
         )
-        self.total_points += pts
-        return pts
 
+    def get_snapshot(self) -> Dict[str, float]:
+        """
+        Returns the current state of the reward system.
 
-def calculate_points(
-    profit: float,
-    entry_time: datetime,
-    exit_time: datetime,
-    stop_loss_triggered: bool,
-    risk_adjusted: bool = True
-) -> float:
-    """
-    Points are loosely tied to profitability; can be risk-adjusted if requested.
-    - profit: percentage (or ROI%) in simulation usage
-    """
-    base = profit
-    if risk_adjusted:
-        base *= 0.9  # mild haircut to discourage over-leverage
-
-    if stop_loss_triggered:
-        base *= 0.5  # penalty
-
-    # very small time factor
-    hold_hours = max(0.0, (exit_time - entry_time).total_seconds() / 3600.0)
-    base += min(hold_hours * 0.01, 0.1)  # cap tiny bonus
-
-    return float(base)
+        Returns:
+            Dict[str, float]: A snapshot of the current wallet balance and total points.
+        """
+        return {
+            "wallet_balance": self.wallet_balance,
+            "total_points": self.total_points
+        }

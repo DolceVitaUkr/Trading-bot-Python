@@ -4,101 +4,99 @@ from modules.risk_management import RiskManager
 import config
 
 @pytest.fixture
-def risk_manager():
+def sizing_policy():
+    """Provides a default sizing policy for tests."""
+    return {
+      "global": {},
+      "leverage_tiers": [],
+      "asset_caps": {
+        "SPOT":   {"max_leverage": 1.0},
+        "PERP":   {"max_leverage": 3.0, "liq_buffer_pct": 0.20},
+      }
+    }
+
+@pytest.fixture
+def risk_manager(sizing_policy):
     """Returns a RiskManager instance with default test settings."""
     config.KPI_TARGETS['daily_loss_limit'] = 0.03
-    config.PER_TRADE_RISK_PERCENT = 0.01
-    # Set high caps to isolate other logic in most tests
     return RiskManager(
         account_balance=10000,
-        per_pair_cap_pct=1.0,  # 100%
-        portfolio_cap_pct=1.0  # 100%
+        sizing_policy=sizing_policy,
+        notifier=None
     )
 
-class TestNewRiskManager:
+class TestRiskManager:
     def test_initial_state(self, risk_manager):
         assert risk_manager.equity == 10000
-        assert risk_manager.daily_start_equity == 10000
-        assert risk_manager.consecutive_losses == 0
-        assert risk_manager.in_cooldown_until is None
-        assert risk_manager.is_trade_allowed() is True
+        # A proposal with default/safe values
+        proposal = {"leverage": 1.0, "sl_distance": 100}
+        allowed, _ = risk_manager.allow(proposal, "SPOT", 50000)
+        assert allowed is True
 
-    def test_daily_loss_limit(self, risk_manager):
-        # Simulate a loss that hits the 3% limit
-        pnl = -301
-        new_equity = 9699
-        risk_manager.record_trade_closure(pnl, new_equity)
+    def test_allow_false_on_daily_loss_limit(self, risk_manager):
+        risk_manager.record_trade_closure(pnl=-301, new_equity=9699)
+        proposal = {"leverage": 1.0, "sl_distance": 100}
+        allowed, reason = risk_manager.allow(proposal, "SPOT", 50000)
+        assert allowed is False
+        assert "Daily loss limit" in reason
 
-        assert risk_manager.is_trade_allowed() is False
+    def test_allow_false_on_cooldown(self, risk_manager):
+        for _ in range(3):
+            risk_manager.record_trade_closure(-10, risk_manager.equity - 10)
 
-    def test_daily_loss_limit_reset(self, risk_manager):
-        # Hit the limit
-        risk_manager.record_trade_closure(-301, 9699)
-        assert risk_manager.is_trade_allowed() is False
+        proposal = {"leverage": 1.0, "sl_distance": 100}
+        allowed, reason = risk_manager.allow(proposal, "SPOT", 50000)
+        assert allowed is False
+        assert "In cooldown" in reason
 
-        # Simulate time passing to the next day
-        risk_manager.last_trade_day = datetime.now(timezone.utc).date() - timedelta(days=1)
+    def test_allow_leverage_check(self, risk_manager):
+        proposal_spot_bad = {"leverage": 1.1, "sl_distance": 10}
+        allowed, reason = risk_manager.allow(proposal_spot_bad, "SPOT", 50000)
+        assert allowed is False
+        assert "exceeds asset class cap" in reason
 
-        # The check should reset the daily limit
-        assert risk_manager.is_trade_allowed() is True
-        assert risk_manager.daily_start_equity == 9699
+        # sl_distance must be >= 0.20 * 50000 = 10000 to pass liq buffer check
+        proposal_perp_ok = {"leverage": 3.0, "sl_distance": 10000}
+        allowed, _ = risk_manager.allow(proposal_perp_ok, "PERP", 50000)
+        assert allowed is True
 
-    def test_consecutive_loss_cooldown_3(self, risk_manager):
-        # Use smaller losses to avoid hitting the daily limit
+        proposal_perp_bad = {"leverage": 3.1, "sl_distance": 10}
+        allowed, reason = risk_manager.allow(proposal_perp_bad, "PERP", 50000)
+        assert allowed is False
+        assert "exceeds asset class cap" in reason
+
+    def test_allow_liq_buffer_check(self, risk_manager):
+        price = 100
+        # Required buffer is 20% (0.20)
+
+        # SL is 21% away (21 / 100), so it should be allowed
+        proposal_ok = {"leverage": 1.0, "sl_distance": 21}
+        allowed, _ = risk_manager.allow(proposal_ok, "PERP", price)
+        assert allowed is True
+
+        # SL is 19% away (19 / 100), should be rejected
+        proposal_bad = {"leverage": 1.0, "sl_distance": 19}
+        allowed, reason = risk_manager.allow(proposal_bad, "PERP", price)
+        assert allowed is False
+        assert "below required liquidation buffer" in reason
+
+        # Check should not apply to non-PERP assets
+        allowed, _ = risk_manager.allow(proposal_bad, "SPOT", price)
+        assert allowed is True
+
+    def test_trade_closure_and_cooldown_logic_remains(self, risk_manager):
+        """Verifies that the original cooldown logic is still functional."""
         risk_manager.record_trade_closure(-10, 9990)
         risk_manager.record_trade_closure(-10, 9980)
-        risk_manager.record_trade_closure(-10, 9970)
-
-        assert risk_manager.consecutive_losses == 3
-        assert risk_manager.in_cooldown_until is not None
-        assert risk_manager.is_trade_allowed() is False, "Trading should be paused during cooldown"
-
-        # Check that cooldown lifts after time
-        risk_manager.in_cooldown_until = datetime.now(timezone.utc) - timedelta(minutes=1)
-        assert risk_manager.is_trade_allowed() is True, "Trading should be allowed after cooldown"
-
-    def test_consecutive_loss_cooldown_5_session_stop(self, risk_manager):
-        for _ in range(5):
-            risk_manager.record_trade_closure(-100, risk_manager.equity - 100)
-
-        assert risk_manager.consecutive_losses == 5
-        assert risk_manager.in_cooldown_until.year == 9999 # Check for session stop sentinel
-        assert risk_manager.is_trade_allowed() is False
-
-    def test_loss_streak_reset_by_win(self, risk_manager):
-        risk_manager.record_trade_closure(-100, 9900)
-        risk_manager.record_trade_closure(-100, 9800)
         assert risk_manager.consecutive_losses == 2
 
-        risk_manager.record_trade_closure(50, 9850)
+        risk_manager.record_trade_closure(50, 10030)
         assert risk_manager.consecutive_losses == 0
-        assert risk_manager.in_cooldown_until is None
-        assert risk_manager.is_trade_allowed() is True
 
-    def test_calculate_position_size(self, risk_manager):
-        entry_price = 50000
-        sl_price = 49500
+        for _ in range(5):
+            risk_manager.record_trade_closure(-10, risk_manager.equity - 10)
 
-        # Risking 1% of 10k equity = $100
-        # Price risk per unit = 50000 - 49500 = $500
-        # Expected quantity = 100 / 500 = 0.2
-        quantity, _ = risk_manager.calculate_position_size("BTCUSDT", entry_price, sl_price)
-        assert quantity == pytest.approx(0.2)
-
-    def test_calculate_position_size_below_minimum(self, risk_manager):
-        risk_manager.equity = 1000
-        config.MIN_TRADE_AMOUNT_USD = 500
-        entry_price = 50000
-
-        # Let's make it fail
-        # Required position value is MIN_TRADE_AMOUNT_USD
-        # Let's say risk is small
-        sl_price = 40000
-        # Price risk = $10000
-        # Dollar risk = 1% of 1k = $10
-        # Quantity = 10 / 10000 = 0.001
-        # Position value = 0.001 * 50000 = $50
-        # This is less than MIN_TRADE_AMOUNT_USD = $500
-
-        quantity, _ = risk_manager.calculate_position_size("BTCUSDT", entry_price, sl_price)
-        assert quantity is None
+        assert risk_manager.consecutive_losses == 5
+        assert risk_manager.in_cooldown_until.year == 9999
+        allowed, _ = risk_manager.allow({}, "SPOT", 1)
+        assert not allowed

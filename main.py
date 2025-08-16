@@ -1,135 +1,165 @@
-# main.py
-
 import argparse
 import logging
 import sys
-import threading
 import time
+import json
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, Dict, Any
 
 import config
 from utils.utilities import configure_logging
+
+# --- Module Imports ---
+from modules.Funds_Controller import FundsController
+from modules.Wallet_Sync import WalletSync
+from modules.Portfolio_Manager import PortfolioManager
+from modules.Sizer import Sizer
+from modules.Strategy_Manager import StrategyManager
+from modules.risk_management import RiskManager
+from modules.trade_executor import TradeExecutor
+from modules.reward_system import RewardSystem
 from modules.data_manager import DataManager
 from modules.exchange import ExchangeAPI
-from modules.trade_executor import TradeExecutor
-from modules.risk_management import RiskManager
-from modules.Strategy_Manager import StrategyManager
-from modules.top_pairs import TopPairs
-from modules.telegram_bot import TelegramNotifier
-from modules.reward_system import RewardSystem
-from scheduler import JobScheduler
 
+# Placeholder for modules not in the scope of this refactoring
+class MarketSessions:
+    @staticmethod
+    def current_session(now_utc: datetime) -> str:
+        hour = now_utc.hour
+        if 2 <= hour < 8: return "ASIA"
+        if 7 <= hour < 16: return "EU"
+        if 13 <= hour < 22: return "US"
+        return "OVERLAP"
 
-def build_risk_manager(account_balance: float, notifier: TelegramNotifier) -> RiskManager:
+def run_bot(args: argparse.Namespace):
     """
-    Builds a RiskManager instance based on the configuration.
-
-    Args:
-        account_balance: The current account balance.
-        notifier: The Telegram notifier instance.
-
-    Returns:
-        A RiskManager instance.
+    Initializes and runs the trading bot in a synchronous loop.
     """
-    rm = RiskManager(
-        account_balance=account_balance,
-        notifier=notifier
-    )
-    return rm
+    log = logging.getLogger()
+    log.info("Booting modular trading bot...")
 
+    try:
+        with open("policies/sizing_policy.json", 'r') as f:
+            sizing_policy = json.load(f)
+    except Exception as e:
+        log.exception(f"FATAL: Failed to load sizing_policy.json: {e}")
+        return 1
 
-def run_bot(args: argparse.Namespace,
-            test_mode: bool = False,
-            stop_event: Optional[threading.Event] = None) -> int:
-    """
-    Initializes and runs the trading bot.
+    # --- Initialize Core Modules ---
+    mock_exchange = ExchangeAPI() # For simulation, one exchange can serve all
+    data_manager = DataManager(exchange=mock_exchange)
 
-    Args:
-        args: The command-line arguments.
-        test_mode: Whether to run in test mode.
-        stop_event: An event to stop the bot.
+    exchange_adapters = {"SPOT": mock_exchange, "PERP": mock_exchange}
 
-    Returns:
-        The exit code.
-    """
-    configure_logging(config.LOG_LEVEL, config.LOG_FILE)
-    log = logging.getLogger("main")
-    log.info("Booting Self-Learning Trading Bot…")
+    funds_controller = FundsController()
+    wallet_sync = WalletSync(exchange_adapters=exchange_adapters)
 
-    # Exchange + Data
-    exchange = ExchangeAPI()
-    if not test_mode:
-        exchange.load_markets()
+    allocations = getattr(config, "ASSET_ALLOCATION_USD", {"SPOT": 10000, "PERP": 5000})
+    portfolio_manager = PortfolioManager(allocations=allocations, wallet_sync=wallet_sync)
 
-    notifier = TelegramNotifier(disable_async=not config.ASYNC_TELEGRAM)
+    sizer = Sizer(policy=sizing_policy)
+    # Use one ledger's balance for initializing RiskManager's equity tracking
+    initial_rm_balance = sum(l['total'] for l in portfolio_manager.ledgers.values())
+    risk_manager = RiskManager(account_balance=initial_rm_balance, sizing_policy=sizing_policy)
 
-    # Wallets
-    starting_balance = float(config.SIMULATION_START_BALANCE)
-    # Risk
-    risk_manager = build_risk_manager(starting_balance, notifier)
+    strategy_manager = StrategyManager(data_provider=data_manager)
+    trade_executor = TradeExecutor(sizing_policy=sizing_policy, simulation_mode=True, exchange=mock_exchange)
+    reward_system = RewardSystem(starting_balance=initial_rm_balance)
 
-    trade_executor = TradeExecutor(
-        simulation_mode=True,  # Keep execution in simulation as requested
-        notifier=notifier,
-        risk_manager=risk_manager,
-        notifications=None,
-    )
+    log.info("All modules initialized successfully.")
 
-    # Data Manager
-    dm = DataManager(exchange=exchange)
+    # --- Main Trading Loop ---
+    symbols_to_trade = ["BTC/USDT", "ETH/USDT"]
+    asset_classes = {"BTC/USDT": "SPOT", "ETH/USDT": "SPOT"}
 
-    # Top pairs manager
-    top_pairs = TopPairs(
-        exchange=exchange,
-        quote="USDT",
-        max_pairs=config.MAX_SIMULATION_PAIRS,
-        ttl_sec=60 * 60,  # re-scan hourly
-        min_volume_usd_24h=5_000_000,
-    )
+    while True:
+        now_utc = datetime.now(timezone.utc)
+        log.info(f"--- Starting new loop at {now_utc.isoformat()} ---")
 
-    # Reward system
-    reward = RewardSystem()
+        wallet_sync.sync()
 
-    # Agent
-    bot = StrategyManager(
-        data_provider=dm,
-        error_handler=exchange.error_handler,
-        reward_system=reward,
-        risk_manager=risk_manager,
-        symbol=config.DEFAULT_SYMBOL,
-    )
+        for symbol in symbols_to_trade:
+            asset_class = asset_classes.get(symbol)
+            if not asset_class: continue
 
-    # The new StrategyManager has its own run loop.
-    # We just need to start it in a thread.
-    bot_thread = threading.Thread(target=bot.run, daemon=True)
-    bot_thread.start()
+            log.info(f"--- Evaluating {symbol} ({asset_class}) ---")
 
-    if not test_mode:
-        # In a real application, you would have a UI or some other way to
-        # interact with the bot.
-        while True:
-            time.sleep(1)
+            if not funds_controller.is_allowed(asset_class, symbol):
+                log.warning(f"Trading disabled for {asset_class} by FundsController. Skipping.")
+                continue
 
-    return 0
+            df_15m = data_manager.load_historical_data(symbol, "15m", backfill_bars=300)
+            if df_15m.empty:
+                log.warning(f"No 15m data for {symbol}. Skipping.")
+                continue
 
+            regime, regime_context = strategy_manager._determine_regime(df_15m)
+            if regime == "Neutral":
+                log.info(f"Neutral regime for {symbol}. No action.")
+                continue
+
+            session = MarketSessions.current_session(now_utc)
+            mode = strategy_manager.select_mode(regime, session, asset_class)
+
+            decision_context = {**regime_context, "regime": regime, "session": session, "asset_class": asset_class, "mode": mode}
+            decision = strategy_manager.decide(symbol, decision_context)
+
+            if not decision:
+                log.info(f"No entry signal from strategy for {symbol}.")
+                continue
+
+            log.info(f"Signal found for {symbol}: {decision.signal}, Score: {decision.meta['signal_score']:.2f}")
+
+            equity = portfolio_manager.available_budget(asset_class)
+            price = df_15m['close'].iloc[-1]
+            atr = regime_context.get('atr_15m', 0)
+
+            proposal = sizer.propose(
+                equity=equity, asset_class=asset_class, mode=mode, atr=atr, price=price,
+                pair_cap_pct=funds_controller.pair_cap_pct(),
+                signal_score=decision.meta['signal_score'], good_setup=decision.meta['good_setup']
+            )
+
+            if not proposal:
+                log.warning(f"Sizer did not produce a valid proposal for {symbol}. Skipping.")
+                continue
+
+            log.info(f"Sizer proposed: SizeUSD={proposal['size_usd']:.2f}, Leverage={proposal['leverage']:.1f}x")
+
+            is_allowed, reason = risk_manager.allow(proposal, asset_class, price, mode, session)
+            if not is_allowed:
+                log.warning(f"Trade rejected by RiskManager: {reason}. Skipping.")
+                continue
+
+            rid = portfolio_manager.reserve(asset_class, proposal['size_usd'])
+            if not rid:
+                log.error(f"Failed to reserve funds for {symbol}. Skipping.")
+                continue
+
+            receipt = trade_executor.execute_order(decision, proposal['size_usd'], proposal['leverage'], price)
+
+            portfolio_manager.book_trade(asset=asset_class, pnl_net=receipt['pnl_net_usd'], fees=receipt['fees_usd'])
+            reward_system.update(pnl_net_usd=receipt['pnl_net_usd'], context={"asset": asset_class, "mode": mode})
+            portfolio_manager.release(rid)
+
+            log.info(f"--- Completed trade cycle for {symbol} ---")
+
+        loop_interval = getattr(config, "LIVE_LOOP_INTERVAL", 60)
+        log.info(f"Loop finished. Sleeping for {loop_interval} seconds...")
+        time.sleep(float(loop_interval))
 
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
-    """
-    Parses command-line arguments.
-
-    Args:
-        argv: The list of command-line arguments.
-
-    Returns:
-        The parsed arguments.
-    """
-    p = argparse.ArgumentParser(description="Self-Learning AI Trading Bot")
-    p.add_argument("--mode",
-                   choices=["simulation", "production"],
-                   default=config.ENVIRONMENT)
+    p = argparse.ArgumentParser(description="Modular Trading Bot")
+    p.add_argument("--mode", choices=["simulation", "production"], default="simulation")
     return p.parse_args(argv)
 
-
 if __name__ == "__main__":
-    sys.exit(run_bot(parse_args()))
+    configure_logging()
+    args = parse_args()
+    try:
+        sys.exit(run_bot(args))
+    except KeyboardInterrupt:
+        sys.exit(0)
+    except Exception:
+        logging.getLogger().exception("Unhandled exception in main.")
+        sys.exit(1)
