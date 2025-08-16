@@ -1,216 +1,68 @@
-Modules Overview
-This document provides a detailed breakdown of each module in the trading bot project.
-It reflects the current architecture after August 2025 updates, keeping old goals while adding new features.
+## ✅ Updated `MODULES_FILES.MD` (paste into repo root)
 
-1. config.py
-Purpose: Central configuration file for all modules.
-Key Features:
+```markdown
+# MODULES_FILES.MD
+_Last updated: 2025-08-16 (Europe/London)_
 
-API keys (Bybit, Telegram) — simulation & live modes.
+## Naming & Logging
+- Module names: `Train_RL_Model.py`, `Portfolio_Manager.py`, `Funds_Controller.py`, `Wallet_Sync.py`, `Sizer.py`, etc.
+- Log fields: `module, action, asset_class, session, symbol, mode, size_usd, leverage, fees_usd, pnl_net_usd, allowed_funds, pair_cap_pct`.
 
-Global bot parameters (loop intervals, trade size, fee model).
+## Entry
+### main.py
+- Initializes: config → Wallet_Sync → Portfolio_Manager → Funds_Controller → Sizer → Sessions/Regime → Strategy loop → Risk → Executor → Reward → Telegram.
+- CLI: `--mode`, `--symbols`, `--interval`, `--asset-classes=spot,perp,options,forex`.
 
-Risk management settings (per-pair, portfolio exposure caps).
+## Core Modules (`modules/`)
+### Portfolio_Manager.py
+- **What:** Sub-ledger allocations (USD/%), reservations, P&L, realized fees.
+- **LIVE:** Caps available budget by **live wallet** free balance (from Wallet_Sync).
+- **API:** `available_budget(asset)`, `reserve(asset, usd)`, `release(id)`, `book_trade(asset, pnl_net, fees)`.
 
-Optimization parameters for ML/RL.
+### Funds_Controller.py  **NEW**
+- **What:** Runtime permissions & caps.
+- **State:** `allow_bot_funds` (bool), `asset_enabled[asset]` (bool), `max_pair_allocation_pct` (default 0.10).
+- **API:** `is_allowed(asset, symbol)`, `pair_cap_pct()`, `snapshot()`.
+- **UI hooks:** toggle/switch & dropdown handlers; all changes logged.
 
-Paths for saving historical data & logs.
+### Wallet_Sync.py  **NEW**
+- **What:** Pulls **live** wallet balances from active exchange(s); maps to sub-ledgers.
+- **API:** `sync() -> balances`, `get_equity(asset)`.
+- **Notes:** Frequency configurable; handles multiple wallets; tolerates API errors gracefully.
 
-Supports .env overrides.
+### Sizer.py
+- **What:** Best-practice sizing with **fixed→% risk** and **Good Setup boost**.
+- **Inputs:** equity (from Wallet_Sync or Portfolio), asset, mode, ATR, price, risk %, good_setup score, pair_cap_pct.
+- **Outputs:** `{size_usd, leverage, sl_distance}`; always clamps to pair cap, risk cap, leverage cap.
+- **Policy:** from `/policies/sizing_policy.json`.
 
-2. main.py
-Purpose: Entry point for starting the bot.
-Key Features:
+### Regime_Detector.py
+- **What:** Labels `trend | range | volatile | mixed` via ADX/EMA slope/BB-bandwidth/ATR-pct.
 
-Initializes UI & core modules.
+### Market_Sessions.py
+- **What:** Session detection (ASIA/EU/US/overlaps) + per-session profile.
 
-Reads config to determine simulation or live mode.
+### Strategy_Manager.py
+- **What:** Chooses mode (session + regime + asset-KPI); computes `signal_score` & `good_setup` flag.
+- **API:** `select_mode(regime, session, asset)`, `decide(df, context)->{signal, sl, tp, meta{signal_score,good_setup}}`.
 
-Launches bot loop or training loop.
+### Risk_Management.py
+- **What:** Daily loss, max DD, loss-streak cooldown, per-symbol caps, **max_leverage**, **liq_buffer** for perps; validates final proposal.
 
-Handles button state changes (color change after click).
+### Trade_Executor.py
+- **What:** Route per asset class; place/cancel; compute **net P&L = gross − fees − slippage**; return receipt.
 
-3. scheduler.py
-Purpose: Handles scheduled tasks & recurring updates.
-Key Features:
+### Reward_System.py
+- **What:** Wallet & points tracked on **net** P&L; series for charts.
 
-Triggers top-pairs refresh every 60 min.
+### Exchange_* (Spot/Perp/Options/Forex)
+- **What:** Venue adapters; live balances API for Wallet_Sync; funding/greeks where applicable.
 
-Schedules reward and statistics updates.
+### Technical_Indicators.py, Data_Manager.py, Top_Pairs.py, Telegram_Bot.py
+- As documented previously.
 
-Can run background backtests or RL sessions.
+## Policies (`/policies`)
+- `kpi_policy.json`, `asset_kpi_policy.json`, `session_policy.json`, `sizing_policy.json` (with `good_setup` fields & `pair_allocation_cap_pct=0.10`).
 
-4. data_manager.py
-Purpose: Fetches & stores market data.
-Key Features:
-
-Gets live klines from Bybit WebSocket & REST API.
-
-Appends new bars to existing CSVs without redownloading full history.
-
-Avoids exceeding Bybit’s 1000-bar limit (keeps under 900 per request).
-
-Supports only 5m and 15m intervals (for setup & entry logic).
-
-Can use locally stored historical datasets for training.
-
-Future-proofed for Forex/Options connectors.
-
-5. exchange.py
-Purpose: Unified interface for Bybit (spot, perp) and future exchanges.
-Key Features:
-
-Places orders (market, limit) with TP/SL.
-
-Fetches tickers, order book, positions.
-
-Handles testnet/live domain switching.
-
-Graceful fallback if symbol not in testnet.
-
-Can be extended for Binance, IBKR, Forex.
-
-6. trade_executor.py
-Purpose: Executes trades in live or simulation mode.
-Key Features:
-
-Simulation mode keeps virtual balance & logs PnL without touching wallet.
-
-Live mode sends orders via exchange module.
-
-Avoids opening new positions on same symbol until closed.
-
-TP/SL monitoring cadence:
-
-Positions not re-entered for 60 min unless closed.
-
-Open positions checked every 1–5 min.
-
-Updates reward points on close.
-
-7. trade_simulator.py
-Purpose: Fee/slippage-aware backtesting engine.
-Key Features:
-
-Runs decision lists against historical bars.
-
-Applies config-defined fee & slippage models.
-
-Returns equity curve & final balance.
-
-Designed for RL/ML model validation.
-
-8. technical_indicators.py
-Purpose: Indicator generation for strategies.
-Key Features:
-
-EMA/SMA, RSI, ATR, Bollinger Bands, Fibonacci levels.
-
-Generates buy/sell signals for given timeframes.
-
-Can adapt indicator thresholds dynamically.
-
-Output structured for both ML/RL models & rule-based strategies.
-
-9. risk_management.py
-Purpose: Prevents overexposure & enforces rules.
-Key Features:
-
-Per-pair and portfolio exposure limits.
-
-Loss streak cooldowns.
-
-Position sizing from config (percentage of balance).
-
-Forces close on KPI violations.
-
-10. reward_system.py
-Purpose: Tracks reward points for RL.
-Key Features:
-
-Points for profit % ranges.
-
-Penalties for losses.
-
-Bonus for high-profit trades.
-
-Syncs with statistics & UI.
-
-11. top_pairs.py
-Purpose: Maintains dynamic list of most active pairs.
-Key Features:
-
-Pulls top pairs by volume from Bybit.
-
-Refreshes every 60 minutes.
-
-Removes symbols not supported in testnet when in simulation mode.
-
-Limits returned pairs based on config.
-
-12. self_learning.py
-Purpose: RL/ML-driven strategy orchestrator.
-Key Features:
-
-Uses 15m candles to detect setups, 5m candles for entries.
-
-Avoids symbols with open positions.
-
-Uses top pairs list for diversification.
-
-Refreshes top pairs list every 60 minutes.
-
-Executes trades via TradeExecutor.
-
-Runs entirely in simulation mode if configured.
-
-13. telegram_bot.py
-Purpose: Sends notifications to Telegram.
-Key Features:
-
-Alerts on trade entries/exits, errors, KPI summaries.
-
-Heartbeat messages every X minutes.
-
-Supports async sending for low-latency notifications.
-
-Configurable verbosity (quiet, normal, verbose).
-
-14. ui.py
-Purpose: A Textual-based UI for the Trading Bot.
-Key Features:
-
-Buttons for starting/stopping training and trading.
-Live-updating status bar with connection, mode, and heartbeat.
-Log view for real-time monitoring.
-Sparkline charts for wallet balance, portfolio value, and reward points.
-
-15. forex/
-forex_exchange.py — API interface for Forex brokers (future IBKR integration).
-forex_strategy.py — Forex-specific strategies.
-
-16. options/
-options_exchange.py — Interface for options trading.
-
-17. telemetry/
-metrics_exporter.py — Exports metrics to files or dashboard.
-report_generator.py — Generates KPI and strategy performance reports.
-
-18. state/
-runtime_state.py — Saves/restores bot state between runs.
-position_reconciler.py — Syncs open trades with exchange to ensure accuracy.
-
-19. rollout_manager.py
-Purpose: Manages staged rollout from simulation → full live trading.
-Stages:
-- Data only.
-- Simulated trades.
-- Canary small trades.
-- Scaled positions.
-- Full deployment.
-
-20. modules/parameter_optimization.py
-Purpose: Model optimization & parameter tuning.
-Key Features:
-Supports grid search, random search, and evolutionary algorithms.
-Works with RL/ML modules to improve strategies.
+## Tests
+- Wallet_Sync mock balances; Funds_Controller enforcement; Sizer boost + cap; Risk leverage/liq buffer; Executor net-P&L; end-to-end sim run.
