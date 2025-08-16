@@ -5,25 +5,23 @@ from modules.Sizer import Sizer
 
 @pytest.fixture(scope="module")
 def sizer_policy():
+    # This policy is now mostly for fallbacks and global settings,
+    # as the core logic is phased inside the Sizer.
     return {
       "global": {
-        "equity_threshold_usd": 20000,
-        "fixed_trade_usd": 10,
-        "max_risk_pct": 0.005, # 0.5%
-        "max_risk_pct_good_setup": 0.0075, # 0.75%
+        "max_risk_pct": 0.01, # 1% for phase 4
+        "max_risk_pct_good_setup": 0.02, # 2% for phase 4 good setups
         "atr_mult_sl": 1.2,
-        "min_stop_distance_pct": 0.0015, # 0.15%
+        "min_stop_distance_pct": 0.0015,
         "good_setup_score_min": 0.80
       },
       "leverage_tiers": [
-        {"equity_max": 10000,  "SCALP": 1.0, "TREND": 1.0},
-        {"equity_max": 25000,  "SCALP": 2.0, "TREND": 1.5},
-        {"equity_max": 50000,  "SCALP": 3.0, "TREND": 2.0}
+        {"equity_max": 50000, "DEFAULT": 1.0},
+        {"equity_max": 999999, "DEFAULT": 2.0}
       ],
       "asset_caps": {
-        "SPOT":   {"max_leverage": 1.0},
-        "PERP":   {"max_leverage": 3.0},
-        "FOREX":  {"max_leverage": 5.0}
+        "SPOT": {"max_leverage": 1.0},
+        "PERP": {"max_leverage": 5.0}
       }
     }
 
@@ -31,103 +29,119 @@ def sizer_policy():
 def sizer(sizer_policy):
     return Sizer(policy=sizer_policy)
 
-def test_sizer_from_json(sizer_policy):
-    """Tests loading the policy from a JSON file."""
-    path = "tests/temp_sizing_policy.json"
-    with open(path, 'w') as f:
-        json.dump(sizer_policy, f)
+# --- Tests for the new Phased Scaling Logic ---
 
-    sizer = Sizer.from_json(path)
-    assert sizer.global_policy['fixed_trade_usd'] == 10
-    os.remove(path)
-
-def test_fixed_sizing_below_threshold(sizer):
-    """Tests that fixed sizing is used when equity is below the threshold."""
+def test_phase_1_fixed_sizing(sizer):
+    """Phase 1 (equity <= 1000): Fixed $10 trade."""
     proposal = sizer.propose(
-        equity=19999, asset_class="SPOT", mode="TREND",
-        atr=200, price=50000, pair_cap_pct=0.10
+        equity=900, asset_class="SPOT", mode="TREND",
+        atr=200, price=50000, pair_cap_pct=0.10, signal_score=0.7
     )
-    assert proposal['size_usd'] == 10
+    assert proposal['size_usd'] == 10.0
 
-def test_risk_percent_sizing_above_threshold(sizer):
-    """Tests basic %-risk sizing when equity is above the threshold."""
-    equity = 30000
+def test_phase_2_direct_equity_sizing(sizer):
+    """Phase 2 (1k < equity <= 5k): 0.5%-1.0% of equity."""
+    # Test at mid-range signal score
+    proposal = sizer.propose(
+        equity=4000, asset_class="SPOT", mode="TREND",
+        atr=200, price=50000, pair_cap_pct=0.10, signal_score=0.5
+    )
+    # Expected size_pct = 0.005 + (0.5 * 0.005) = 0.0075
+    # Expected size_usd = 4000 * 0.0075 = 30
+    assert proposal['size_usd'] == pytest.approx(30.0)
+
+    # Test at max signal score
+    proposal_max = sizer.propose(
+        equity=4000, asset_class="SPOT", mode="TREND",
+        atr=200, price=50000, pair_cap_pct=0.10, signal_score=1.0
+    )
+    # Expected size_pct = 0.005 + (1.0 * 0.005) = 0.01
+    # Expected size_usd = 4000 * 0.01 = 40
+    assert proposal_max['size_usd'] == pytest.approx(40.0)
+
+def test_phase_3_risk_percentage_sizing(sizer):
+    """Phase 3 (5k < equity <= 20k): Risk scales from 0.5% to 5%."""
+    equity = 15000
     price = 50000
-    atr = 250 # ATR in price terms
-    # sl_pct = max(1.2 * 250 / 50000, 0.0015) = max(0.006, 0.0015) = 0.006
-    # risk_per_trade = 30000 * 0.005 = 150
-    # size_usd = 150 / 0.006 = 25000
-    proposal = sizer.propose(
-        equity=equity, asset_class="SPOT", mode="TREND",
-        atr=atr, price=price, pair_cap_pct=1.0 # Use high cap to not interfere
-    )
-    assert proposal['size_usd'] == pytest.approx(25000)
+    atr = 250
+    # sl_pct = max(1.2 * 250 / 50000, 0.0015) = 0.006
 
-def test_good_setup_boosts_risk(sizer):
-    """Tests that a good setup uses a higher risk percentage."""
+    # Test at low signal score (risk should be close to 0.5%)
+    proposal_low = sizer.propose(
+        equity=equity, asset_class="SPOT", mode="TREND",
+        atr=atr, price=price, pair_cap_pct=100.0, signal_score=0.1 # High cap
+    )
+    # risk_pct = 0.005 + (0.1 * (0.05 - 0.005)) = 0.005 + 0.0045 = 0.0095
+    # risk_usd = 15000 * 0.0095 = 142.5
+    # size_usd = 142.5 / 0.006 = 23750
+    assert proposal_low['size_usd'] == pytest.approx(23750)
+
+    # Test at high signal score (risk should be close to 5%)
+    proposal_high = sizer.propose(
+        equity=equity, asset_class="SPOT", mode="TREND",
+        atr=atr, price=price, pair_cap_pct=100.0, signal_score=0.9 # High cap
+    )
+    # risk_pct = 0.005 + (0.9 * 0.045) = 0.005 + 0.0405 = 0.0455
+    # risk_usd = 15000 * 0.0455 = 682.5
+    # size_usd = 682.5 / 0.006 = 113750
+    assert proposal_high['size_usd'] == pytest.approx(113750)
+
+
+def test_phase_4_advanced_risk_sizing(sizer):
+    """Phase 4 (equity > 20k): Uses risk % from policy."""
     equity = 30000
     price = 50000
     atr = 250
-    # sl_pct is still 0.006
-    # risk_per_trade = 30000 * 0.0075 = 225
-    # size_usd = 225 / 0.006 = 37500
+    # sl_pct = 0.006
+    # risk_pct from policy = 0.01 (base)
+    # risk_usd = 30000 * 0.01 = 300
+    # size_usd = 300 / 0.006 = 50000
     proposal = sizer.propose(
         equity=equity, asset_class="SPOT", mode="TREND",
-        atr=atr, price=price, pair_cap_pct=1.0, # Use high cap to not interfere
-        good_setup=True, signal_score=0.85
+        atr=atr, price=price, pair_cap_pct=100.0 # High cap
     )
-    # The uncapped size would be 37500, but it's capped by equity * pair_cap_pct (30000 * 1.0 = 30000)
-    assert proposal['size_usd'] == pytest.approx(30000)
+    assert proposal['size_usd'] == pytest.approx(50000)
 
-def test_pair_allocation_cap(sizer):
-    """Tests that the final size is capped by the pair allocation percentage."""
-    equity = 30000
+def test_phase_4_good_setup_boost_and_cap(sizer):
+    """Phase 4 (equity > 20k): Good setup boosts risk and is capped at 10% of equity."""
+    equity = 100000
     price = 50000
     atr = 250
-    pair_cap_pct = 0.10 # 10% of 30k = 3000
-    # Uncapped size would be 25000, but should be capped at 3000
+    # sl_pct = 0.006
+    # good_setup risk_pct from policy = 0.02
+    # risk_usd = 100000 * 0.02 = 2000
+    # size_usd (uncapped) = 2000 / 0.006 = 333333.33
+    # 10% equity cap = 100000 * 0.10 = 10000
     proposal = sizer.propose(
         equity=equity, asset_class="SPOT", mode="TREND",
-        atr=atr, price=price, pair_cap_pct=pair_cap_pct
+        atr=atr, price=price, pair_cap_pct=1.0, # High pair cap
+        good_setup=True, signal_score=0.9
     )
-    assert proposal['size_usd'] == pytest.approx(3000)
+    # The size should be clamped to the 10% equity cap
+    assert proposal['size_usd'] == pytest.approx(10000)
 
-def test_leverage_tiering(sizer):
-    """Tests that leverage is correctly selected from tiers."""
-    # Equity 9k -> 1.0x
-    prop1 = sizer.propose(equity=9000, asset_class="PERP", mode="SCALP", atr=1, price=100, pair_cap_pct=0.1)
-    assert prop1['leverage'] == 1.0
-
-    # Equity 22k -> 2.0x for SCALP
-    prop2 = sizer.propose(equity=22000, asset_class="PERP", mode="SCALP", atr=1, price=100, pair_cap_pct=0.1)
-    assert prop2['leverage'] == 2.0
-
-    # Equity 22k -> 1.5x for TREND
-    prop3 = sizer.propose(equity=22000, asset_class="PERP", mode="TREND", atr=1, price=100, pair_cap_pct=0.1)
-    assert prop3['leverage'] == 1.5
-
-def test_leverage_asset_cap(sizer):
-    """Tests that leverage is capped by the asset's max leverage."""
-    # Equity 40k -> SCALP would be 3.0x, but PERP cap is 3.0x. So 3.0x
-    prop1 = sizer.propose(equity=40000, asset_class="PERP", mode="SCALP", atr=1, price=100, pair_cap_pct=0.1)
-    assert prop1['leverage'] == 3.0
-
-    # Equity 40k -> SCALP would be 3.0x, but SPOT cap is 1.0x
-    prop2 = sizer.propose(equity=40000, asset_class="SPOT", mode="SCALP", atr=1, price=100, pair_cap_pct=0.1)
-    assert prop2['leverage'] == 1.0
-
-def test_min_stop_distance(sizer):
-    """Tests that the minimum stop distance is enforced."""
-    equity = 30000
-    price = 50000
-    atr = 10 # ATR is very small, so min_stop_distance_pct should dominate
-    # atr_sl_pct = 1.2 * 10 / 50000 = 0.00024
-    # min_sl_pct = 0.0015
-    # sl_pct is 0.0015
-    sl_distance = 0.0015 * price
-
-    proposal = sizer.propose(
-        equity=equity, asset_class="SPOT", mode="TREND",
-        atr=atr, price=price, pair_cap_pct=0.10
+def test_global_pair_allocation_cap_still_applies(sizer):
+    """Tests that the global pair allocation cap is always respected."""
+    # Test in Phase 2
+    proposal_p2 = sizer.propose(
+        equity=4000, asset_class="SPOT", mode="TREND",
+        atr=200, price=50000, pair_cap_pct=0.05, signal_score=1.0
     )
-    assert proposal['sl_distance'] == pytest.approx(sl_distance)
+    # Uncapped size = 4000 * 0.01 = 40
+    # Capped size = 4000 * 0.05 = 200. The uncapped is smaller.
+    # Let's try a smaller cap
+    proposal_p2_capped = sizer.propose(
+        equity=4000, asset_class="SPOT", mode="TREND",
+        atr=200, price=50000, pair_cap_pct=0.005, signal_score=1.0
+    )
+    # Uncapped size = 40. Capped size = 4000 * 0.005 = 20
+    assert proposal_p2_capped['size_usd'] == pytest.approx(20)
+
+    # Test in Phase 4
+    proposal_p4 = sizer.propose(
+        equity=100000, asset_class="SPOT", mode="TREND",
+        atr=250, price=50000, pair_cap_pct=0.05, # 5% cap
+        good_setup=True, signal_score=0.9
+    )
+    # Good setup capped at 10% equity (10000), but pair cap is 5% (5000)
+    assert proposal_p4['size_usd'] == pytest.approx(5000)

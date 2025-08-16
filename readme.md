@@ -1,176 +1,80 @@
-# Self-Learning Trading Bot (Multi-Asset, Session-Aware)
+# Self-Learning Trading Bot (Multi-Asset, Professional Grade)
 
-Institutional-grade, modular framework for **Crypto Spot**, **Perp/Futures**, **Options**, and **Forex**, with **regime detection**, **session awareness (Asia/EU/US)**, **mode-based strategies (Scalp, Trend, Swing, Mean-Reversion, Options)**, **sub-ledger portfolio allocations**, **risk-adjusted sizing/leverage**, and **net-of-fees rewards**.
-
-Supports Bybit Spot (testnet & live). Designed to extend to futures/options/forex connectors.
+Institutional-grade, modular framework for **Crypto Spot**, **Perp/Futures**, **Options**, and **Forex**. This bot features advanced capabilities including **phased scaling**, **strategy validation**, **news sentiment analysis**, and a robust **kill switch** mechanism.
 
 ---
 
 ## What It Does (Plain English)
-- Detects **market weather** (trend/range/volatile) and **active session** (Asia/EU/US/overlaps).
-- Chooses **mode** (Scalp/Trend/Swing/MR/Options) + asset-class KPI gates.
-- Sizes trades using **best-practice** rules:
-  - **$10 fixed** until equity ≥ **$20,000** (per sub-ledger).
-  - Then **%-risk sizing** with **ATR-based stops** and **leverage tiers**.
-  - If a **Good Setup**: can size **up to 10% of that sub-ledger’s equity** in a single pair, but **never** exceed risk/leverage rails.
-- Uses **live wallet** balances in production (no invented equity), and sub-ledgers in simulation.
-- Allocates & tracks capital across **SPOT / PERP / OPTIONS / FOREX** sub-ledgers.
-- Executes with **risk rails** (max DD, daily loss, leverage caps, liq-buffer).
-- Computes **net P&L (after fees/slippage)** for ledger & rewards.
-- Sends **Telegram** updates and exports **telemetry**.
+- **Validates Strategies**: Before use, strategies are backtested and walk-forward tested by the **Validation Manager** to ensure they meet performance criteria (e.g., >500 trades, Sharpe ratio).
+- **Analyzes News**: The **News Agent** fetches market sentiment for assets and pauses trading around high-impact events (CPI, FOMC).
+- **Sizes Trades Intelligently**: A **Phased Scaling Plan** adjusts trade sizes based on the live equity of each asset-class sub-ledger.
+- **Manages Risk Proactively**:
+  - A **Kill Switch** halts trading for an asset class if it breaches drawdown limits (e.g., >5% daily), has excessive slippage, or API errors.
+  - **Filters** trades based on liquidity (>$5M daily volume), correlation (max 3 correlated positions), and funding/carry costs.
+- **Uses Live Wallet Balances**: Ensures that all sizing and risk calculations are based on real, synced wallet equity, not invented balances.
+- **Calculates Net-of-Fees P&L**: All performance tracking, equity progression, and reward calculations are based on profit after all fees and slippage.
+- **Sends Telegram** updates and exports **structured JSON logs** for detailed analysis.
 
 ---
 
-## Manual Funds Control (YOU stay in charge)
-- **Allow Bot To Use Funds** (global toggle): Off = paper/sim only; On = live orders allowed.
-- **Per-Asset Class Toggle**: enable/disable SPOT, PERP, OPTIONS, FOREX independently.
-- **Max Pair Allocation %**: default **10%** (cap per symbol from its sub-ledger).
-- **UI**: switch + dropdowns (Strategy Mode, Allowed Asset Classes, Max Pair %).
-- **Source of truth** for equity:
-  - **LIVE**: exchange wallet balances (synced periodically).
-  - **SIM**: Portfolio sub-ledger equity.
+## Phased Scaling Sizing Logic
+The bot uses a sophisticated 4-phase scaling model, applied independently to each asset class sub-ledger (Spot, Forex, etc.).
 
-> Changes are logged (who/when/what), and enforced before each order.
+- **Phase 1 (Equity ≤ $1,000):** Fixed **$10** trades only.
+- **Phase 2 ($1,000 < Equity ≤ $5,000):** Trade size is **0.5% to 1.0%** of sub-ledger equity, scaled by signal confidence.
+- **Phase 3 ($5,000 < Equity ≤ $20,000):** **Percentage-risk sizing** is enabled, with risk per trade scaling up to a maximum of **5%** of equity for high-confidence signals.
+- **Phase 4 (Equity > $20,000):** Advanced percentage-risk sizing, with an additional rule allowing "good setups" to have a total position size of up to **10%** of sub-ledger equity.
 
 ---
 
-## Trade Modes & Asset-Class KPIs
-
-Execute only if **Expectancy > 0 after fees** and **Sharpe / Sortino / Calmar** and **Max Drawdown** meet **asset-class** thresholds. **Win % is advisory**.
-
-| Asset Class  | Modes Available                    | KPIs (Sharpe, Sortino, Calmar, Max DD)                               |
-|--------------|------------------------------------|------------------------------------------------------------------------|
-| **Spot**     | Scalp, Trend, Swing, Mean-Reversion| ≥ 2.0, ≥ 3.0, ≥ 1.2, **≤ 15%**                                        |
-| **Perp/Fut** | Scalp, Trend, Swing                | ≥ 1.8, ≥ 2.5, ≥ 1.2, **≤ 15%** (+ **liq buffer** ≥ 20% to stop)       |
-| **Options**  | Options packages (spreads/hedges)  | ≥ 1.5, ≥ 2.0, ≥ 1.2, **≤ 12%** + Theta/day, IV−RV edge, |Δ| cap       |
-| **Forex**    | Scalp, Trend, Mean-Reversion       | ≥ 2.0, ≥ 3.0, ≥ 1.5, **≤ 12%**                                        |
-
----
-
-## Sessions (UTC guidance)
-- **ASIA** 00:00–08:00 → MR or patient Trend; smaller size.
-- **EU**   07:00–15:00 → Intraday Trend / Scalp; normal size.
-- **US**   13:30–20:00 → Scalp/Breakout; tighter SL; higher size allowed.
-- **Overlaps** (ASIA↔EU 07:00–08:00; EU↔US 13:00–16:00) → best liquidity; size bias up.
+## Risk & Market Filters
+- **Liquidity Filter**: Only trades pairs with ≥ $5M in 24h volume.
+- **Correlation Filter**: Prevents opening more than 2 additional positions that are highly correlated with an existing one.
+- **Funding/Carry Filter**: Avoids entering positions that would pay excessive funding rates (for perps) or carry costs (for FX).
+- **Kill Switch**: Automatically halts *new* trades for an asset class if critical risk limits are breached.
+  - Daily drawdown > 5%
+  - Monthly drawdown > 15%
+  - 3+ catastrophic slippage events in 24h
+  - Exchange/API error escalation
 
 ---
 
-## Portfolio Allocations (Sub-Ledgers)
-Example:
-```python
-ASSET_ALLOCATION_USD = {"SPOT": 14000, "OPTIONS": 1000, "PERP": 0, "FOREX": 0}
-# or %
-ASSET_ALLOCATION_PCT = {"SPOT": 0.85, "OPTIONS": 0.05, "PERP": 0.10, "FOREX": 0.0}
-In LIVE, sub-ledgers are hard-capped by actual wallet balance (synced).
-
-In SIM, sub-ledgers behave like virtual wallets.
-
-Sizing & Leverage (Best-Practice)
-Fixed phase: if sub-ledger equity < $20,000 → use $10 fixed_trade_usd per order.
-
-%-risk phase (equity ≥ $20k): risk max_risk_pct of equity to stop:
-
-ini
-Copy
-Edit
-risk_per_trade = equity * max_risk_pct
-sl_distance    = max(ATR_mult * ATR, min_stop_distance_pct * price)
-qty            = risk_per_trade / (sl_distance * price)    # spot/fx math
-size_usd       = qty * price
-Good Setup boost:
-
-If signal_score ≥ good_setup_score_min AND all KPI rails pass,
-
-Allow up to 10% of sub-ledger equity in one pair, but still clamp by:
-
-risk limits (risk_per_trade), session profile, pair cap, and leverage cap.
-
-Leverage tiers: rise with equity/mode, but clamped by asset caps and risk manager.
-
-Net P&L:
-
-pnl_net = pnl_gross − fees − slippage_cost
-
-Rewards/points use net %, not gross.
-
-Policies (/policies)
-kpi_policy.json (modes)
-(unchanged; thresholds per Scalp/Trend/Swing/MR)
-
-asset_kpi_policy.json (asset classes)
-(unchanged; Spot/Perp/Options/Forex thresholds; leverage caps)
-
-session_policy.json
-Session windows; allowed modes; size/TP/SL multipliers; optional per-asset factors.
-
-sizing_policy.json (updated)
-json
-Copy
-Edit
-{
-  "global": {
-    "equity_threshold_usd": 20000,
-    "fixed_trade_usd": 10,
-    "max_risk_pct": 0.005,
-    "max_risk_pct_good_setup": 0.0075,
-    "atr_mult_sl": 1.2,
-    "min_stop_distance_pct": 0.0015,
-    "slippage_bps": 2,
-    "fee_bps": 10,
-    "good_setup_score_min": 0.80,
-    "pair_allocation_cap_pct": 0.10,          // 10% per pair hard cap
-    "equity_source": "LIVE_OR_SIM"            // LIVE wallet in prod, sub-ledger in sim
-  },
-  "leverage_tiers": [
-    {"equity_max": 10000,  "SCALP": 1.0, "INTRADAY_TREND": 1.0, "SWING": 1.0, "MEAN_REVERSION": 1.0},
-    {"equity_max": 25000,  "SCALP": 2.0, "INTRADAY_TREND": 1.5, "SWING": 1.2, "MEAN_REVERSION": 1.2},
-    {"equity_max": 50000,  "SCALP": 3.0, "INTRADAY_TREND": 2.0, "SWING": 1.5, "MEAN_REVERSION": 1.5},
-    {"equity_max": 999999, "SCALP": 4.0, "INTRADAY_TREND": 3.0, "SWING": 2.0, "MEAN_REVERSION": 2.0}
-  ],
-  "asset_caps": {
-    "SPOT":   {"max_leverage": 1.0},
-    "PERP":   {"max_leverage": 3.0, "liq_buffer_pct": 0.20},
-    "OPTIONS":{"max_leverage": 1.0},
-    "FOREX":  {"max_leverage": 5.0}
-  }
-}
-Architecture
-graphql
-Copy
-Edit
-main.py  
-config.py  
+## Architecture
+```
+main.py
+config.py
 
 modules/
-  Portfolio_Manager.py        # Sub-ledgers & PnL (LIVE uses wallet sync caps)
-  Funds_Controller.py         # NEW: Allow Bot toggle, per-asset enable, max pair %
-  Wallet_Sync.py              # NEW: reads LIVE wallet balances; updates caps
-  Sizer.py                    # Sizing & leverage (fixed→% risk; good-setup boost; 10% pair cap)
-  Regime_Detector.py          # Market regime detection
-  Market_Sessions.py          # Session detection
-  Strategy_Manager.py         # Mode + signal + good_setup score
-  Risk_Management.py          # Rails per asset/mode/session; leverage & liq buffer
-  Trade_Executor.py           # Routing; computes net P&L (fees/slippage)
-  Reward_System.py            # Rewards/points from net P&L
-  Exchange_*                  # Spot/Perp/Options/Forex adapters
-  Technical_Indicators.py
-  Data_Manager.py
-  Top_Pairs.py
-  Telegram_Bot.py
-state/
-telemetry/
-utils/
-tests/
-Quick Start
-Install deps; set keys in config.py.
+  # Core Logic
+  Portfolio_Manager.py   # Manages sub-ledgers, P&L, and asset allocation.
+  Sizer.py               # Implements the 4-phase scaling logic.
+  Strategy_Manager.py    # Integrates all filters and agents to make trade decisions.
+  Risk_Management.py     # Host for Kill Switch handoff and funding filter.
 
-Add /policies/*.json (see above).
+  # New Modules
+  Validation_Manager.py  # Backtests and approves/rejects strategies.
+  News_Agent.py          # Provides news sentiment and a macro calendar filter.
+  Kill_Switch.py         # Monitors for and triggers circuit breaker events.
 
-In UI, keep Allow Bot To Use Funds = OFF while testing.
+  # Supporting Modules
+  Funds_Controller.py
+  Wallet_Sync.py
+  Trade_Executor.py
+  Logger_Config.py       # Configures structured JSON logging.
+  ...
 
-Run simulation first; verify KPIs; then enable LIVE & toggles.
+policies/
+  sizing_policy.json     # Configuration for sizing parameters.
+  ...
 
-Testing
-Unit tests: Wallet_Sync (no negative drift), Funds_Controller gates, Sizer boost logic, pair cap (10%), net-P&L path.
+logs/
+  trading_bot.json       # Structured log output.
+```
 
-Mocks for exchanges; no live calls in CI.
+---
+
+## Testing
+- Unit tests for the phased scaling logic in `Sizer.py`.
+- Mock tests for the `ValidationManager` and `NewsAgent`.
+- A test suite for the `KillSwitch` to ensure it triggers correctly on drawdown and slippage events.
+- Tests for all new filters.

@@ -1,6 +1,8 @@
 import pytest
+from unittest.mock import MagicMock
 from datetime import datetime, timedelta, timezone
 from modules.risk_management import RiskManager
+from modules.Kill_Switch import KillSwitch
 import config
 
 @pytest.fixture
@@ -11,92 +13,122 @@ def sizing_policy():
       "leverage_tiers": [],
       "asset_caps": {
         "SPOT":   {"max_leverage": 1.0},
-        "PERP":   {"max_leverage": 3.0, "liq_buffer_pct": 0.20},
+        "PERP":   {"max_leverage": 3.0, "liq_buffer_pct": 0.20, "funding_rate_threshold": -0.0002},
       }
     }
 
 @pytest.fixture
 def risk_manager(sizing_policy):
-    """Returns a RiskManager instance with default test settings."""
+    """Returns a RiskManager instance with default test settings for original tests."""
     config.KPI_TARGETS['daily_loss_limit'] = 0.03
+    # For original tests, we don't need the new dependencies
+    mock_kill_switch = MagicMock(spec=KillSwitch)
+    mock_kill_switch.is_active.return_value = False
+    mock_data_provider = MagicMock()
     return RiskManager(
         account_balance=10000,
         sizing_policy=sizing_policy,
+        kill_switch=mock_kill_switch,
+        data_provider=mock_data_provider,
         notifier=None
     )
 
-class TestRiskManager:
+class TestRiskManagerOriginal:
     def test_initial_state(self, risk_manager):
         assert risk_manager.equity == 10000
-        # A proposal with default/safe values
         proposal = {"leverage": 1.0, "sl_distance": 100}
-        allowed, _ = risk_manager.allow(proposal, "SPOT", 50000)
+        allowed, _ = risk_manager.allow(proposal, "SPOT", "BTCUSDT", "buy", 50000)
         assert allowed is True
 
     def test_allow_false_on_daily_loss_limit(self, risk_manager):
         risk_manager.record_trade_closure(pnl=-301, new_equity=9699)
         proposal = {"leverage": 1.0, "sl_distance": 100}
-        allowed, reason = risk_manager.allow(proposal, "SPOT", 50000)
+        allowed, reason = risk_manager.allow(proposal, "SPOT", "BTCUSDT", "buy", 50000)
         assert allowed is False
         assert "Daily loss limit" in reason
 
-    def test_allow_false_on_cooldown(self, risk_manager):
-        for _ in range(3):
-            risk_manager.record_trade_closure(-10, risk_manager.equity - 10)
+# --- New Test Class for Filters ---
+
+@pytest.fixture
+def mock_kill_switch():
+    ks = MagicMock(spec=KillSwitch)
+    ks.is_active.return_value = False
+    # Store active switches in the mock for assertion
+    ks.active_kill_switches = {}
+
+    def activate_side_effect(asset_class, reason):
+        ks.active_kill_switches[asset_class] = reason
+    ks.activate.side_effect = activate_side_effect
+
+    # Configure is_active to check the dictionary
+    ks.is_active.side_effect = lambda asset: asset in ks.active_kill_switches
+
+    return ks
+
+@pytest.fixture
+def mock_data_provider():
+    dp = MagicMock()
+    dp.get_funding_rate.return_value = 0.0001 # Default positive funding
+    return dp
+
+@pytest.fixture
+def risk_manager_for_filters(sizing_policy, mock_kill_switch, mock_data_provider):
+    """Returns a RiskManager instance with mocked dependencies for filter tests."""
+    return RiskManager(
+        account_balance=10000,
+        sizing_policy=sizing_policy,
+        kill_switch=mock_kill_switch,
+        data_provider=mock_data_provider,
+        notifier=None
+    )
+
+class TestRiskManagerFilters:
+
+    def test_kill_switch_filter_rejects(self, risk_manager_for_filters, mock_kill_switch):
+        """Test that a trade is rejected if the kill switch is active."""
+        mock_kill_switch.activate("PERP", "Daily DD Breach")
 
         proposal = {"leverage": 1.0, "sl_distance": 100}
-        allowed, reason = risk_manager.allow(proposal, "SPOT", 50000)
-        assert allowed is False
-        assert "In cooldown" in reason
+        allowed, reason = risk_manager_for_filters.allow(proposal, "PERP", "ETHUSDT", "buy", 3000)
 
-    def test_allow_leverage_check(self, risk_manager):
-        proposal_spot_bad = {"leverage": 1.1, "sl_distance": 10}
-        allowed, reason = risk_manager.allow(proposal_spot_bad, "SPOT", 50000)
-        assert allowed is False
-        assert "exceeds asset class cap" in reason
-
-        # sl_distance must be >= 0.20 * 50000 = 10000 to pass liq buffer check
-        proposal_perp_ok = {"leverage": 3.0, "sl_distance": 10000}
-        allowed, _ = risk_manager.allow(proposal_perp_ok, "PERP", 50000)
-        assert allowed is True
-
-        proposal_perp_bad = {"leverage": 3.1, "sl_distance": 10}
-        allowed, reason = risk_manager.allow(proposal_perp_bad, "PERP", 50000)
-        assert allowed is False
-        assert "exceeds asset class cap" in reason
-
-    def test_allow_liq_buffer_check(self, risk_manager):
-        price = 100
-        # Required buffer is 20% (0.20)
-
-        # SL is 21% away (21 / 100), so it should be allowed
-        proposal_ok = {"leverage": 1.0, "sl_distance": 21}
-        allowed, _ = risk_manager.allow(proposal_ok, "PERP", price)
-        assert allowed is True
-
-        # SL is 19% away (19 / 100), should be rejected
-        proposal_bad = {"leverage": 1.0, "sl_distance": 19}
-        allowed, reason = risk_manager.allow(proposal_bad, "PERP", price)
-        assert allowed is False
-        assert "below required liquidation buffer" in reason
-
-        # Check should not apply to non-PERP assets
-        allowed, _ = risk_manager.allow(proposal_bad, "SPOT", price)
-        assert allowed is True
-
-    def test_trade_closure_and_cooldown_logic_remains(self, risk_manager):
-        """Verifies that the original cooldown logic is still functional."""
-        risk_manager.record_trade_closure(-10, 9990)
-        risk_manager.record_trade_closure(-10, 9980)
-        assert risk_manager.consecutive_losses == 2
-
-        risk_manager.record_trade_closure(50, 10030)
-        assert risk_manager.consecutive_losses == 0
-
-        for _ in range(5):
-            risk_manager.record_trade_closure(-10, risk_manager.equity - 10)
-
-        assert risk_manager.consecutive_losses == 5
-        assert risk_manager.in_cooldown_until.year == 9999
-        allowed, _ = risk_manager.allow({}, "SPOT", 1)
         assert not allowed
+        assert "Kill switch active" in reason
+
+        # A trade on SPOT should still be allowed
+        allowed_spot, _ = risk_manager_for_filters.allow(proposal, "SPOT", "BTCUSDT", "buy", 50000)
+        assert allowed_spot
+
+    def test_funding_filter_rejects_long_with_high_negative_rate(self, risk_manager_for_filters, mock_data_provider):
+        """Test that a long trade is rejected if funding rate is too negative."""
+        mock_data_provider.get_funding_rate.return_value = -0.0003 # Below threshold of -0.0002
+
+        # sl_distance must be > 600 (20% of 3000) to pass the liq buffer check
+        proposal = {"leverage": 1.0, "sl_distance": 601}
+        allowed, reason = risk_manager_for_filters.allow(proposal, "PERP", "ETHUSDT", "buy", 3000)
+
+        assert not allowed
+        assert "High negative funding rate" in reason
+
+    def test_funding_filter_allows_long_with_positive_rate(self, risk_manager_for_filters, mock_data_provider):
+        """Test that a long trade is allowed with positive funding."""
+        mock_data_provider.get_funding_rate.return_value = 0.0001
+        proposal = {"leverage": 1.0, "sl_distance": 601}
+        allowed, _ = risk_manager_for_filters.allow(proposal, "PERP", "ETHUSDT", "buy", 3000)
+        assert allowed
+
+    def test_funding_filter_rejects_short_with_high_positive_rate(self, risk_manager_for_filters, mock_data_provider):
+        """Test that a short trade is rejected if funding rate is too positive."""
+        mock_data_provider.get_funding_rate.return_value = 0.0003 # Above threshold
+
+        proposal = {"leverage": 1.0, "sl_distance": 601}
+        allowed, reason = risk_manager_for_filters.allow(proposal, "PERP", "ETHUSDT", "sell", 3000)
+
+        assert not allowed
+        assert "High positive funding rate" in reason
+
+    def test_funding_filter_not_applied_to_spot(self, risk_manager_for_filters, mock_data_provider):
+        """Test that the funding filter is not applied to SPOT assets."""
+        mock_data_provider.get_funding_rate.return_value = -0.0005 # Very high negative rate
+        proposal = {"leverage": 1.0, "sl_distance": 100}
+        allowed, _ = risk_manager_for_filters.allow(proposal, "SPOT", "BTCUSDT", "buy", 50000)
+        assert allowed

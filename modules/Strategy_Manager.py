@@ -7,6 +7,11 @@ import config
 from modules.data_manager import DataManager
 from modules.technical_indicators import TechnicalIndicators
 from modules.Strategies import TrendFollowStrategy, MeanReversionStrategy, BaseStrategy
+# Import new modules for integration
+from modules.Validation_Manager import ValidationManager
+from modules.News_Agent import NewsAgent
+from modules.Portfolio_Manager import PortfolioManager
+
 
 logger = logging.getLogger(__name__)
 
@@ -22,23 +27,58 @@ class StrategyManager:
     """
     Selects a strategy based on market regime and produces a trading decision,
     including a signal score and a "good setup" flag.
+    Integrates validation, news, liquidity, and correlation filters.
     """
 
-    def __init__(self, data_provider: DataManager):
+    def __init__(self,
+                 data_provider: DataManager,
+                 validation_manager: ValidationManager,
+                 news_agent: NewsAgent,
+                 portfolio_manager: PortfolioManager):
         """
         Initializes the StrategyManager.
         """
         self.data_provider = data_provider
+        self.validation_manager = validation_manager
+        self.news_agent = news_agent
+        self.portfolio_manager = portfolio_manager
         self.indicators = TechnicalIndicators()
 
         strategy_params = getattr(config, "OPTIMIZATION_PARAMETERS", {})
         self.strategy_map = {
-            "Trend": TrendFollowStrategy(params=strategy_params),
-            "MeanReversion": MeanReversionStrategy(params=strategy_params)
+            "TrendFollowStrategy": TrendFollowStrategy(params=strategy_params),
+            "MeanReversionStrategy": MeanReversionStrategy(params=strategy_params)
         }
         self.good_setup_score_threshold = 0.75
 
-    def _calculate_signal_score(self, regime: str, context: Dict) -> float:
+        # Simple correlation map for the filter
+        self.correlation_map = {
+            'BTCUSDT': ['ETHUSDT', 'SOLUSDT'],
+            'ETHUSDT': ['BTCUSDT', 'MATICUSDT'],
+            # Add other correlated pairs as needed
+        }
+
+    def _is_overexposed_by_correlation(self, symbol: str, open_symbols: list) -> bool:
+        """
+        Checks if opening a new position would lead to over-exposure in correlated assets.
+        Placeholder implementation.
+        """
+        correlated_assets = self.correlation_map.get(symbol, [])
+        if not correlated_assets:
+            return False
+
+        count = 0
+        for s in open_symbols:
+            if s in correlated_assets:
+                count += 1
+
+        # Max 3 correlated positions (including the new one)
+        if count >= 2:
+            logger.warning(f"Correlation check failed for {symbol}. Found {count} correlated open positions.")
+            return True
+        return False
+
+    def _calculate_signal_score(self, regime: str, context: Dict, news_bias: str = 'neutral') -> float:
         """
         Calculates a signal score (0-1) based on the regime and its context.
         """
@@ -56,6 +96,12 @@ class StrategyManager:
             adx_score = 1.0 - min(adx / 20.0, 1.0)
             bbw_score = min(bbw_pct / 0.9, 1.0)
             score = (adx_score * 0.5) + (bbw_score * 0.5)
+
+        # Boost or penalize score based on news
+        if news_bias == 'long':
+            score *= 1.10 # 10% boost
+        elif news_bias == 'short':
+            score *= 0.90 # 10% penalty
 
         return round(np.clip(score, 0.0, 1.0), 2)
 
@@ -126,30 +172,77 @@ class StrategyManager:
 
     def decide(self, symbol: str, context: Dict[str, Any]) -> Optional[Decision]:
         """
-        Makes a trading decision for a given symbol and context.
+        Makes a filtered trading decision for a given symbol and context.
         """
-        regime = context.get("regime")
-        strategy: BaseStrategy = self.strategy_map.get(regime)
-        if not strategy:
+        asset_class = context.get("asset_class")
+        if not asset_class:
+            logger.error("Asset class must be provided in the context.")
             return None
 
+        # 1. Liquidity Filter
+        # TODO: Implement get_daily_volume in a real data_provider
+        if hasattr(self.data_provider, 'get_daily_volume'):
+            daily_volume = self.data_provider.get_daily_volume(symbol)
+            if daily_volume < 5_000_000:
+                reason = f"Low liquidity (Volume: ${daily_volume:,.0f})"
+                logger.warning(f"Trade rejected for {symbol}: {reason}", extra={'action': 'reject', 'symbol': symbol, 'reason': reason})
+                return None
+
+        # 2. Correlation Filter
+        # TODO: Implement get_open_positions in portfolio_manager
+        # open_positions = self.portfolio_manager.get_open_positions()
+        open_positions = [] # Placeholder
+        if self._is_overexposed_by_correlation(symbol, open_positions):
+            reason = "Over-exposed to correlated assets"
+            logger.warning(f"Trade rejected for {symbol}: {reason}", extra={'action': 'reject', 'symbol': symbol, 'reason': reason})
+            return None
+
+        # 3. News Agent Filter (High-Impact Events)
+        is_event, event_name = self.news_agent.is_high_impact_event_imminent()
+        if is_event:
+            reason = f"High-impact event '{event_name}' is imminent"
+            logger.warning(f"Trade rejected for {symbol}: {reason}", extra={'action': 'reject', 'symbol': symbol, 'reason': reason})
+            return None
+
+        # 4. Determine Regime and select Strategy
+        regime = context.get("regime")
+        strategy_name = "TrendFollowStrategy" if regime == "Trend" else "MeanReversionStrategy"
+        strategy: BaseStrategy = self.strategy_map.get(strategy_name)
+        if not strategy:
+            logger.warning(f"No strategy found for regime '{regime}'.")
+            return None
+
+        # 5. Validation Manager Filter
+        if not self.validation_manager.is_strategy_approved(strategy_name, asset_class):
+            reason = f"Strategy '{strategy_name}' not approved for asset class '{asset_class}'"
+            logger.warning(f"Trade rejected for {symbol}: {reason}", extra={'action': 'reject', 'symbol': symbol, 'reason': reason})
+            return None
+
+        # 6. Get Signal from Strategy
         df_5m = self.data_provider.load_historical_data(symbol, "5m", backfill_bars=200)
         if df_5m.empty:
             logger.warning(f"No 5m data for {symbol}, cannot make a decision.")
             return None
 
-        # The context passed to the strategy should probably include the dataframe
-        # Let's add it.
         full_context = {**context, "df_5m": df_5m}
-
         signal_result = strategy.check_entry_conditions(df_5m, full_context)
+
         if not (signal_result and signal_result.get("side")):
             return None
 
-        logger.info(f"Potential signal found for {symbol}: {signal_result}")
+        # 7. News Sentiment Filter
+        news_bias = self.news_agent.get_news_bias(symbol)
+        if (news_bias == 'short' and signal_result["side"] == 'buy') or \
+           (news_bias == 'long' and signal_result["side"] == 'sell'):
+            reason = f"Conflicting news sentiment ('{news_bias}') for {signal_result['side']} signal"
+            logger.warning(f"Trade for {symbol} rejected: {reason}", extra={'action': 'reject', 'symbol': symbol, 'reason': reason})
+            return None
 
-        signal_score = self._calculate_signal_score(regime, context)
+        # 8. Calculate final signal score and create decision
+        signal_score = self._calculate_signal_score(regime, context, news_bias)
         good_setup = signal_score >= self.good_setup_score_threshold
+
+        logger.info(f"Potential signal found for {symbol}: {signal_result} with score {signal_score}")
 
         decision = Decision(
             signal=signal_result["side"],
@@ -160,6 +253,7 @@ class StrategyManager:
                 "regime": regime,
                 "signal_score": signal_score,
                 "good_setup": good_setup,
+                "news_bias": news_bias,
                 **context
             }
         )
