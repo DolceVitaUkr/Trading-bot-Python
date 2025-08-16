@@ -1,0 +1,27 @@
+{
+  "global": {
+    "equity_threshold_usd": 20000,
+    "fixed_trade_usd": 10,
+    "max_risk_pct": 0.005,
+    "max_risk_pct_good_setup": 0.0075,
+    "atr_mult_sl": 1.2,
+    "min_stop_distance_pct": 0.0015,
+    "slippage_bps": 2,
+    "fee_bps": 10,
+    "good_setup_score_min": 0.80,
+    "pair_allocation_cap_pct": 0.10,
+    "equity_source": "LIVE_OR_SIM"
+  },
+  "leverage_tiers": [
+    {"equity_max": 10000,  "SCALP": 1.0, "INTRADAY_TREND": 1.0, "SWING": 1.0, "MEAN_REVERSION": 1.0},
+    {"equity_max": 25000,  "SCALP": 2.0, "INTRADAY_TREND": 1.5, "SWING": 1.2, "MEAN_REVERSION": 1.2},
+    {"equity_max": 50000,  "SCALP": 3.0, "INTRADAY_TREND": 2.0, "SWING": 1.5, "MEAN_REVERSION": 1.5},
+    {"equity_max": 999999, "SCALP": 4.0, "INTRADAY_TREND": 3.0, "SWING": 2.0, "MEAN_REVERSION": 2.0}
+  ],
+  "asset_caps": {
+    "SPOT":   {"max_leverage": 1.0},
+    "PERP":   {"max_leverage": 3.0, "liq_buffer_pct": 0.20},
+    "OPTIONS":{"max_leverage": 1.0},
+    "FOREX":  {"max_leverage": 5.0}
+  }
+}
