@@ -68,3 +68,61 @@ def test_atr_edge_cases():
     assert atr([1] * 10, [1] * 10, [1] * 10, 14) is None
     assert atr([1] * 20, [1] * 20, [1] * 20, 0) is None
     assert atr([1] * 20, [1] * 20, [1] * 20, -1) is None
+
+
+import pandas as pd
+import numpy as np
+from modules.technical_indicators import TechnicalIndicators
+
+class TestTechnicalIndicatorsPandas:
+    def setup_method(self):
+        """Set up a standard pandas Series for testing."""
+        self.close_prices = pd.Series([
+            100, 102, 105, 103, 106, 108, 110, 109, 112, 115,
+            113, 116, 118, 120, 119, 122, 125, 123, 126, 129
+        ])
+        # Data for percentile test - needs more data points
+        self.long_series = pd.Series(
+            np.sin(np.linspace(0, 10, 100)) * 10 + 100
+        )
+
+
+    def test_bollinger_bands(self):
+        middle, upper, lower = TechnicalIndicators.bollinger_bands(self.close_prices, window=5)
+        assert middle is not None
+        assert upper is not None
+        assert lower is not None
+        assert pd.isna(middle.iloc[3])
+        assert not pd.isna(middle.iloc[4])
+        # Values re-calculated based on pandas with ddof=0
+        assert middle.iloc[4] == pytest.approx(103.2)
+        assert upper.iloc[4] == pytest.approx(107.47, abs=0.01)
+        assert lower.iloc[4] == pytest.approx(98.93, abs=0.01)
+
+    def test_bollinger_band_width(self):
+        bbw = TechnicalIndicators.bollinger_band_width(self.close_prices, window=5)
+        assert bbw is not None
+        assert pd.isna(bbw.iloc[3])
+        assert not pd.isna(bbw.iloc[4])
+        # (107.47 - 98.93) / 103.2 = 0.0827
+        assert bbw.iloc[4] == pytest.approx(0.0827, abs=0.001)
+
+    def test_z_score(self):
+        zscore = TechnicalIndicators.z_score(self.close_prices, window=5)
+        assert zscore is not None
+        assert pd.isna(zscore.iloc[3])
+        assert not pd.isna(zscore.iloc[4])
+        # (106 - 103.2) / 2.135 = 1.311
+        assert zscore.iloc[4] == pytest.approx(1.311, abs=0.001)
+
+    def test_bb_width_percentile(self):
+        # Using a longer series for this test
+        percentile = TechnicalIndicators.bb_width_percentile(
+            self.long_series, bb_window=20, percentile_lookback=30)
+        assert percentile is not None
+        # NaNs should be (bb_window - 1) + (percentile_lookback - 1) = 19 + 29 = 48
+        assert pd.isna(percentile.iloc[47])
+        assert not pd.isna(percentile.iloc[48])
+        # Percentiles must be between 0 and 100
+        assert percentile.dropna().min() >= 0
+        assert percentile.dropna().max() <= 100

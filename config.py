@@ -62,7 +62,8 @@ SIMULATION_ORDER_DELAY = float(os.getenv("SIMULATION_ORDER_DELAY", "0.5"))
 DEFAULT_SYMBOL = os.getenv("DEFAULT_SYMBOL", "BTCUSDT")
 SIMULATION_START_BALANCE = float(
     os.getenv("SIMULATION_START_BALANCE", "1000.0"))
-TRADE_SIZE_PERCENT = float(os.getenv("TRADE_SIZE_PERCENT", "0.05"))
+TRADE_SIZE_PERCENT = float(os.getenv("TRADE_SIZE_PERCENT", "0.05")) # Kept for legacy, but new logic uses PER_TRADE_RISK
+PER_TRADE_RISK_PERCENT = float(os.getenv("PER_TRADE_RISK_PERCENT", "0.01")) # Risk 1% of equity per trade
 MIN_TRADE_AMOUNT_USD = float(os.getenv("MIN_TRADE_AMOUNT_USD", "10.0"))
 FEE_PERCENTAGE = float(os.getenv("FEE_PERCENTAGE", "0.002"))
 
@@ -87,10 +88,13 @@ CANARY_RAMP_SCHEDULE = [0.02, 0.03, 0.05]
 
 KPI_TARGETS = {
     "win_rate": 0.70,
-    "sharpe_ratio": 1.8,
-    "avg_profit_swing": 0.10,
-    "avg_profit_scalp": 0.002,
-    "max_drawdown": 0.15,
+    "sharpe_ratio": 2.2,
+    "risk_reward_ratio": 1.5,
+    "avg_profit_swing": 0.07,
+    "avg_profit_scalp": 0.003,   # target ≥ 0.003; verify net of fees
+    "max_drawdown": 0.12,
+    "daily_loss_limit": 0.03,
+    "monthly_profit_target": 0.10,
     "consec_loss_cooldown": 3
 }
 
@@ -119,18 +123,57 @@ SLIPPAGE_BPS = {
 MAX_SIMULATION_PAIRS = int(os.getenv("MAX_SIMULATION_PAIRS", "5"))
 
 # ───────────────────────────────────────────────
-# Optimization
+# Strategy & Optimization
 # ───────────────────────────────────────────────
+STRATEGY_MODES = {
+    "regime_detection": {
+        "adx_period_15m": 14,
+        "adx_trend_threshold": [22, 25],
+        "adx_mr_max": [18, 20],
+        "bb_period_15m": 20,
+        "bb_std_15m": 2.0,
+        "bb_width_lookback": 90,
+        "bb_width_percentile_mr": [0.25, 0.30],
+        "atr_period_15m": 14,
+        "ema_macro_periods_15m": [100, 200],
+        "ema_distance_atr_mult_switch": [1.5, 2.0]
+    },
+    "execution_timeframes": {"context_tf": "15m", "entry_tf": "5m"}
+}
+
 OPTIMIZATION_METHOD = os.getenv("OPTIMIZATION_METHOD", "grid_search")
 OPTIMIZATION_PARAMETERS = {
-    "ema_long_period": [21, 50],
+    "ema_long_period": [50, 100, 200],
     "ema_short_period_1": [5, 8],
     "ema_short_period_2": [13, 21],
-    "rsi_period": [14],
-    "rsi_level": [50],
-    "atr_period": [14],
-    "tp_atr_multiplier": [2.0, 2.5],
-    "sl_atr_multiplier": [1.5]
+
+    "rsi_period": [7, 9, 14],
+    "rsi_level_neutral": [45, 50, 55],
+    "rsi_ob_level": [65, 70],
+    "rsi_os_level": [30, 35],
+
+    "atr_period": [7, 10, 14],
+    "tp_atr_multiplier_trend": [1.5, 2.0, 2.5],
+    "sl_atr_multiplier_trend": [1.0, 1.5, 2.0],
+
+    "bb_period": [20],
+    "bb_std": [2.0],
+    "zscore_lookback": [20],
+    "zscore_entry_threshold": [1.3, 1.5, 1.8],
+    "tp_atr_multiplier_mr": [1.0, 1.2, 1.5],
+    "sl_atr_multiplier_mr": [1.0, 1.2, 1.3],
+
+    "adx_period": [14],
+    "adx_threshold_trend": [22, 25],
+    "adx_threshold_mr_max": [18, 20],
+
+    "stoch_k": [14], "stoch_d": [3], "stoch_smooth": [3],
+
+    "time_in_trade_limit_5m_bars": [16, 20, 24],
+    "max_adds_mr": [0, 1],
+    "spread_guard_bp": [15, 20],
+    "cooldown_after_consec_losses_mr": [2, 3],
+    "cooldown_after_consec_losses_trend": [3, 4]
 }
 EA_POPULATION_SIZE = int(os.getenv("EA_POPULATION_SIZE", "20"))
 EA_CROSSOVER_PROB = float(os.getenv("EA_CROSSOVER_PROB", "0.5"))

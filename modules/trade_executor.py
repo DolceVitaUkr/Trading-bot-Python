@@ -30,6 +30,7 @@ class TradeExecutor:
         self,
         simulation_mode: Optional[bool] = None,
         notifier: Optional[TelegramNotifier] = None,
+        risk_manager: Optional['RiskManager'] = None,
         notifications: Optional[Any] = None,
     ):
         """
@@ -40,6 +41,7 @@ class TradeExecutor:
             else simulation_mode
 
         self.exchange = ExchangeAPI()
+        self.risk_manager = risk_manager
         self.notifier = notifier or TelegramNotifier(
             disable_async=not getattr(config, "ASYNC_TELEGRAM", True))
         self.notifications = notifications
@@ -177,6 +179,11 @@ class TradeExecutor:
         if pnl > 0:
             self.winning_trades += 1
 
+        # Notify RiskManager of trade closure
+        if self.risk_manager:
+            self.risk_manager.unregister_position(sym)
+            self.risk_manager.record_trade_closure(pnl, self.exchange._sim_cash_usd)
+
         event = {
             "symbol": sym, "side": side_for_close, "qty": qty, "price": px,
             "status": res.get("status"), "opened": None, "closed": now_iso,
@@ -252,6 +259,12 @@ class TradeExecutor:
                 self.total_trades += 1
                 if pnl > 0:
                     self.winning_trades += 1
+
+                # Notify RiskManager of trade closure
+                if self.risk_manager:
+                    self.risk_manager.unregister_position(sym)
+                    self.risk_manager.record_trade_closure(pnl, self.exchange._sim_cash_usd)
+
                 calc = calculate_trade_result(
                     entry_price=px_rounded,
                     exit_price=px_rounded,
