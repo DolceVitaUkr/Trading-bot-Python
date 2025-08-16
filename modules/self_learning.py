@@ -53,7 +53,6 @@ class SelfLearningBot:
 
         self.top_symbols: List[str] = [self.default_symbol]
         self.portfolio_value: float = float(config.SIMULATION_START_BALANCE)
-        self.ui_hook: Optional[Any] = None
 
         # -- Self-Learning Components --
         # A list of strategy variations to test during training.

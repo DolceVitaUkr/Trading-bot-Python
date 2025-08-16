@@ -1,5 +1,6 @@
 import logging
 from typing import Dict, Any
+import pandas as pd
 
 from modules.technical_indicators import TechnicalIndicators
 from modules.trade_executor import TradeExecutor

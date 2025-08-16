@@ -1,5 +1,3 @@
-# modules/data_manager.py
-
 import os
 import time
 import logging
@@ -10,6 +8,7 @@ import ccxt
 
 import config
 from utils.utilities import ensure_directory, write_json, retry, format_timestamp
+from modules.exchange import ExchangeAPI
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:
@@ -70,45 +69,27 @@ class DataManager:
       - No API keys required for public data; keys (if present) won’t hurt.
     """
 
-    def __init__(self,
-                 exchange: Optional[ccxt.Exchange] = None,
-                 *,
-                 max_request_bars: int = 900):
+    def __init__(
+        self,
+        exchange: Optional[ExchangeAPI] = None,
+        *,
+        max_request_bars: int = 900,
+    ):
         """
         Initializes the DataManager.
 
         Args:
-            exchange: An optional ccxt.Exchange instance.
+            exchange: An optional ExchangeAPI instance.
             max_request_bars: The maximum number of bars to request in a
                               single API call.
         """
         self.max_request_bars = max(10, min(900, int(max_request_bars)))
-        self.exchange = exchange or self._make_exchange()
-        self.exchange.load_markets()
+        if exchange:
+            self.exchange = exchange
+        else:
+            self.exchange = ExchangeAPI()
+            self.exchange.load_markets()
 
-    def _make_exchange(self) -> ccxt.Exchange:
-        is_sim = getattr(config, "USE_SIMULATION", True)
-        api_key = config.SIMULATION_BYBIT_API_KEY if is_sim else config.BYBIT_API_KEY
-        secret = config.SIMULATION_BYBIT_API_SECRET if is_sim else config.BYBIT_API_SECRET
-
-        default_type = "spot"
-        if config.EXCHANGE_PROFILE in ("perp", "spot+perp"):
-            default_type = "linear"  # Bybit USDT perpetuals
-
-        ex = ccxt.bybit({
-            "apiKey": api_key,
-            "secret": secret,
-            "enableRateLimit": True,
-            "options": {
-                "defaultType": default_type,     # "spot" | "linear"
-                "adjustForTimeDifference": True
-            }
-        })
-        # Testnet for simulation
-        if is_sim:
-            # Spot testnet is limited; OHLCV still works via public REST.
-            ex.set_sandbox_mode(True)
-        return ex
 
     # ──────────────────────────────────────────────────────────────────────
     # Public API
@@ -126,7 +107,7 @@ class DataManager:
         return dataframe.
         """
         csv_path, meta_path = _build_paths(
-            symbol, timeframe, self.exchange.id)
+            symbol, timeframe, self.exchange.client.id)
         df = self._read_csv(csv_path)
 
         if df is None or df.empty:
@@ -160,7 +141,7 @@ class DataManager:
         Returns number of rows appended.
         """
         csv_path, meta_path = _build_paths(
-            symbol, timeframe, self.exchange.id)
+            symbol, timeframe, self.exchange.client.id)
         df = self._read_csv(csv_path)
         last_ts = None
         if df is not None and not df.empty:
@@ -233,7 +214,15 @@ class DataManager:
         if not os.path.exists(path):
             df = pd.DataFrame(
                 rows,
-                columns=["timestamp", "open", "high", "low", "close", "volume"])
+                columns=[
+                    "timestamp",
+                    "open",
+                    "high",
+                    "low",
+                    "close",
+                    "volume",
+                ],
+            )
             self._write_csv(path, df)
             return len(rows)
 
@@ -259,21 +248,27 @@ class DataManager:
                 if parts and parts[0].isdigit():
                     last_ts = int(parts[0])
 
-            new_rows = [r for r in rows if (
-                last_ts is None or int(r[0]) > last_ts)]
+            new_rows = [
+                r for r in rows if (last_ts is None or int(r[0]) > last_ts)
+            ]
             if not new_rows:
                 return 0
 
             with open(path, "a", encoding="utf-8") as f:
                 for r in new_rows:
-                    f.write(",".join([
-                        str(int(r[0])),
-                        f"{float(r[1])}",
-                        f"{float(r[2])}",
-                        f"{float(r[3])}",
-                        f"{float(r[4])}",
-                        f"{float(r[5])}",
-                    ]) + "\n")
+                    f.write(
+                        ",".join(
+                            [
+                                str(int(r[0])),
+                                f"{float(r[1])}",
+                                f"{float(r[2])}",
+                                f"{float(r[3])}",
+                                f"{float(r[4])}",
+                                f"{float(r[5])}",
+                            ]
+                        )
+                        + "\n"
+                    )
             return len(new_rows)
         except Exception as e:
             logger.warning(f"[Data] append failed for {path}: {e}")
@@ -281,14 +276,33 @@ class DataManager:
             df_old = self._read_csv(path)
             df_new = pd.DataFrame(
                 rows,
-                columns=["timestamp", "open", "high", "low", "close", "volume"])
+                columns=[
+                    "timestamp",
+                    "open",
+                    "high",
+                    "low",
+                    "close",
+                    "volume",
+                ],
+            )
             if df_old is not None:
                 df_all = pd.concat([df_old, df_new], ignore_index=True)
             else:
                 df_all = df_new
             df_all = self._normalize_df(df_all)
-            self._write_csv(path, df_all.reset_index(drop=False)[
-                            ["timestamp", "open", "high", "low", "close", "volume"]])
+            self._write_csv(
+                path,
+                df_all.reset_index(drop=False)[
+                    [
+                        "timestamp",
+                        "open",
+                        "high",
+                        "low",
+                        "close",
+                        "volume",
+                    ]
+                ],
+            )
             return len(df_new)
 
     def _backfill_from_scratch(self,
@@ -301,7 +315,7 @@ class DataManager:
         (<= max_request_bars per call).
         """
         csv_path, meta_path = _build_paths(
-            symbol, timeframe, self.exchange.id)
+            symbol, timeframe, self.exchange.client.id)
         tf_ms = TF_MS.get(timeframe)
         if not tf_ms:
             raise ValueError(f"Unsupported timeframe: {timeframe}")
@@ -342,7 +356,7 @@ class DataManager:
         Loop fetching in chunks <= max_request_bars until caught up to 'now'.
         """
         csv_path, meta_path = _build_paths(
-            symbol, timeframe, self.exchange.id)
+            symbol, timeframe, self.exchange.client.id)
         tf_ms = TF_MS.get(timeframe)
         if not tf_ms:
             raise ValueError(f"Unsupported timeframe: {timeframe}")
@@ -390,11 +404,11 @@ class DataManager:
         """
         # Ensure symbol exists in exchange markets mapping
         sym = symbol
-        markets = self.exchange.markets
+        markets = self.exchange.client.markets
         if symbol not in markets and symbol.replace("/", ":") in markets:
             sym = symbol.replace("/", ":")
 
-        data = self.exchange.fetch_ohlcv(
+        data = self.exchange.client.fetch_ohlcv(
             sym, timeframe=timeframe, since=since, limit=limit)
         # Bybit sometimes returns duplicates or gaps;
         # we’ll clean when appending

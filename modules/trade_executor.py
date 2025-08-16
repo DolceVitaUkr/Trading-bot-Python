@@ -87,7 +87,8 @@ class TradeExecutor:
         symbol: str,
         *,
         price: Optional[float] = None,
-        quantity: Optional[float] = None
+        quantity: Optional[float] = None,
+        reduce_only: bool = True
     ) -> Optional[Dict[str, Any]]:
         """
         Close an open position (market).
@@ -95,9 +96,9 @@ class TradeExecutor:
         sym = self.exchange._resolve_symbol(symbol)
 
         if self.simulation_mode:
-            return self._handle_simulation_close(sym, price, quantity)
+            return self._handle_simulation_close(sym, price, quantity, reduce_only)
         else:
-            return self._handle_live_close(sym, price)
+            return self._handle_live_close(sym, price, reduce_only)
 
     def execute_order(
         self,
@@ -109,7 +110,7 @@ class TradeExecutor:
         *,
         attach_sl: Optional[float] = None,
         attach_tp: Optional[float] = None,
-        risk_close: bool = False
+        reduce_only: bool = False
     ) -> Dict[str, Any]:
         """
         Execute a trade (open/add/close).
@@ -142,26 +143,26 @@ class TradeExecutor:
         if self.simulation_mode:
             return self._handle_simulation_order(
                 sym, side, order_type, qty_rounded, px_rounded,
-                attach_sl, attach_tp, risk_close)
+                attach_sl, attach_tp, reduce_only)
         else:
             return self._handle_live_order(
                 sym, side, order_type, qty_rounded, px_rounded,
-                attach_sl, attach_tp, risk_close)
+                attach_sl, attach_tp, reduce_only)
 
     # ---------------------------- Internals ---------------------------- #
 
-    def _handle_simulation_close(self, sym, price, quantity):
+    def _handle_simulation_close(self, sym, price, quantity, reduce_only=True):
         now_iso = datetime.now(timezone.utc).isoformat()
         pos = getattr(self.exchange, "_sim_positions", {}).get(sym)
         if not pos:
-            return None
+            return {"status": "noop"}
         qty = float(quantity or pos["quantity"])
         side_for_close = "sell" if pos["side"] == "long" else "buy"
         px = float(price or self.exchange.get_price(sym) or pos["entry_price"])
 
         res = self.exchange._simulate_order(
             sym, side_for_close, "market", qty, px,
-            attach_sl=None, attach_tp=None, reduce_only=True
+            attach_sl=None, attach_tp=None, reduce_only=reduce_only
         )
         try:
             exit_notional = px * qty
@@ -186,7 +187,7 @@ class TradeExecutor:
         res["timestamp"] = now_iso
         return res
 
-    def _handle_live_close(self, sym, price):
+    def _handle_live_close(self, sym, price, reduce_only=True):
         now_iso = datetime.now(timezone.utc).isoformat()
         try:
             pos_list = self.exchange.fetch_positions(sym)
@@ -203,7 +204,7 @@ class TradeExecutor:
             close_side = "sell" if side == "long" else "buy"
             px_live = float(price or self.exchange.get_price(sym))
             order = self.exchange.create_order(
-                sym, "market", close_side, qty_live, px_live, reduce_only=True
+                sym, "market", close_side, qty_live, px_live, reduce_only=reduce_only
             )
 
             event = {
@@ -224,13 +225,13 @@ class TradeExecutor:
 
     def _handle_simulation_order(
             self, sym, side, order_type, qty_rounded, px_rounded,
-            attach_sl, attach_tp, risk_close):
+            attach_sl, attach_tp, reduce_only):
         now_iso = datetime.now(timezone.utc).isoformat()
         try:
             res = self.exchange._simulate_order(
                 sym, side, order_type.lower(), qty_rounded, px_rounded,
                 attach_sl=attach_sl, attach_tp=attach_tp,
-                reduce_only=risk_close
+                reduce_only=reduce_only
             )
 
             try:
@@ -305,13 +306,13 @@ class TradeExecutor:
 
     def _handle_live_order(
             self, sym, side, order_type, qty_rounded, px_rounded,
-            attach_sl, attach_tp, risk_close):
+            attach_sl, attach_tp, reduce_only):
         now_iso = datetime.now(timezone.utc).isoformat()
         try:
             order = self.exchange.create_order(
                 sym, order_type, side, qty_rounded, px_rounded,
                 attach_sl=attach_sl, attach_tp=attach_tp,
-                reduce_only=risk_close
+                reduce_only=reduce_only
             )
 
             event = {

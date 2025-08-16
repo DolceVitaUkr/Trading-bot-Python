@@ -84,3 +84,47 @@ def test_max_drawdown_violation(risk_manager):
     risk_manager.update_equity(11000)
     with pytest.raises(RiskViolationError):
         risk_manager.update_equity(9899)  # 11000 * (1-0.10009)
+
+def test_zero_atr(risk_manager):
+    """
+    Tests that compute_sl_tp_from_atr handles zero ATR correctly.
+    """
+    sl, tp = risk_manager.compute_sl_tp_from_atr("long", 100, 0)
+    assert sl == 100
+    assert tp == 100
+
+from modules.risk_management import PositionRisk
+def test_portfolio_at_limit(risk_manager):
+    """
+    Tests that size_position_usd_capped handles the case where the portfolio is
+    already at its limit.
+    """
+    pos = PositionRisk("ETH/USDT", "long", 3000, 1.66, 0.01, 2.0, 2900, 3200, 100)
+    risk_manager.register_open_position("ETH/USDT", pos)
+    with pytest.raises(RiskViolationError):
+        risk_manager.size_position_usd_capped("BTC/USDT", 1000)
+
+def test_zero_sl_distance(risk_manager):
+    """
+    Tests that calculate_position_size handles a zero stop-loss distance
+    correctly.
+    """
+    with pytest.raises(RiskViolationError):
+        risk_manager.calculate_position_size("BTC/USDT", "long", 50000, 50000)
+
+def test_position_tracking(risk_manager):
+    """
+    Tests that register_open_position and unregister_position track
+    positions correctly.
+    """
+    assert risk_manager.portfolio_exposure_usd() == 0
+    pos1 = PositionRisk("BTC/USDT", "long", 50000, 0.04, 0.01, 2.0, 49000, 52000, 100)
+    risk_manager.register_open_position("BTC/USDT", pos1)
+    assert risk_manager.portfolio_exposure_usd() == 2000
+
+    pos2 = PositionRisk("ETH/USDT", "long", 3000, 0.33, 0.01, 2.0, 2900, 3200, 100)
+    risk_manager.register_open_position("ETH/USDT", pos2)
+    assert risk_manager.portfolio_exposure_usd() == 2990 # 2000 + 990
+
+    risk_manager.unregister_position("BTC/USDT")
+    assert risk_manager.portfolio_exposure_usd() == 990

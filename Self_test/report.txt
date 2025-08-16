@@ -1,5 +1,5 @@
 ==== Self Test Report ====
-Duration: 10.93s
+Duration: 10.20s
 OK: 6 | FAIL: 0
 [OK] config import - ok
 [OK] core modules import - ok

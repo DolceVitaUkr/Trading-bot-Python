@@ -48,20 +48,33 @@ class ExchangeAPI:
         """
         Initializes the ExchangeAPI.
         """
-        self.is_testnet = bool(getattr(config, "USE_TESTNET", True))
+        self.is_simulation = bool(getattr(config, "USE_SIMULATION", True))
+        self.use_mainnet_in_sim = bool(
+            getattr(config, "USE_MAINNET_IN_SIMULATION", False)
+        )
+        self.is_testnet = self.is_simulation and not self.use_mainnet_in_sim
+
         self.profile = getattr(config, "EXCHANGE_PROFILE", "spot")
         self.fee_rate = float(getattr(config, "FEE_PERCENTAGE", 0.002))
         self.sim_delay = float(
-            getattr(config, "SIMULATION_ORDER_DELAY", 0.5))
+            getattr(config, "SIMULATION_ORDER_DELAY", 0.5)
+        )
         self.error_handler = ErrorHandler()
 
         # --- ccxt client (Bybit) ---
-        # We prefer spot unless explicitly perp.
+        # Use mainnet for simulation if configured, otherwise use testnet
+        use_live_keys = not self.is_testnet
         bybit_kwargs = {
-            "apiKey": (config.SIMULATION_BYBIT_API_KEY if self.is_testnet
-                       else config.BYBIT_API_KEY),
-            "secret": (config.SIMULATION_BYBIT_API_SECRET if self.is_testnet
-                       else config.BYBIT_API_SECRET),
+            "apiKey": (
+                config.BYBIT_API_KEY
+                if use_live_keys
+                else config.SIMULATION_BYBIT_API_KEY
+            ),
+            "secret": (
+                config.BYBIT_API_SECRET
+                if use_live_keys
+                else config.SIMULATION_BYBIT_API_SECRET
+            ),
             "enableRateLimit": True,
             "options": {
                 "defaultType": "spot" if self.profile == "spot" else "swap",
@@ -89,6 +102,7 @@ class ExchangeAPI:
         """
         Loads the markets from the exchange.
         """
+        print("load_markets called")
         try:
             self._markets = self.client.load_markets()
         except Exception as e:
