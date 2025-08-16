@@ -20,6 +20,11 @@ from modules.trade_executor import TradeExecutor
 from modules.reward_system import RewardSystem
 from modules.data_manager import DataManager
 from modules.exchange import ExchangeAPI
+# Import new modules for integration
+from modules.Validation_Manager import ValidationManager
+from modules.News_Agent import NewsAgent
+from modules.Kill_Switch import KillSwitch
+
 
 # Placeholder for modules not in the scope of this refactoring
 class MarketSessions:
@@ -58,11 +63,39 @@ def run_bot(args: argparse.Namespace):
     portfolio_manager = PortfolioManager(allocations=allocations, wallet_sync=wallet_sync)
 
     sizer = Sizer(policy=sizing_policy)
+    # --- Initialize New Modules ---
+    validation_config = {"min_trades_for_approval": 500}
+    validation_manager = ValidationManager(config=validation_config)
+
+    news_config = {
+        "news_api_key": None, # No real API key for now
+        "high_impact_events": ["CPI", "NFP", "FOMC", "ECB"]
+    }
+    news_agent = NewsAgent(config=news_config)
+
+    kill_switch_config = {
+        "daily_drawdown_limit": 0.05,
+        "monthly_drawdown_limit": 0.15,
+        "max_slippage_events": 3,
+        "max_api_errors": 10
+    }
+    kill_switch = KillSwitch(config=kill_switch_config, portfolio_manager=portfolio_manager)
+
     # Use one ledger's balance for initializing RiskManager's equity tracking
     initial_rm_balance = sum(l['total'] for l in portfolio_manager.ledgers.values())
-    risk_manager = RiskManager(account_balance=initial_rm_balance, sizing_policy=sizing_policy)
+    risk_manager = RiskManager(
+        account_balance=initial_rm_balance,
+        sizing_policy=sizing_policy,
+        kill_switch=kill_switch,
+        data_provider=data_manager
+    )
 
-    strategy_manager = StrategyManager(data_provider=data_manager)
+    strategy_manager = StrategyManager(
+        data_provider=data_manager,
+        validation_manager=validation_manager,
+        news_agent=news_agent,
+        portfolio_manager=portfolio_manager
+    )
     trade_executor = TradeExecutor(sizing_policy=sizing_policy, simulation_mode=True, exchange=mock_exchange)
     reward_system = RewardSystem(starting_balance=initial_rm_balance)
 
@@ -75,6 +108,12 @@ def run_bot(args: argparse.Namespace):
     while True:
         now_utc = datetime.now(timezone.utc)
         log.info(f"--- Starting new loop at {now_utc.isoformat()} ---")
+
+        # --- Kill Switch Checks ---
+        kill_switch.check_drawdowns()
+        # Mock data for other checks for now
+        kill_switch.check_slippage(slippage_events=[])
+        kill_switch.check_api_errors(api_error_counts={})
 
         wallet_sync.sync()
 
@@ -126,7 +165,15 @@ def run_bot(args: argparse.Namespace):
 
             log.info(f"Sizer proposed: SizeUSD={proposal['size_usd']:.2f}, Leverage={proposal['leverage']:.1f}x")
 
-            is_allowed, reason = risk_manager.allow(proposal, asset_class, price, mode, session)
+            is_allowed, reason = risk_manager.allow(
+                proposal=proposal,
+                asset_class=asset_class,
+                symbol=symbol,
+                side=decision.signal,
+                price=price,
+                mode=mode,
+                session=session
+            )
             if not is_allowed:
                 log.warning(f"Trade rejected by RiskManager: {reason}. Skipping.")
                 continue

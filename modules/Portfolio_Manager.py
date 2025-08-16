@@ -35,6 +35,12 @@ class PortfolioManager:
         self.ledgers: Dict[str, Dict[str, float]] = {}
         self.reservations: Dict[str, Dict[str, Any]] = {} # {reservation_id: {"asset": str, "amount": float}}
 
+        # Mock historical equity data for KillSwitch testing
+        self.mock_equity_history: Dict[str, list] = {
+            "SPOT": [10000, 10100, 10200, 10050, 9900, 9700], # Simulates a drawdown
+            "PERP": [5000, 5050, 5100, 5150, 5200]
+        }
+
         if is_percentage:
             if total_capital is None or total_capital <= 0:
                 raise ValueError("Total capital must be provided for percentage-based allocations.")
@@ -55,10 +61,13 @@ class PortfolioManager:
                     "fees": 0.0,
                 }
 
-        # In simulation mode, inform WalletSync about initial balances.
+        # In simulation mode, inform WalletSync about initial balances and append to mock history.
         if self.wallet_sync and not getattr(self.wallet_sync, 'is_live', True):
             for asset, ledger in self.ledgers.items():
                 self.wallet_sync.set_simulation_balance(asset, ledger["total"])
+                if asset not in self.mock_equity_history:
+                    self.mock_equity_history[asset] = []
+                self.mock_equity_history[asset].append(ledger["total"])
 
     def available_budget(self, asset: str) -> float:
         """
@@ -166,7 +175,6 @@ class PortfolioManager:
 
         ledger["total"] += pnl_net
         ledger["available"] += pnl_net
-
         ledger["realized_pnl"] += pnl_net
         ledger["fees"] += fees
 
@@ -174,18 +182,29 @@ class PortfolioManager:
                     f"New total equity for {asset}: {ledger['total']:.2f}. "
                     f"New available budget: {ledger['available']:.2f}")
 
-        # In simulation, update WalletSync's balance to reflect new total equity
+        # In simulation, update WalletSync's balance and mock history
         if self.wallet_sync and not getattr(self.wallet_sync, 'is_live', True):
             self.wallet_sync.set_simulation_balance(asset, ledger["total"])
+            self.mock_equity_history[asset].append(ledger["total"])
+
+    def get_all_asset_classes(self) -> list:
+        """Returns a list of all configured asset classes."""
+        return list(self.ledgers.keys())
+
+    def get_equity_history(self, asset: str, days: int) -> list:
+        """
+        (Mock) Returns a list of historical equity values for the last N days.
+        """
+        history = self.mock_equity_history.get(asset, [])
+        return history[-days:]
 
     def get_open_positions(self) -> list:
         """
-        Returns a list of symbols for all open positions.
-        NOTE: This is a placeholder. A real implementation would track open positions.
+        (Mock) Returns a list of symbols for all open positions.
         """
-        # This should be implemented by tracking active positions.
-        # For now, returning an empty list as a placeholder.
-        return []
+        # For now, returning a hardcoded list for testing the correlation filter.
+        logger.debug("Using mock open positions: ['BTC/USDT', 'ETH/USDT']")
+        return ["BTC/USDT", "ETH/USDT"]
 
     def get_total_equity(self, asset: str) -> float:
         """

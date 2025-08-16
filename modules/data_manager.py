@@ -92,7 +92,32 @@ class DataManager:
 
 
     # ──────────────────────────────────────────────────────────────────────
-    # Public API
+    # Public API - Mock Data Methods for Filters
+    # ──────────────────────────────────────────────────────────────────────
+    def get_daily_volume(self, symbol: str) -> float:
+        """(Mock) Returns the 24h trading volume for a symbol."""
+        mock_volumes = {
+            "BTC/USDT": 2_500_000_000.0,
+            "ETH/USDT": 1_800_000_000.0,
+            "LOW_LIQ_COIN/USDT": 100_000.0, # For testing liquidity filter
+        }
+        volume = mock_volumes.get(symbol, 10_000_000.0) # Default to liquid
+        logger.debug(f"Mock daily volume for {symbol}: ${volume:,.0f}")
+        return volume
+
+    def get_funding_rate(self, symbol: str) -> float:
+        """(Mock) Returns the current funding rate for a perpetual contract."""
+        mock_rates = {
+            "BTC/USDT": 0.0001,  # Standard positive funding
+            "ETH/USDT": -0.0003, # High negative funding (costly to long)
+            "DOGE/USDT": 0.0008, # High positive funding (costly to short)
+        }
+        rate = mock_rates.get(symbol, 0.0001) # Default to standard
+        logger.debug(f"Mock funding rate for {symbol}: {rate:.4%}")
+        return rate
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Public API - Historical Data
     # ──────────────────────────────────────────────────────────────────────
     def load_historical_data(
         self,

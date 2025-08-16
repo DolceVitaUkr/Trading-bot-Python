@@ -1,100 +1,107 @@
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, List
+from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
 class KillSwitch:
     """
-    Monitors portfolio health and triggers a kill switch for specific asset classes
-    if risk limits are breached.
+    Monitors portfolio health and triggers a circuit breaker for specific asset classes
+    if critical risk limits are breached.
     """
 
     def __init__(self, config: Dict[str, Any], portfolio_manager: Any):
         """
         Initializes the KillSwitch.
-
-        Args:
-            config (Dict[str, Any]): Configuration for the kill switch.
-            portfolio_manager (Any): The portfolio manager instance.
         """
         self.config = config
         self.portfolio_manager = portfolio_manager
 
-        self.daily_drawdown_limit = self.config.get("daily_drawdown_limit", 0.05)
-        self.monthly_drawdown_limit = self.config.get("monthly_drawdown_limit", 0.15)
-        self.max_slippage_events = self.config.get("max_slippage_events", 3)
+        self.daily_dd_limit = config.get("daily_drawdown_limit", 0.05)
+        self.monthly_dd_limit = config.get("monthly_drawdown_limit", 0.15)
+        self.max_slippage_events = config.get("max_slippage_events", 3)
+        self.max_api_errors = config.get("max_api_errors", 10)
 
         self.active_kill_switches: Dict[str, str] = {}  # {asset_class: reason}
 
     def check_drawdowns(self):
         """
         Checks for daily and monthly drawdown breaches for each asset class.
+        This method requires historical equity data from the portfolio manager.
         """
-        # TODO: Implement drawdown calculation logic
-        # This will require historical equity data from the portfolio manager
-        logger.info("Checking for drawdown breaches.")
-        # Simulate no breaches for now
-        pass
+        asset_classes = self.portfolio_manager.get_all_asset_classes()
+        for asset in asset_classes:
+            if self.is_active(asset): continue
 
-    def check_slippage(self, slippage_events: list):
-        """
-        Checks for excessive slippage events.
+            history = self.portfolio_manager.get_equity_history(asset, days=30)
+            if not history or len(history) < 2:
+                continue # Not enough data to calculate drawdown
 
-        Args:
-            slippage_events (list): A list of recent slippage events.
+            current_equity = history[-1]
+
+            # Daily Drawdown
+            yesterday_equity = history[-2]
+            daily_dd = (yesterday_equity - current_equity) / yesterday_equity if yesterday_equity > 0 else 0
+            if daily_dd > self.daily_dd_limit:
+                reason = f"Daily drawdown limit breached ({daily_dd:.2%} > {self.daily_dd_limit:.2%})"
+                self.activate(asset, reason)
+                continue # No need to check monthly if daily is hit
+
+            # Monthly Drawdown
+            peak_30d_equity = max(history)
+            monthly_dd = (peak_30d_equity - current_equity) / peak_30d_equity if peak_30d_equity > 0 else 0
+            if monthly_dd > self.monthly_dd_limit:
+                reason = f"Monthly drawdown limit breached ({monthly_dd:.2%} > {self.monthly_dd_limit:.2%})"
+                self.activate(asset, reason)
+
+    def check_slippage(self, slippage_events: List[Dict[str, Any]]):
         """
-        # TODO: Implement slippage event tracking and checking
-        logger.info("Checking for excessive slippage.")
-        if len(slippage_events) >= self.max_slippage_events:
-            # This would likely be for a specific asset class
-            asset_class = "ALL" # Placeholder
-            self.activate("ALL", f"Excessive slippage: {len(slippage_events)} events.")
+        Checks for excessive slippage events per asset class.
+        Expects a list of dicts, e.g., [{'asset_class': 'PERP', 'slippage_pct': 0.5}, ...]
+        """
+        counts = defaultdict(int)
+        for event in slippage_events:
+            asset_class = event.get('asset_class')
+            if asset_class:
+                counts[asset_class] += 1
+
+        for asset, count in counts.items():
+            if count >= self.max_slippage_events:
+                reason = f"Excessive slippage: {count} events in last 24h"
+                self.activate(asset, reason)
 
     def check_api_errors(self, api_error_counts: Dict[str, int]):
         """
-        Checks for a spike in API errors from the exchange.
-
-        Args:
-            api_error_counts (Dict[str, int]): Count of API errors per asset class.
+        Checks for a spike in API errors from the exchange per asset class.
         """
-        # TODO: Implement API error monitoring
-        logger.info("Checking for API error escalations.")
-        for asset_class, error_count in api_error_counts.items():
-            if error_count > self.config.get("max_api_errors", 10):
-                self.activate(asset_class, f"High API error count: {error_count}")
+        for asset, count in api_error_counts.items():
+            if count > self.max_api_errors:
+                reason = f"High API error count: {count}"
+                self.activate(asset, reason)
 
     def activate(self, asset_class: str, reason: str):
         """
         Activates the kill switch for a given asset class.
-
-        Args:
-            asset_class (str): The asset class to deactivate (e.g., 'SPOT', 'PERP').
-            reason (str): The reason for activating the kill switch.
         """
         if asset_class not in self.active_kill_switches:
-            logger.critical(f"KILL SWITCH ACTIVATED for {asset_class}. Reason: {reason}")
+            log_details = {'action': 'kill_switch_activated', 'asset_class': asset_class, 'reason': reason}
+            logger.critical(f"KILL SWITCH ACTIVATED for {asset_class}. Reason: {reason}", extra=log_details)
             self.active_kill_switches[asset_class] = reason
-            # TODO: Integrate with a notification manager
+            # TODO: Integrate with a notification manager to send an urgent alert
 
     def reset(self, asset_class: str):
         """
         Resets the kill switch for a given asset class.
-
-        Args:
-            asset_class (str): The asset class to reactivate.
         """
         if asset_class in self.active_kill_switches:
-            logger.info(f"Resetting kill switch for {asset_class}.")
+            logger.warning(f"Resetting kill switch for {asset_class}.")
             del self.active_kill_switches[asset_class]
 
     def is_active(self, asset_class: str) -> bool:
         """
-        Checks if the kill switch is active for a given asset class.
-
-        Args:
-            asset_class (str): The asset class to check.
-
-        Returns:
-            bool: True if the kill switch is active, False otherwise.
+        Checks if the kill switch is active for a given asset class,
+        also checking for a global 'ALL' switch.
         """
+        if "ALL" in self.active_kill_switches:
+            return True
         return asset_class in self.active_kill_switches
