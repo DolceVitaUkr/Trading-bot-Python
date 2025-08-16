@@ -14,36 +14,27 @@ from modules.data_manager import DataManager
 from modules.exchange import ExchangeAPI
 from modules.trade_executor import TradeExecutor
 from modules.risk_management import RiskManager
-from modules.self_learning import SelfLearningBot
+from modules.Strategy_Manager import StrategyManager
 from modules.top_pairs import TopPairs
 from modules.telegram_bot import TelegramNotifier
 from modules.reward_system import RewardSystem
 from scheduler import JobScheduler
 
 
-def build_risk_manager(account_balance: float) -> RiskManager:
+def build_risk_manager(account_balance: float, notifier: TelegramNotifier) -> RiskManager:
     """
     Builds a RiskManager instance based on the configuration.
 
     Args:
         account_balance: The current account balance.
+        notifier: The Telegram notifier instance.
 
     Returns:
         A RiskManager instance.
     """
-    caps = config.RISK_CAPS.get(
-        "crypto_spot" if config.EXCHANGE_PROFILE == "spot" else "perp",
-        {"per_pair_pct": 0.15, "portfolio_concurrent_pct": 0.30},
-    )
     rm = RiskManager(
         account_balance=account_balance,
-        max_drawdown_limit=config.KPI_TARGETS.get("max_drawdown", 0.15),
-        per_pair_cap_pct=caps["per_pair_pct"],
-        portfolio_cap_pct=caps["portfolio_concurrent_pct"],
-        base_risk_per_trade_pct=config.TRADE_SIZE_PERCENT,
-        min_rr=1.5,
-        atr_mult_sl=1.5,
-        atr_mult_tp=3.0,
+        notifier=notifier
     )
     return rm
 
@@ -75,14 +66,15 @@ def run_bot(args: argparse.Namespace,
 
     # Wallets
     starting_balance = float(config.SIMULATION_START_BALANCE)
+    # Risk
+    risk_manager = build_risk_manager(starting_balance, notifier)
+
     trade_executor = TradeExecutor(
         simulation_mode=True,  # Keep execution in simulation as requested
         notifier=notifier,
+        risk_manager=risk_manager,
         notifications=None,
     )
-
-    # Risk
-    risk_manager = build_risk_manager(starting_balance)
 
     # Data Manager
     dm = DataManager(exchange=exchange)
@@ -100,105 +92,18 @@ def run_bot(args: argparse.Namespace,
     reward = RewardSystem()
 
     # Agent
-    bot = SelfLearningBot(
+    bot = StrategyManager(
         data_provider=dm,
         error_handler=exchange.error_handler,
         reward_system=reward,
         risk_manager=risk_manager,
-        state_size=5,
-        action_size=6,
-        hidden_dims=[128, 64, 32],
-        batch_size=64,
-        gamma=0.99,
-        learning_rate=1e-3,
-        exploration_max=1.0,
-        exploration_min=0.05,
-        exploration_decay=0.995,
-        memory_size=100_000,
-        tau=0.005,
-        training=True,
-        timeframe="5m",  # Primary loop on 5m
-        symbol=config.DEFAULT_SYMBOL,  # Fallback if top-pairs empty
+        symbol=config.DEFAULT_SYMBOL,
     )
 
-    # Scheduler jobs
-    scheduler = JobScheduler()
-
-    # 1) Hourly top pairs refresh (to detect spikes and changes)
-    def refresh_pairs_job():
-        try:
-            pairs = top_pairs.get_top_pairs()  # triggers refresh if stale
-            bot.top_symbols = pairs or [config.DEFAULT_SYMBOL]
-            logging.info(f"Top pairs refreshed: {', '.join(bot.top_symbols)}")
-        except Exception as e:
-            logging.error(f"Top pairs refresh failed: {e}")
-
-    scheduler.every(
-        minutes=60, name="hourly_top_pairs", func=refresh_pairs_job
-    )
-
-    # 2) 15m setup scan (secondary timeframe)
-    def fifteen_scan_job():
-        try:
-            symbols = getattr(bot, "top_symbols", None) or [
-                config.DEFAULT_SYMBOL
-            ]
-            for sym in symbols:
-                dm.load_historical_data(
-                    sym, "15m", backfill_bars=300
-                )  # light backfill
-                # You can add setup-detection hooks here if needed
-        except Exception as e:
-            logging.error(f"15m scan error: {e}")
-
-    scheduler.every(
-        minutes=15, name="scan_15m_setup", func=fifteen_scan_job
-    )
-
-    # 3) Heartbeat → UI metrics
-    def heartbeat_job():
-        # The dashboard will pull metrics directly from the bot
-        pass
-
-    scheduler.every(
-        seconds=max(5, int(config.LIVE_LOOP_INTERVAL)),
-        name="heartbeat",
-        func=heartbeat_job,
-    )
-
-    # Start scheduler thread
-    scheduler_thread = threading.Thread(target=scheduler.run_forever,
-                                        daemon=True)
-    scheduler_thread.start()
-
-    # Agent background loop (5m tick loop, sim execution, live data)
-    def agent_loop():
-        while not (stop_event and stop_event.is_set()):
-            try:
-                symbols = getattr(bot, "top_symbols",
-                                    None) or [config.DEFAULT_SYMBOL]
-                for sym in symbols:
-                    # Keep data fresh & light: append-only small pulls
-                    dm.load_historical_data(sym, "5m", incremental=True)
-                    # Act & learn using the latest state (sim execution)
-                    bot.act_and_learn(sym,
-                                      timestamp=datetime.now(timezone.utc))
-                # Pace loop
-                time.sleep(max(5, float(config.LIVE_LOOP_INTERVAL)))
-
-                if test_mode:
-                    break  # Run only once in test mode
-            except Exception as e:
-                logging.getLogger("main").exception(f"agent_loop error: {e}")
-                time.sleep(5)
-
-    threading.Thread(target=agent_loop, daemon=True).start()
-
-    # Initial top pairs warmup
-    try:
-        refresh_pairs_job()
-    except Exception:
-        pass
+    # The new StrategyManager has its own run loop.
+    # We just need to start it in a thread.
+    bot_thread = threading.Thread(target=bot.run, daemon=True)
+    bot_thread.start()
 
     if not test_mode:
         # In a real application, you would have a UI or some other way to

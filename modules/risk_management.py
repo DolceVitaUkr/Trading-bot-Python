@@ -1,394 +1,196 @@
-# modules/risk_management.py
-
 import logging
-from dataclasses import dataclass, asdict
-from typing import Dict, Optional, Literal
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from typing import Dict, Optional
 
 import config
 from modules.error_handler import RiskViolationError
 
 logger = logging.getLogger(__name__)
-logger.addHandler(logging.NullHandler())
-
 
 @dataclass
 class PositionRisk:
-    # Immutable at open
     symbol: str
-    side: Literal["long", "short"]
+    quantity: float
     entry_price: float
-    position_size: float  # asset units
-    risk_percent: float   # percent of account at risk for this position
-    risk_reward_ratio: float
-
-    # Managed fields (can move up but never “worse”)
-    stop_loss: float
-    take_profit: float
-
-    # Derived bookkeeping
     dollar_risk: float
-    atr: Optional[float] = None
-    regime: Optional[Literal["trend", "range"]] = None
-
+    value_usd: float
 
 class RiskManager:
     """
-    Centralized risk controls:
-      - Position sizing respecting per-pair and portfolio exposure caps
-      - SL/TP calculation (ATR- and R:R-based)
-      - Trailing stop management (never loosen stops)
-      - Portfolio drawdown monitoring
-      - Regime-aware adjustments (trend vs range)
+    Handles all risk-related checks and calculations.
     """
 
-    def __init__(
-        self,
-        account_balance: float,
-        *,
-        max_drawdown_limit: Optional[float] = None,
-        per_pair_cap_pct: Optional[float] = None,
-        portfolio_cap_pct: Optional[float] = None,
-        base_risk_per_trade_pct: Optional[float] = None,
-        min_rr: float = 1.5,
-        atr_mult_sl: float = 1.5,
-        atr_mult_tp: float = 3.0,
-    ):
-        # Balances & caps
-        self.account_balance = float(account_balance)
+    def __init__(self, account_balance: float, notifier=None, per_pair_cap_pct=None, portfolio_cap_pct=None):
+        self.equity = float(account_balance)
+        self.notifier = notifier
 
-        # Pull defaults from config if not provided
-        # Choose caps by domain profile
-        profile = getattr(config, "EXCHANGE_PROFILE", "spot")
-        caps = getattr(config, "RISK_CAPS", {}).get(
-            "perp" if profile == "perp" else "crypto_spot",
-            {"per_pair_pct": 0.15, "portfolio_concurrent_pct": 0.30},
-        )
-
-        self.max_drawdown_limit = (
-            max_drawdown_limit
-            if max_drawdown_limit is not None
-            else getattr(config, "KPI_TARGETS", {}).get("max_drawdown", 0.15)
-        )
-        self.per_pair_cap_pct = (
-            per_pair_cap_pct
-            if per_pair_cap_pct is not None
-            else caps.get("per_pair_pct", 0.15)
-        )
-        self.portfolio_cap_pct = (
-            portfolio_cap_pct
-            if portfolio_cap_pct is not None
-            else caps.get("portfolio_concurrent_pct", 0.30)
-        )
-        self.base_risk_per_trade_pct = (
-            base_risk_per_trade_pct
-            if base_risk_per_trade_pct is not None
-            else getattr(config, "TRADE_SIZE_PERCENT", 0.05)
-        )
-
-        # Behavior knobs
-        self.min_rr = min_rr
-        self.atr_mult_sl = atr_mult_sl
-        self.atr_mult_tp = atr_mult_tp
-
-        # State
+        # --- State Tracking ---
+        self.peak_equity = self.equity
         self.open_positions: Dict[str, PositionRisk] = {}
-        self.peak_equity = self.account_balance
-        self.current_equity = self.account_balance
 
-        # Hard guardrails from config
-        self.min_trade_usd = getattr(config, "MIN_TRADE_AMOUNT_USD", 10.0)
-        self.max_leverage = getattr(config, "MAX_LEVERAGE", 3)
-        self.fee_rate = getattr(config, "FEE_PERCENTAGE", 0.002)
+        # --- Daily Loss Limit ---
+        self.daily_loss_limit_pct = config.KPI_TARGETS.get("daily_loss_limit", 0.03)
+        self.daily_start_equity = self.equity
+        self.last_trade_day = datetime.now(timezone.utc).date()
 
-    # ────────────────────────────────────────────────────────────────────────────
-    # Equity / Drawdown
-    # ────────────────────────────────────────────────────────────────────────────
-    def update_equity(self, equity: float) -> float:
-        """Track peak and check max drawdown. Returns drawdown fraction."""
-        self.current_equity = float(equity)
-        if self.current_equity > self.peak_equity:
-            self.peak_equity = self.current_equity
+        # --- Progressive Cooldown ---
+        self.consecutive_losses = 0
+        self.in_cooldown_until = None
+        self.cooldown_rules = {3: {"duration_minutes": 30}, 5: {"duration_minutes": -1}}
 
-        if self.peak_equity <= 0:
-            return 0.0
+        # --- Risk Parameters ---
+        self.base_per_trade_risk_pct = config.PER_TRADE_RISK_PERCENT
+        self.drawdown_reduction_threshold = 0.06 # 6% drawdown
 
-        dd = (self.peak_equity - self.current_equity) / self.peak_equity
-        if dd > self.max_drawdown_limit:
-            msg = (
-                f"Max drawdown exceeded: {dd:.2%} > "
-                f"limit {self.max_drawdown_limit:.2%} "
-                f"(peak={self.peak_equity:.2f}, "
-                f"equity={self.current_equity:.2f})"
-            )
-            logger.critical(msg)
-            raise RiskViolationError(msg, context={"drawdown": dd})
-        return dd
+        # --- Portfolio Caps ---
+        caps = config.RISK_CAPS.get("crypto_spot", {})
+        self.per_pair_cap_pct = per_pair_cap_pct if per_pair_cap_pct is not None else caps.get("per_pair_cap_pct", 0.15)
+        self.portfolio_cap_pct = portfolio_cap_pct if portfolio_cap_pct is not None else caps.get("portfolio_concurrent_pct", 0.30)
 
-    # ────────────────────────────────────────────────────────────────────────────
-    # Sizing & SL/TP
-    # ────────────────────────────────────────────────────────────────────────────
-    def compute_sl_tp_from_atr(
-        self,
-        side: Literal["long", "short"],
-        entry_price: float,
-        atr: float,
-        rr: Optional[float] = None,
-    ) -> tuple[float, float]:
-        """
-        Compute SL and TP using ATR bands and R:R.
-        """
-        rr = rr if rr is not None else self.min_rr
-        if side == "long":
-            sl = entry_price - self.atr_mult_sl * atr
-            tp = entry_price + rr * (entry_price - sl)
+    # --- Public Methods ---
+
+    def is_trade_allowed(self) -> bool:
+        """Checks if a new trade is permitted based on master risk rules."""
+        self._check_daily_reset()
+        return self._is_not_in_cooldown() and self._is_within_daily_loss_limit()
+
+    def record_trade_closure(self, pnl: float, new_equity: float):
+        """Records the outcome of a closed trade to update risk states."""
+        self.equity = new_equity
+        if self.equity > self.peak_equity:
+            self.peak_equity = self.equity
+
+        if pnl < 0:
+            self.consecutive_losses += 1
+            self._check_for_cooldown()
         else:
-            sl = entry_price + self.atr_mult_sl * atr
-            tp = entry_price - rr * (sl - entry_price)
-        return (sl, tp)
+            if self.consecutive_losses > 0:
+                logger.info("Winning trade recorded, resetting consecutive loss counter.")
+                self.consecutive_losses = 0
 
-    def size_position_usd_capped(
-            self, symbol: str, desired_usd: float) -> float:
+    def calculate_position_size(self, symbol: str, entry_price: float, sl_price: float) -> Optional[tuple[float, float]]:
         """
-        Apply per-pair & portfolio caps to a desired USD exposure.
-        Returns the allowed USD exposure.
+        Calculates position size in units, applying all risk checks.
+        Returns a tuple of (quantity, dollar_risk) or (None, None).
         """
-        # Per-pair cap
-        pair_cap = self.per_pair_cap_pct * self.account_balance
-        allowed_usd = min(desired_usd, pair_cap)
+        if not self.is_trade_allowed():
+            return None, None
 
-        # Portfolio concurrent exposure cap
-        portfolio_used = self.portfolio_exposure_usd()
-        portfolio_free = max(
-            0.0, self.portfolio_cap_pct * self.account_balance - portfolio_used)
-        allowed_usd = min(allowed_usd, portfolio_free)
+        # 1. Determine effective risk for this trade
+        effective_risk_pct = self._get_effective_risk_pct()
+        dollar_risk = self.equity * effective_risk_pct
 
-        # Respect minimum trade size
-        if allowed_usd < self.min_trade_usd:
-            raise RiskViolationError(
-                f"Size {allowed_usd:.2f} below minimum trade USD "
-                f"{self.min_trade_usd:.2f}",
-                context={"symbol": symbol}
-            )
-        return allowed_usd
+        # 2. Calculate initial quantity based on risk
+        price_risk_per_unit = abs(entry_price - sl_price)
+        if price_risk_per_unit <= 1e-9:
+            logger.error("Stop loss cannot be the same as entry price.")
+            return None, None
+        quantity = dollar_risk / price_risk_per_unit
 
-    def _get_risk_parameters(self, risk_percent, rr, regime):
-        risk_pct, rr_final = self._apply_regime_adjustments(
-            risk_percent if risk_percent is not None
-            else self.base_risk_per_trade_pct,
-            rr if rr is not None else self.min_rr,
-            regime,
-        )
-        dollar_risk = self.account_balance * risk_pct
-        return risk_pct, rr_final, dollar_risk
+        # 3. Apply portfolio and per-pair caps
+        quantity = self._apply_caps(symbol, quantity, entry_price)
 
-    def _calculate_initial_units(self, dollar_risk, entry_price, stop_price):
-        price_risk = abs(entry_price - stop_price)
-        if price_risk <= 0:
-            raise RiskViolationError("Zero price risk (entry == stop)")
+        # 4. Enforce minimum trade size
+        if quantity * entry_price < config.MIN_TRADE_AMOUNT_USD:
+            logger.warning(f"Sized position for {symbol} is below minimum trade value. Aborting.")
+            return None, None
 
-        fee_buffer = 2 * self.fee_rate * entry_price
-        eff_risk_per_unit = price_risk + fee_buffer
-        return dollar_risk / eff_risk_per_unit
+        return quantity, dollar_risk
 
-    def _adjust_units_for_caps(self, units, entry_price, symbol):
-        desired_usd_exposure = units * entry_price
-        allowed_usd = self.size_position_usd_capped(
-            symbol, desired_usd_exposure)
-        if allowed_usd < desired_usd_exposure:
-            units = allowed_usd / entry_price
-        return units
-
-    def calculate_position_size(
-        self,
-        symbol: str,
-        side: Literal["long", "short"],
-        entry_price: float,
-        stop_price: float,
-        *,
-        risk_percent: Optional[float] = None,
-        atr: Optional[float] = None,
-        rr: Optional[float] = None,
-        regime: Optional[Literal["trend", "range"]] = None,
-    ) -> PositionRisk:
-        """
-        Full sizing + SL/TP calculation with caps & fees.
-        Raises RiskViolationError on any rule violation.
-        """
-        self._validate_prices(entry_price, stop_price)
-
-        risk_pct, rr_final, dollar_risk = self._get_risk_parameters(
-            risk_percent, rr, regime)
-        units = self._calculate_initial_units(
-            dollar_risk, entry_price, stop_price)
-        units = self._adjust_units_for_caps(units, entry_price, symbol)
-
-        # Leverage sanity (approximate initial margin)
-        margin_required = (units * entry_price) / max(self.max_leverage, 1)
-        if margin_required > self.account_balance:
-            raise RiskViolationError(
-                f"Insufficient margin: need {margin_required:.2f} > "
-                f"balance {self.account_balance:.2f}"
-            )
-
-        # If ATR is given, re-derive SL/TP to align with volatility bands
-        if atr is not None and atr > 0:
-            sl, tp = self.compute_sl_tp_from_atr(
-                side, entry_price, atr, rr_final)
-            # Never set SL beyond the proposed stop_price
-            if side == "long":
-                stop_price = max(stop_price, sl)
-            else:
-                stop_price = min(stop_price, sl)
-        else:
-            # Simple RR-based TP
-            if side == "long":
-                tp = entry_price + rr_final * (entry_price - stop_price)
-            else:
-                tp = entry_price - rr_final * (stop_price - entry_price)
-
-        pos = PositionRisk(
+    def register_position(self, symbol: str, quantity: float, entry_price: float, dollar_risk: float):
+        """Adds an open position to the tracker."""
+        if symbol in self.open_positions:
+            logger.warning(f"Position for {symbol} already registered. Overwriting.")
+        self.open_positions[symbol] = PositionRisk(
             symbol=symbol,
-            side=side,
-            entry_price=float(entry_price),
-            position_size=float(units),
-            risk_percent=float(risk_pct),
-            risk_reward_ratio=float(rr_final),
-            stop_loss=float(stop_price),
-            take_profit=float(tp),
-            dollar_risk=float(dollar_risk),
-            atr=float(atr) if atr is not None else None,
-            regime=regime,
+            quantity=quantity,
+            entry_price=entry_price,
+            dollar_risk=dollar_risk,
+            value_usd=quantity * entry_price
         )
-        logger.debug(f"[Risk] New position: {asdict(pos)}")
-        return pos
+        logger.info(f"Registered new position: {self.open_positions[symbol]}")
 
-    def register_open_position(self, key: str, position: PositionRisk) -> None:
-        """Store newly opened position under a stable key."""
-        self.open_positions[key] = position
+    def unregister_position(self, symbol: str):
+        """Removes a closed position."""
+        if symbol in self.open_positions:
+            logger.info(f"Unregistering position for {symbol}.")
+            del self.open_positions[symbol]
 
-    def unregister_position(self, key: str) -> None:
-        """Remove closed position."""
-        self.open_positions.pop(key, None)
+    # --- Private Helper Methods ---
 
-    # ────────────────────────────────────────────────────────────────────────────
-    # Stop Management (no loosening)
-    # ────────────────────────────────────────────────────────────────────────────
-    def dynamic_stop_management(
-        self,
-        key: str,
-        current_price: float,
-        *,
-        atr: Optional[float] = None
-    ) -> PositionRisk:
-        """
-        Tighten stop based on favorable move and ATR trail; NEVER loosen.
-        Returns updated PositionRisk and updates internal store.
-        """
-        if key not in self.open_positions:
-            raise RiskViolationError(f"Position key not found: {key}")
-
-        p = self.open_positions[key]
-        new_sl = p.stop_loss
-
-        # Favorable move distance
-        if p.side == "long":
-            advance = max(0.0, current_price - p.entry_price)
-            # Trail logic: lock at breakeven after ~1R move
-            one_r = abs(p.entry_price - p.stop_loss)
-            if one_r > 0 and advance >= one_r:
-                new_sl = max(new_sl, p.entry_price)  # never below entry
-            # ATR trail
-            if atr is not None and atr > 0:
-                trail = current_price - self.atr_mult_sl * atr
-                new_sl = max(new_sl, trail)
-        else:
-            advance = max(0.0, p.entry_price - current_price)
-            one_r = abs(p.stop_loss - p.entry_price)
-            if one_r > 0 and advance >= one_r:
-                new_sl = min(new_sl, p.entry_price)
-            if atr is not None and atr > 0:
-                trail = current_price + self.atr_mult_sl * atr
-                new_sl = min(new_sl, trail)
-
-        # NEVER worsen stop relative to previous
-        if p.side == "long":
-            new_sl = max(new_sl, p.stop_loss)
-        else:
-            new_sl = min(new_sl, p.stop_loss)
-
-        # Recompute TP to maintain R:R from entry
-        if p.side == "long":
-            new_tp = p.entry_price + \
-                p.risk_reward_ratio * (p.entry_price - new_sl)
-        else:
-            new_tp = p.entry_price - \
-                p.risk_reward_ratio * (new_sl - p.entry_price)
-
-        updated = PositionRisk(
-            symbol=p.symbol,
-            side=p.side,
-            entry_price=p.entry_price,
-            position_size=p.position_size,
-            risk_percent=p.risk_percent,
-            risk_reward_ratio=p.risk_reward_ratio,
-            stop_loss=float(new_sl),
-            take_profit=float(new_tp),
-            dollar_risk=p.dollar_risk,
-            atr=atr if atr is not None else p.atr,
-            regime=p.regime,
-        )
-        self.open_positions[key] = updated
-        return updated
-
-    # ────────────────────────────────────────────────────────────────────────────
-    # Portfolio stats
-    # ────────────────────────────────────────────────────────────────────────────
-    def portfolio_exposure_usd(self) -> float:
-        """
-        Returns the total USD exposure of all open positions.
-        """
-        return sum(p.position_size * p.entry_price
-                   for p in self.open_positions.values())
-
-    def portfolio_risk_snapshot(self) -> Dict[str, float]:
-        """
-        Returns a snapshot of the portfolio's risk.
-        """
-        expo = self.portfolio_exposure_usd()
-        return {
-            "equity": self.current_equity,
-            "exposure_usd": expo,
-            "exposure_pct": expo / max(self.account_balance, 1e-9),
-            "concurrent_positions": float(len(self.open_positions)),
-            "drawdown": (self.peak_equity - self.current_equity) / max(
-                self.peak_equity, 1e-9),
-        }
-
-    # ────────────────────────────────────────────────────────────────────────────
-    # Helpers
-    # ────────────────────────────────────────────────────────────────────────────
-    def _validate_prices(self, entry_price: float, stop_price: float) -> None:
-        if entry_price <= 0 or stop_price <= 0:
-            raise RiskViolationError(
-                f"Invalid price(s): entry={entry_price}, stop={stop_price}"
+    def _get_effective_risk_pct(self) -> float:
+        """Gets the per-trade risk, adjusted for current drawdown."""
+        drawdown = (self.peak_equity - self.equity) / self.peak_equity
+        if drawdown > self.drawdown_reduction_threshold:
+            logger.warning(
+                f"Drawdown of {drawdown:.2%} exceeds threshold of {self.drawdown_reduction_threshold:.2%}. "
+                f"Reducing trade risk by 50%."
             )
+            return self.base_per_trade_risk_pct / 2
+        return self.base_per_trade_risk_pct
 
-    def _apply_regime_adjustments(
-        self,
-        risk_pct: float,
-        rr: float,
-        regime: Optional[Literal["trend", "range"]],
-    ) -> tuple[float, float]:
-        """
-        Adjust risk and RR by regime.
-        """
-        if regime == "trend":
-            risk_adj = max(
-                0.5 * risk_pct, 0.5 * self.base_risk_per_trade_pct)
-            rr_adj = max(rr, self.min_rr + 0.5)
-            return (risk_adj, rr_adj)
-        if regime == "range":
-            risk_adj = 0.8 * risk_pct
-            rr_adj = max(self.min_rr, rr - 0.25)
-            return (risk_adj, rr_adj)
-        return (risk_pct, rr)
+    def _apply_caps(self, symbol: str, quantity: float, entry_price: float) -> float:
+        """Reduces quantity if it violates portfolio or per-pair caps."""
+        desired_usd = quantity * entry_price
+
+        # Per-pair cap
+        pair_cap_usd = self.equity * self.per_pair_cap_pct
+        current_pair_exposure = self.open_positions.get(symbol, PositionRisk("",0,0,0,0)).value_usd
+        allowed_for_pair = max(0, pair_cap_usd - current_pair_exposure)
+
+        # Portfolio cap
+        portfolio_cap_usd = self.equity * self.portfolio_cap_pct
+        current_portfolio_exposure = sum(p.value_usd for p in self.open_positions.values())
+        allowed_for_portfolio = max(0, portfolio_cap_usd - current_portfolio_exposure)
+
+        allowed_usd = min(desired_usd, allowed_for_pair, allowed_for_portfolio)
+
+        if allowed_usd < desired_usd:
+            logger.warning(f"Position size for {symbol} reduced from {desired_usd:.2f} USD to {allowed_usd:.2f} USD due to exposure caps.")
+            return allowed_usd / entry_price
+        return quantity
+
+    def _check_daily_reset(self):
+        """Resets daily loss tracking if a new day has started."""
+        current_day = datetime.now(timezone.utc).date()
+        if current_day > self.last_trade_day:
+            logger.info(f"New day. Resetting daily equity from {self.daily_start_equity} to {self.equity}.")
+            self.daily_start_equity = self.equity
+            self.last_trade_day = current_day
+            if self.in_cooldown_until:
+                self.in_cooldown_until = None
+                logger.info("New session started, cooldown lifted.")
+
+    def _is_not_in_cooldown(self) -> bool:
+        """Checks if the bot is currently in a cooldown period."""
+        if self.in_cooldown_until:
+            if self.in_cooldown_until.year == 9999:
+                return False
+            if datetime.now(timezone.utc) < self.in_cooldown_until:
+                return False
+            self.in_cooldown_until = None
+        return True
+
+    def _is_within_daily_loss_limit(self) -> bool:
+        """Checks if the daily loss is within the defined limit."""
+        current_loss_pct = (self.daily_start_equity - self.equity) / self.daily_start_equity
+        if current_loss_pct >= self.daily_loss_limit_pct:
+            logger.critical(f"Daily loss limit hit! Loss: {current_loss_pct:.2%}")
+            return False
+        return True
+
+    def _check_for_cooldown(self):
+        """Triggers a cooldown if consecutive loss streak hits a threshold."""
+        if self.consecutive_losses in self.cooldown_rules:
+            rule = self.cooldown_rules[self.consecutive_losses]
+            duration = rule['duration_minutes']
+            if duration == -1:
+                self.in_cooldown_until = datetime(9999, 1, 1, tzinfo=timezone.utc)
+                msg = f"STOP FOR SESSION cooldown triggered after {self.consecutive_losses} losses."
+            else:
+                self.in_cooldown_until = datetime.now(timezone.utc) + timedelta(minutes=duration)
+                msg = f"{duration}-min cooldown triggered after {self.consecutive_losses} losses."
+            logger.warning(msg)
+            if self.notifier:
+                self.notifier.send_notification(f"Risk Alert: {msg}")

@@ -1,130 +1,104 @@
 import pytest
-from modules.risk_management import RiskManager, RiskViolationError
-
+from datetime import datetime, timedelta, timezone
+from modules.risk_management import RiskManager
+import config
 
 @pytest.fixture
 def risk_manager():
     """Returns a RiskManager instance with default test settings."""
+    config.KPI_TARGETS['daily_loss_limit'] = 0.03
+    config.PER_TRADE_RISK_PERCENT = 0.01
+    # Set high caps to isolate other logic in most tests
     return RiskManager(
         account_balance=10000,
-        per_pair_cap_pct=0.25,
-        portfolio_cap_pct=0.50,
-        base_risk_per_trade_pct=0.01,
-        min_rr=2.0,
-        atr_mult_sl=1.5,
-        atr_mult_tp=3.0,
+        per_pair_cap_pct=1.0,  # 100%
+        portfolio_cap_pct=1.0  # 100%
     )
 
+class TestNewRiskManager:
+    def test_initial_state(self, risk_manager):
+        assert risk_manager.equity == 10000
+        assert risk_manager.daily_start_equity == 10000
+        assert risk_manager.consecutive_losses == 0
+        assert risk_manager.in_cooldown_until is None
+        assert risk_manager.is_trade_allowed() is True
 
-def test_compute_sl_tp_from_atr(risk_manager):
-    """
-    Tests the compute_sl_tp_from_atr method.
-    """
-    # Long position
-    sl, tp = risk_manager.compute_sl_tp_from_atr("long", 100, 2)
-    assert sl == 97.0  # 100 - 1.5 * 2
-    assert tp == 106.0  # 100 + 2.0 * (100 - 97)
+    def test_daily_loss_limit(self, risk_manager):
+        # Simulate a loss that hits the 3% limit
+        pnl = -301
+        new_equity = 9699
+        risk_manager.record_trade_closure(pnl, new_equity)
 
-    # Short position
-    sl, tp = risk_manager.compute_sl_tp_from_atr("short", 100, 2)
-    assert sl == 103.0  # 100 + 1.5 * 2
-    assert tp == 94.0  # 100 - 2.0 * (103 - 100)
+        assert risk_manager.is_trade_allowed() is False
 
+    def test_daily_loss_limit_reset(self, risk_manager):
+        # Hit the limit
+        risk_manager.record_trade_closure(-301, 9699)
+        assert risk_manager.is_trade_allowed() is False
 
-def test_size_position_usd_capped(risk_manager):
-    """
-    Tests the size_position_usd_capped method.
-    """
-    # No cap hit
-    assert risk_manager.size_position_usd_capped("BTC/USDT", 1000) == 1000
+        # Simulate time passing to the next day
+        risk_manager.last_trade_day = datetime.now(timezone.utc).date() - timedelta(days=1)
 
-    # Per-pair cap hit
-    assert risk_manager.size_position_usd_capped(
-        "BTC/USDT", 3000) == 2500  # 10000 * 0.25
+        # The check should reset the daily limit
+        assert risk_manager.is_trade_allowed() is True
+        assert risk_manager.daily_start_equity == 9699
 
-    # Portfolio cap hit
-    eth_position = risk_manager.calculate_position_size(
-        "ETH/USDT", "long", 3000, 2900, risk_percent=0.01
-    )
-    risk_manager.register_open_position("ETH/USDT", eth_position)
+    def test_consecutive_loss_cooldown_3(self, risk_manager):
+        # Use smaller losses to avoid hitting the daily limit
+        risk_manager.record_trade_closure(-10, 9990)
+        risk_manager.record_trade_closure(-10, 9980)
+        risk_manager.record_trade_closure(-10, 9970)
 
-    assert risk_manager.size_position_usd_capped("BTC/USDT", 3000) == 2500
+        assert risk_manager.consecutive_losses == 3
+        assert risk_manager.in_cooldown_until is not None
+        assert risk_manager.is_trade_allowed() is False, "Trading should be paused during cooldown"
 
+        # Check that cooldown lifts after time
+        risk_manager.in_cooldown_until = datetime.now(timezone.utc) - timedelta(minutes=1)
+        assert risk_manager.is_trade_allowed() is True, "Trading should be allowed after cooldown"
 
-def test_calculate_position_size(risk_manager):
-    """
-    Tests the calculate_position_size method.
-    """
-    pos = risk_manager.calculate_position_size(
-        "BTC/USDT", "long", 50000, 49000, risk_percent=0.01)
-    assert pos.symbol == "BTC/USDT"
-    assert pos.side == "long"
-    assert pos.entry_price == 50000
-    assert pos.stop_loss == 49000
-    assert pos.risk_percent == 0.01
-    assert pos.dollar_risk == 100  # 10000 * 0.01
+    def test_consecutive_loss_cooldown_5_session_stop(self, risk_manager):
+        for _ in range(5):
+            risk_manager.record_trade_closure(-100, risk_manager.equity - 100)
 
+        assert risk_manager.consecutive_losses == 5
+        assert risk_manager.in_cooldown_until.year == 9999 # Check for session stop sentinel
+        assert risk_manager.is_trade_allowed() is False
 
-def test_update_equity(risk_manager):
-    """
-    Tests the update_equity method.
-    """
-    risk_manager.update_equity(10500)
-    assert risk_manager.peak_equity == 10500
-    risk_manager.update_equity(9500)
-    assert risk_manager.current_equity == 9500
-    assert risk_manager.peak_equity == 10500
+    def test_loss_streak_reset_by_win(self, risk_manager):
+        risk_manager.record_trade_closure(-100, 9900)
+        risk_manager.record_trade_closure(-100, 9800)
+        assert risk_manager.consecutive_losses == 2
 
+        risk_manager.record_trade_closure(50, 9850)
+        assert risk_manager.consecutive_losses == 0
+        assert risk_manager.in_cooldown_until is None
+        assert risk_manager.is_trade_allowed() is True
 
-def test_max_drawdown_violation(risk_manager):
-    """
-    Tests that a RiskViolationError is raised when the max drawdown is exceeded.
-    """
-    risk_manager.max_drawdown_limit = 0.1
-    risk_manager.update_equity(11000)
-    with pytest.raises(RiskViolationError):
-        risk_manager.update_equity(9899)  # 11000 * (1-0.10009)
+    def test_calculate_position_size(self, risk_manager):
+        entry_price = 50000
+        sl_price = 49500
 
-def test_zero_atr(risk_manager):
-    """
-    Tests that compute_sl_tp_from_atr handles zero ATR correctly.
-    """
-    sl, tp = risk_manager.compute_sl_tp_from_atr("long", 100, 0)
-    assert sl == 100
-    assert tp == 100
+        # Risking 1% of 10k equity = $100
+        # Price risk per unit = 50000 - 49500 = $500
+        # Expected quantity = 100 / 500 = 0.2
+        quantity, _ = risk_manager.calculate_position_size("BTCUSDT", entry_price, sl_price)
+        assert quantity == pytest.approx(0.2)
 
-from modules.risk_management import PositionRisk
-def test_portfolio_at_limit(risk_manager):
-    """
-    Tests that size_position_usd_capped handles the case where the portfolio is
-    already at its limit.
-    """
-    pos = PositionRisk("ETH/USDT", "long", 3000, 1.66, 0.01, 2.0, 2900, 3200, 100)
-    risk_manager.register_open_position("ETH/USDT", pos)
-    with pytest.raises(RiskViolationError):
-        risk_manager.size_position_usd_capped("BTC/USDT", 1000)
+    def test_calculate_position_size_below_minimum(self, risk_manager):
+        risk_manager.equity = 1000
+        config.MIN_TRADE_AMOUNT_USD = 500
+        entry_price = 50000
 
-def test_zero_sl_distance(risk_manager):
-    """
-    Tests that calculate_position_size handles a zero stop-loss distance
-    correctly.
-    """
-    with pytest.raises(RiskViolationError):
-        risk_manager.calculate_position_size("BTC/USDT", "long", 50000, 50000)
+        # Let's make it fail
+        # Required position value is MIN_TRADE_AMOUNT_USD
+        # Let's say risk is small
+        sl_price = 40000
+        # Price risk = $10000
+        # Dollar risk = 1% of 1k = $10
+        # Quantity = 10 / 10000 = 0.001
+        # Position value = 0.001 * 50000 = $50
+        # This is less than MIN_TRADE_AMOUNT_USD = $500
 
-def test_position_tracking(risk_manager):
-    """
-    Tests that register_open_position and unregister_position track
-    positions correctly.
-    """
-    assert risk_manager.portfolio_exposure_usd() == 0
-    pos1 = PositionRisk("BTC/USDT", "long", 50000, 0.04, 0.01, 2.0, 49000, 52000, 100)
-    risk_manager.register_open_position("BTC/USDT", pos1)
-    assert risk_manager.portfolio_exposure_usd() == 2000
-
-    pos2 = PositionRisk("ETH/USDT", "long", 3000, 0.33, 0.01, 2.0, 2900, 3200, 100)
-    risk_manager.register_open_position("ETH/USDT", pos2)
-    assert risk_manager.portfolio_exposure_usd() == 2990 # 2000 + 990
-
-    risk_manager.unregister_position("BTC/USDT")
-    assert risk_manager.portfolio_exposure_usd() == 990
+        quantity, _ = risk_manager.calculate_position_size("BTCUSDT", entry_price, sl_price)
+        assert quantity is None

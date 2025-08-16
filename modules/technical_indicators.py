@@ -471,3 +471,82 @@ class TechnicalIndicators:
             return atr_series
         except Exception:
             return None
+
+    @staticmethod
+    def bollinger_bands(series, window: int = 20, num_std: float = 2.0):
+        """
+        Calculates Bollinger Bands for a series.
+        Returns middle, upper, and lower bands as pandas Series.
+        """
+        s = TechnicalIndicators._to_series(series)
+        if s is None:
+            return None, None, None
+        try:
+            middle = s.rolling(window=window, min_periods=window).mean()
+            std = s.rolling(window=window, min_periods=window).std(ddof=0) # Use population standard deviation
+            upper = middle + (std * num_std)
+            lower = middle - (std * num_std)
+            return middle, upper, lower
+        except Exception:
+            return None, None, None
+
+    @staticmethod
+    def bollinger_band_width(series, window: int = 20, num_std: float = 2.0):
+        """
+        Calculates the Bollinger Band Width.
+        """
+        s = TechnicalIndicators._to_series(series)
+        if s is None:
+            return None
+        try:
+            middle, upper, lower = TechnicalIndicators.bollinger_bands(s, window, num_std)
+            if middle is None:
+                return None
+            # Avoid division by zero
+            middle_safe = middle.replace(0, float("inf"))
+            return (upper - lower) / middle_safe
+        except Exception:
+            return None
+
+    @staticmethod
+    def z_score(series, window: int = 20):
+        """
+        Calculates the Z-score of a series.
+        """
+        s = TechnicalIndicators._to_series(series)
+        if s is None:
+            return None
+        try:
+            mean = s.rolling(window=window, min_periods=window).mean()
+            std = s.rolling(window=window, min_periods=window).std(ddof=0) # Use population standard deviation
+            # Avoid division by zero
+            std = std.replace(0, float("inf"))
+            return (s - mean) / std
+        except Exception:
+            return None
+
+    @staticmethod
+    def bb_width_percentile(series, bb_window: int = 20, bb_std: float = 2.0, percentile_lookback: int = 90):
+        """
+        Calculates the percentile of the current Bollinger Band Width
+        over a rolling lookback period.
+        """
+        s = TechnicalIndicators._to_series(series)
+        if s is None:
+            return None
+        try:
+            from scipy.stats import percentileofscore
+            bbw = TechnicalIndicators.bollinger_band_width(s, bb_window, bb_std)
+            if bbw is None or bbw.empty:
+                return None
+
+            # Calculate percentile of the last value in each rolling window
+            percentile = bbw.rolling(
+                window=percentile_lookback, min_periods=percentile_lookback
+            ).apply(lambda w: percentileofscore(w, w[-1]), raw=True)
+            return percentile
+        except ImportError:
+            # Consider logging a warning here
+            return None
+        except Exception:
+            return None

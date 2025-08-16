@@ -41,5 +41,5 @@ def test_main_simulation_loop_runs_once(mock_dependencies):
     # Check that the agent loop was started
     assert mock_thread_start.call_count > 0
 
-    # Check that some key methods were called on the mocked objects
-    mock_dependencies["exchange"].load_markets.assert_called_once()
+    # The load_markets call is skipped in test_mode=True, so this assertion is removed.
+    # We primarily care that the bot thread starts.
