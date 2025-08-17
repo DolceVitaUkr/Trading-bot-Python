@@ -1,212 +1,185 @@
-import argparse
-import logging
-import sys
+"""
+Main orchestrator for the trading bot.
+"""
+import os
 import time
-import json
-from datetime import datetime, timezone
-from typing import Optional
+import datetime
+import orjson
+import asyncio
+from dotenv import load_dotenv
+from typing import Dict, Any, List
 
-import config
-from utils.utilities import configure_logging
+from core.interfaces import MarketData, Execution, WalletSync, NewsFeed, ValidationRunner
+from core.schemas import DecisionTrace, StrategyMeta
+from adapters.null_adapters import NullMarketData, NullExecution, NullWalletSync, NullNewsFeed
+from adapters.news_rss import NewsRssAdapter
+from adapters.ibkr_market import IbkrMarketData
+from adapters.ibkr_exec import IbkrExecution
+from adapters.wallet_bybit import BybitWalletSync
+from adapters.wallet_ibkr import IbkrWalletSync
+from adapters.composite_wallet import CompositeWalletSync
+from managers.validation_manager import ValidationManager
+from managers.sizer import Sizer
+from managers.kill_switch import KillSwitch
+from managers.strategy_manager import StrategyManager
+from ib_insync import IB, util
 
-# --- Module Imports ---
-from modules.Funds_Controller import FundsController
-from modules.Wallet_Sync import WalletSync
-from modules.Portfolio_Manager import PortfolioManager
-from modules.Sizer import Sizer
-from modules.Strategy_Manager import StrategyManager
-from modules.risk_management import RiskManager
-from modules.trade_executor import TradeExecutor
-from modules.reward_system import RewardSystem
-from modules.data_manager import DataManager
-from modules.exchange import ExchangeAPI
-# Import new modules for integration
-from modules.Validation_Manager import ValidationManager
-from modules.News_Agent import NewsAgent
-from modules.Kill_Switch import KillSwitch
+# --- JSONL Logger ---
+def append_to_jsonl(file_path: str, data: Dict[str, Any]):
+    """Appends a JSON object to a JSONL file."""
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+    with open(file_path, "ab") as f:
+        f.write(orjson.dumps(data, default=str))
+        f.write(b"\n")
 
-
-# Placeholder for modules not in the scope of this refactoring
-class MarketSessions:
-    @staticmethod
-    def current_session(now_utc: datetime) -> str:
-        hour = now_utc.hour
-        if 2 <= hour < 8: return "ASIA"
-        if 7 <= hour < 16: return "EU"
-        if 13 <= hour < 22: return "US"
-        return "OVERLAP"
-
-def run_bot(args: argparse.Namespace):
+# --- Bot Factory ---
+async def _build_bot():
     """
-    Initializes and runs the trading bot in a synchronous loop.
+    Builds the bot with dependency injection based on environment variables.
     """
-    log = logging.getLogger()
-    log.info("Booting modular trading bot...")
+    load_dotenv()
 
+    # --- Feature Flags ---
+    enable_news = os.getenv("ENABLE_NEWS", "0") == "1"
+    enable_forex = os.getenv("ENABLE_FOREX", "0") == "1"
+
+    # --- Adapters ---
+    market_data: MarketData = NullMarketData()
+    execution: Execution = NullExecution()
+    wallet_adapters: List[WalletSync] = []
+    ib_client = None
+
+    news_feed: NewsFeed = NewsRssAdapter() if enable_news else NullNewsFeed()
+    print(f"News feature {'ENABLED' if enable_news else 'DISABLED'}.")
+
+    if not enable_forex:
+        print("Crypto mode enabled.")
+        # Configure Bybit, etc.
+    if enable_forex:
+        print("Forex feature ENABLED. Connecting to IBKR...")
+        ib_client = IB()
+        # ... (IBKR connection logic as before) ...
+        try:
+            await ib_client.connectAsync(os.getenv("IBKR_HOST"), int(os.getenv("IBKR_PORT")), int(os.getenv("IBKR_CLIENT_ID")))
+            market_data = IbkrMarketData(ib_client)
+            execution = IbkrExecution(ib_client, market_data)
+            wallet_adapters.append(IbkrWalletSync(ib_client))
+            print("IBKR connection successful.")
+        except Exception as e:
+            print(f"FATAL: IBKR connection failed: {e}.")
+            ib_client = None
+
+    # --- Managers ---
+    wallet_sync = CompositeWalletSync(wallet_adapters) if wallet_adapters else NullWalletSync()
+    sizer = Sizer(wallet_sync)
+    kill_switch = KillSwitch()
+    validation_runner: ValidationRunner = ValidationManager()
+    strategy_manager = StrategyManager()
+
+    return {
+        "market_data": market_data, "execution": execution, "wallet_sync": wallet_sync,
+        "news_feed": news_feed, "validation_runner": validation_runner, "sizer": sizer,
+        "kill_switch": kill_switch, "strategy_manager": strategy_manager,
+        "ib_client": ib_client, "is_forex": enable_forex,
+    }
+
+# --- Main Loop ---
+async def main():
+    """ Main trading loop. """
+    print("Building bot...")
+    bot_components = await _build_bot()
+    print("Bot built successfully.")
+
+    # Unpack components
+    market_data, execution, news_feed = bot_components["market_data"], bot_components["execution"], bot_components["news_feed"]
+    validation_runner, sizer, kill_switch = bot_components["validation_runner"], bot_components["sizer"], bot_components["kill_switch"]
+    strategy_manager = bot_components["strategy_manager"]
+    ib_client, is_forex = bot_components["ib_client"], bot_components["is_forex"]
+
+    # --- Strategy & Market Config ---
+    if is_forex:
+        strategy_id, symbol, market, asset_class, venue = "fx_strategy_01", "EUR/USD", "FX", "Forex", "IBKR"
+        strategy_meta = StrategyMeta(strategy_id=strategy_id, name="SimpleFXMomentum", asset_class="Forex", market="FX", session_flags=["eu", "us"], timeframe="1h", indicators=["SMA"], params={"period": 50}, version="1.0", created_at=datetime.datetime.now(datetime.timezone.utc))
+    else:
+        strategy_id, symbol, market, asset_class, venue = "crypto_strategy_01", "BTC/USDT", "SPOT", "Crypto", "Bybit"
+        strategy_meta = StrategyMeta(strategy_id=strategy_id, name="SimpleCryptoMomentum", asset_class="Crypto", market="SPOT", session_flags=["24/7"], timeframe="4h", indicators=["RSI"], params={"period": 14}, version="1.0", created_at=datetime.datetime.now(datetime.timezone.utc))
+
+    # Register the strategy
+    strategy_manager.register_strategy(strategy_meta)
+
+    print(f"\n--- Starting main loop for {asset_class} on {venue} ---")
     try:
-        with open("policies/sizing_policy.json", 'r') as f:
-            sizing_policy = json.load(f)
-    except Exception as e:
-        log.exception(f"FATAL: Failed to load sizing_policy.json: {e}")
-        return 1
+        # Dummy state for kill switch simulation
+        simulated_pnl = 0
 
-    # --- Initialize Core Modules ---
-    mock_exchange = ExchangeAPI() # For simulation, one exchange can serve all
-    data_manager = DataManager(exchange=mock_exchange)
+        while True:
+            ts = datetime.datetime.now(datetime.timezone.utc)
+            print(f"\n--- Iteration @ {ts.isoformat()} ---")
 
-    exchange_adapters = {"SPOT": mock_exchange, "PERP": mock_exchange}
+            blocked_reason, order_result, sizing_info = None, None, {}
 
-    funds_controller = FundsController()
-    wallet_sync = WalletSync(exchange_adapters=exchange_adapters)
+            # 1. Kill Switch Check
+            # In a real bot, pnl and position count would come from a portfolio manager
+            simulated_pnl -= 1000 # Simulate a losing streak
+            kill_switch.check_and_update(asset_class, venue, current_pnl=simulated_pnl, num_positions=5)
 
-    allocations = getattr(config, "ASSET_ALLOCATION_USD", {"SPOT": 10000, "PERP": 5000})
-    portfolio_manager = PortfolioManager(allocations=allocations, wallet_sync=wallet_sync)
+            is_blocked, block_rule = kill_switch.is_trading_blocked(asset_class, venue)
+            if is_blocked:
+                blocked_reason = f"KILL_SWITCH_ACTIVE:{block_rule}"
 
-    sizer = Sizer(policy=sizing_policy)
-    # --- Initialize New Modules ---
-    validation_config = {"min_trades_for_approval": 500}
-    validation_manager = ValidationManager(config=validation_config)
+            # 2. Validation
+            elif not (await validation_runner.approved(strategy_id, market))[0]:
+                blocked_reason = "STRATEGY_NOT_APPROVED"
 
-    news_config = {
-        "news_api_key": None, # No real API key for now
-        "high_impact_events": ["CPI", "NFP", "FOMC", "ECB"]
-    }
-    news_agent = NewsAgent(config=news_config)
+            # 3. Signal & Filters
+            if not blocked_reason:
+                signal = {"side": "buy", "score": 0.8}
+                news_block = news_feed.macro_blockers([symbol]).get(symbol, False)
+                filters = {"news_block": news_block}
 
-    kill_switch_config = {
-        "daily_drawdown_limit": 0.05,
-        "monthly_drawdown_limit": 0.15,
-        "max_slippage_events": 3,
-        "max_api_errors": 10
-    }
-    kill_switch = KillSwitch(config=kill_switch_config, portfolio_manager=portfolio_manager)
+                if news_block:
+                    blocked_reason = "news_macro_block"
+                else:
+                    # 4. Sizing
+                    price_data = await market_data.ticker(symbol)
+                    price = price_data.get("price", 0.0)
 
-    # Use one ledger's balance for initializing RiskManager's equity tracking
-    initial_rm_balance = sum(l['total'] for l in portfolio_manager.ledgers.values())
-    risk_manager = RiskManager(
-        account_balance=initial_rm_balance,
-        sizing_policy=sizing_policy,
-        kill_switch=kill_switch,
-        data_provider=data_manager
-    )
+                    if price > 0:
+                        qty = await sizer.get_order_qty(asset_class, price)
+                        sizing_info = {"qty": qty, "price": price}
 
-    strategy_manager = StrategyManager(
-        data_provider=data_manager,
-        validation_manager=validation_manager,
-        news_agent=news_agent,
-        portfolio_manager=portfolio_manager
-    )
-    trade_executor = TradeExecutor(sizing_policy=sizing_policy, simulation_mode=True, exchange=mock_exchange)
-    reward_system = RewardSystem(starting_balance=initial_rm_balance)
+                        if qty > 0:
+                            # 5. Execution
+                            order_result = await execution.place_order(symbol, side=signal["side"], qty=qty)
+                            if order_result and order_result.get("status") == "REJECTED":
+                                blocked_reason = order_result.get("reason")
+                        else:
+                            blocked_reason = "SIZING_QTY_ZERO"
+                    else:
+                        blocked_reason = "INVALID_PRICE_ZERO"
 
-    log.info("All modules initialized successfully.")
-
-    # --- Main Trading Loop ---
-    symbols_to_trade = ["BTC/USDT", "ETH/USDT"]
-    asset_classes = {"BTC/USDT": "SPOT", "ETH/USDT": "SPOT"}
-
-    while True:
-        now_utc = datetime.now(timezone.utc)
-        log.info(f"--- Starting new loop at {now_utc.isoformat()} ---")
-
-        # --- Kill Switch Checks ---
-        kill_switch.check_drawdowns()
-        # Mock data for other checks for now
-        kill_switch.check_slippage(slippage_events=[])
-        kill_switch.check_api_errors(api_error_counts={})
-
-        wallet_sync.sync()
-
-        for symbol in symbols_to_trade:
-            asset_class = asset_classes.get(symbol)
-            if not asset_class: continue
-
-            log.info(f"--- Evaluating {symbol} ({asset_class}) ---")
-
-            if not funds_controller.is_allowed(asset_class, symbol):
-                log.warning(f"Trading disabled for {asset_class} by FundsController. Skipping.")
-                continue
-
-            df_15m = data_manager.load_historical_data(symbol, "15m", backfill_bars=300)
-            if df_15m.empty:
-                log.warning(f"No 15m data for {symbol}. Skipping.")
-                continue
-
-            regime, regime_context = strategy_manager._determine_regime(df_15m)
-            if regime == "Neutral":
-                log.info(f"Neutral regime for {symbol}. No action.")
-                continue
-
-            session = MarketSessions.current_session(now_utc)
-            mode = strategy_manager.select_mode(regime, session, asset_class)
-
-            decision_context = {**regime_context, "regime": regime, "session": session, "asset_class": asset_class, "mode": mode}
-            decision = strategy_manager.decide(symbol, decision_context)
-
-            if not decision:
-                log.info(f"No entry signal from strategy for {symbol}.")
-                continue
-
-            log.info(f"Signal found for {symbol}: {decision.signal}, Score: {decision.meta['signal_score']:.2f}")
-
-            equity = portfolio_manager.available_budget(asset_class)
-            price = df_15m['close'].iloc[-1]
-            atr = regime_context.get('atr_15m', 0)
-
-            proposal = sizer.propose(
-                equity=equity, asset_class=asset_class, mode=mode, atr=atr, price=price,
-                pair_cap_pct=funds_controller.pair_cap_pct(),
-                signal_score=decision.meta['signal_score'], good_setup=decision.meta['good_setup']
+            # 6. Logging
+            print(f"Blocked: {blocked_reason}" if blocked_reason else f"Order Result: {order_result}")
+            trace = DecisionTrace(
+                ts=ts, venue=venue, asset_class=asset_class, symbol=symbol, mode="paper",
+                signal=signal if 'signal' in locals() else {}, filters=filters if 'filters' in locals() else {}, sizing=sizing_info,
+                order_result=order_result, blocked_reason=blocked_reason,
+                costs={"fee_est": 0.0, "slip_est": 0.0},
             )
+            append_to_jsonl("state/decision_traces.jsonl", trace.dict(by_alias=True))
+            print("Decision trace logged.")
 
-            if not proposal:
-                log.warning(f"Sizer did not produce a valid proposal for {symbol}. Skipping.")
-                continue
+            await asyncio.sleep(15)
 
-            log.info(f"Sizer proposed: SizeUSD={proposal['size_usd']:.2f}, Leverage={proposal['leverage']:.1f}x")
-
-            is_allowed, reason = risk_manager.allow(
-                proposal=proposal,
-                asset_class=asset_class,
-                symbol=symbol,
-                side=decision.signal,
-                price=price,
-                mode=mode,
-                session=session
-            )
-            if not is_allowed:
-                log.warning(f"Trade rejected by RiskManager: {reason}. Skipping.")
-                continue
-
-            rid = portfolio_manager.reserve(asset_class, proposal['size_usd'])
-            if not rid:
-                log.error(f"Failed to reserve funds for {symbol}. Skipping.")
-                continue
-
-            receipt = trade_executor.execute_order(decision, proposal['size_usd'], proposal['leverage'], price)
-
-            portfolio_manager.book_trade(asset=asset_class, pnl_net=receipt['pnl_net_usd'], fees=receipt['fees_usd'])
-            reward_system.update(pnl_net_usd=receipt['pnl_net_usd'], context={"asset": asset_class, "mode": mode})
-            portfolio_manager.release(rid)
-
-            log.info(f"--- Completed trade cycle for {symbol} ---")
-
-        loop_interval = getattr(config, "LIVE_LOOP_INTERVAL", 60)
-        log.info(f"Loop finished. Sleeping for {loop_interval} seconds...")
-        time.sleep(float(loop_interval))
-
-def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Modular Trading Bot")
-    p.add_argument("--mode", choices=["simulation", "production"], default="simulation")
-    return p.parse_args(argv)
+    except KeyboardInterrupt:
+        print("\n--- Shutting down ---")
+    finally:
+        if ib_client and ib_client.isConnected():
+            print("Disconnecting from IBKR...")
+            ib_client.disconnect()
 
 if __name__ == "__main__":
-    configure_logging()
-    args = parse_args()
-    try:
-        sys.exit(run_bot(args))
-    except KeyboardInterrupt:
-        sys.exit(0)
-    except Exception:
-        logging.getLogger().exception("Unhandled exception in main.")
-        sys.exit(1)
+    if os.name == 'nt':
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    util.logToConsole()
+    asyncio.run(main())
