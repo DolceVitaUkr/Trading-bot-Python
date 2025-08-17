@@ -8,6 +8,7 @@ import pandas as pd
 import config
 from utils.utilities import ensure_directory, write_json, retry, format_timestamp
 from modules.exchange import ExchangeAPI
+from Data_Registry import Data_Registry
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:
@@ -40,14 +41,9 @@ def _build_paths(symbol: str,
     """
     Return (csv_path, meta_path) for a symbol/timeframe.
     """
-    symfile = _symbol_to_filename(symbol)
-    base = os.path.join(config.HISTORICAL_DATA_PATH,
-                        exchange_name.lower(),
-                        timeframe)
-    ensure_directory(base)
-    csv_path = os.path.join(base, f"{symfile}.csv")
-    meta_path = os.path.join(base, f"{symfile}.meta.json")
-    return csv_path, meta_path
+    csv_path = Data_Registry.get_historical_data_path(exchange_name, symbol, timeframe)
+    meta_path = Data_Registry.get_historical_meta_path(exchange_name, symbol, timeframe)
+    return str(csv_path), str(meta_path)
 
 
 class DataManager:

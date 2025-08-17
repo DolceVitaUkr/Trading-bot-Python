@@ -9,10 +9,11 @@ from modules.brokers.ibkr.Connect_IBKR_API import IBKRConnectionManager
 from modules.brokers.ibkr.Contracts_IBKR import build_fx_spot_contract, get_conid_by_symbol
 from utils.rate_limiter import ibkr_rate_limiter
 from config import MD_SUBSCRIPTIONS
+from Data_Registry import Data_Registry
 
 log = logging.getLogger(__name__)
 
-CACHE_DIR = Path("data/ibkr/historical")
+CACHE_DIR = Data_Registry.get_ibkr_cache_path("historical")
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 

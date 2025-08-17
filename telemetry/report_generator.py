@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from typing import Dict, List
 
 import logging
+from Data_Registry import Data_Registry
+
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
@@ -37,16 +39,17 @@ def daily_snapshot(portfolios: Dict) -> Dict:
 
 
 def weekly_report(
-        portfolios: Dict, out_dir: str = "reports") -> List[str]:
+        portfolios: Dict, branch: str = "main", mode: str = "paper") -> List[str]:
     """
     Generate a weekly report with CSV and PNG graphs for each market.
     Args:
         portfolios: dict {market: {"history": list[dict]}}
-        out_dir: output folder
+        branch: strategy branch name
+        mode: trading mode (paper/live)
     Returns:
         List of file paths created.
     """
-    os.makedirs(out_dir, exist_ok=True)
+    out_dir = Data_Registry.get_data_path(branch, mode, "reports")
     generated_files = []
 
     for market, stats in portfolios.items():
@@ -59,9 +62,9 @@ def weekly_report(
         df.sort_values("date", inplace=True)
 
         # Save CSV
-        csv_path = os.path.join(out_dir, f"{market}_weekly.csv")
+        csv_path = out_dir / f"{market}_weekly.csv"
         df.to_csv(csv_path, index=False)
-        generated_files.append(csv_path)
+        generated_files.append(str(csv_path))
 
         # Plot PNG
         plt.figure(figsize=(8, 4))
@@ -72,10 +75,10 @@ def weekly_report(
         plt.ylabel("USD")
         plt.legend()
         plt.tight_layout()
-        png_path = os.path.join(out_dir, f"{market}_weekly.png")
+        png_path = out_dir / f"{market}_weekly.png"
         plt.savefig(png_path)
         plt.close()
-        generated_files.append(png_path)
+        generated_files.append(str(png_path))
 
         logger.info(
             "Generated weekly report for %s: %s, %s",

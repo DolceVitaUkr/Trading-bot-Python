@@ -2,11 +2,14 @@
 IBKR Execution Adapter using ib_insync.
 """
 import asyncio
+import logging
 from ib_insync import IB, Forex, MarketOrder, Order, Trade
 from typing import List, Dict, Any, Tuple
 
 from core.interfaces import Execution
 from adapters.ibkr_market import IbkrMarketData
+
+logger = logging.getLogger(__name__)
 
 # Minimum notional values for major IBKR FX pairs.
 # These are approximate and should be verified and updated.
@@ -59,7 +62,7 @@ class IbkrExecution(Execution):
         else:
             # For pairs not in our map, we'll allow the trade but log a warning.
             # In a production system, this might be a hard failure.
-            print(f"Warning: No minimum notional defined for {symbol}. Allowing trade.")
+            logger.warning(f"No minimum notional defined for {symbol}. Allowing trade.")
 
         # 3. Check pacing/concurrency (placeholder for a real budgeter)
         # A real implementation would check a token bucket or similar mechanism here.
@@ -76,7 +79,7 @@ class IbkrExecution(Execution):
         await asyncio.sleep(0.05) # Pacing to avoid rate limits
         is_allowed, reason = await self.forex_allowed(symbol, qty)
         if not is_allowed:
-            print(f"Order for {symbol} blocked: {reason}")
+            logger.warning(f"Order for {symbol} blocked: {reason}")
             return {"status": "REJECTED", "reason": reason}
 
         contract = self._symbol_to_contract(symbol)
@@ -86,7 +89,7 @@ class IbkrExecution(Execution):
         take_profit_price = params.get("take_profit_price")
 
         if stop_loss_price and take_profit_price:
-            print(f"Simulating bracket order for {symbol} with SL={stop_loss_price}, TP={take_profit_price}")
+            logger.info(f"Simulating bracket order for {symbol} with SL={stop_loss_price}, TP={take_profit_price}")
             bracket_orders = self.ib.bracketOrder(
                 action=side.upper(),
                 quantity=qty,
@@ -122,7 +125,7 @@ class IbkrExecution(Execution):
                     "reason": trade.orderStatus.log[-1].message if trade.orderStatus.log else "Unknown reason"
                 }
         except Exception as e:
-            print(f"Error placing order for {symbol}: {e}")
+            logger.error(f"Error placing order for {symbol}: {e}")
             return {"status": "ERROR", "reason": str(e)}
 
 

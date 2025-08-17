@@ -5,21 +5,24 @@ import time
 import threading
 from typing import Any, Dict, Optional, List
 
+from Data_Registry import Data_Registry
+
+# Use Data_Registry for state paths
+def get_runtime_state_file(branch: str = "main", mode: str = "paper") -> str:
+    return str(Data_Registry.get_runtime_state_path(branch, mode, "runtime.json"))
+
+def get_state_dir(branch: str = "main", mode: str = "paper") -> str:
+    return str(Data_Registry.get_state_path(branch, mode))
+
+# Configuration with fallbacks
 try:
     # Prefer config values if present
     from . import config
-    STATE_DIR = getattr(config, "STATE_DIR", os.path.join("data", "_state"))
-    RUNTIME_STATE_FILE = getattr(
-        config,
-        "RUNTIME_STATE_FILE",
-        os.path.join(STATE_DIR, "runtime.json"))
     EXPLORATION_MIN_RATE = getattr(config, "EXPLORATION_MIN_RATE", 0.10)
     EXPLORATION_RATE_TARGET = getattr(
         config, "EXPLORATION_RATE_TARGET", 0.25)
 except Exception:
     # Safe fallbacks
-    STATE_DIR = os.path.join("data", "_state")
-    RUNTIME_STATE_FILE = os.path.join(STATE_DIR, "runtime.json")
     EXPLORATION_MIN_RATE = 0.10
     EXPLORATION_RATE_TARGET = 0.25
 
@@ -44,11 +47,21 @@ class RuntimeState:
 
     SCHEMA_VERSION = 1
 
-    def __init__(self, path: Optional[str] = None):
+    def __init__(self, path: Optional[str] = None, branch: str = "main", mode: str = "paper"):
         """
         Initializes the RuntimeState.
+        
+        Args:
+            path: Optional explicit path (for backward compatibility)
+            branch: Strategy branch name
+            mode: Trading mode (paper/live)
         """
-        self.path = path or RUNTIME_STATE_FILE
+        if path:
+            self.path = path
+        else:
+            self.path = get_runtime_state_file(branch, mode)
+        self.branch = branch
+        self.mode = mode
         self._ensure_dirs()
         self.state: Dict[str, Any] = {}
         self.load()
