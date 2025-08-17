@@ -5,8 +5,9 @@ This repository contains a modular trading bot designed for both cryptocurrency 
 ## Features
 
 - **Modular Architecture**: Core logic is decoupled from specific exchange/broker implementations through a set of `Protocol` interfaces.
-- **Hot-Swappable Components**: Enable or disable major features like Forex trading and News analysis without code changes.
-- **Multi-Venue Support**: Includes adapters for Interactive Brokers (Forex) and Bybit (Crypto wallet), with a structure to easily add more.
+- **Hot-Swappable Components**: Enable or disable major features and product pipelines without code changes.
+- **Multi-Venue Support**: Features a robust, institutional-grade Interactive Brokers integration for Forex Spot and Options, alongside existing Bybit capabilities for Crypto.
+- **Product-Centric Pipelines**: Run independent strategies for different products (e.g., `FOREX_SPOT`, `FOREX_OPTIONS`, `CRYPTO_SPOT`) with separate data, models, and validation thresholds.
 - **Risk Management**:
     - **Wallet-aware Sizer**: Sizes trades based on the equity of specific sub-ledgers (FX, SPOT, FUTURES).
     - **Kill Switch**: Automatically halts trading for a specific asset class/venue if risk rules (e.g., daily loss limit) are breached.
@@ -50,58 +51,83 @@ cp .env.example .env
 Now, edit the `.env` file with your specific configuration:
 
 ```ini
-# --- Feature Flags ---
-# Set to 1 to enable, 0 to disable
-ENABLE_NEWS=0
-ENABLE_FOREX=0
+# --- Product & Feature Flags ---
+# Comma-separated list of products to run.
+# Supported: CRYPTO_SPOT, FOREX_SPOT, FOREX_OPTIONS
+PRODUCTS_ENABLED="CRYPTO_SPOT,FOREX_SPOT"
 
-# --- IBKR Connection Parameters ---
-# For TWS or Gateway. 7497 is default for paper TWS.
-IBKR_HOST=127.0.0.1
-IBKR_PORT=7497
-IBKR_CLIENT_ID=1
+# --- IBKR Configuration ---
+# Set to "paper" or "live"
+IBKR_API_MODE="paper"
+# If True, blocks all order placement calls. Set to False for live trading.
+TRAINING_MODE="True"
+# TWS/Gateway socket connection settings
+IBKR_TWS_HOST="127.0.0.1"
+IBKR_TWS_PORT="7497" # Default for paper TWS, 7496 for live
+IBKR_TWS_CLIENT_ID="1"
+
+# Client Portal API (for contract search, etc.)
+# See IBKR Setup section for how to run the gateway.
+IBKR_CPAPI_GATEWAY_URL="https://localhost:5000"
 
 # --- Bybit API Credentials ---
-# Required for Crypto wallet sync
-BYBIT_API_KEY=your_bybit_api_key
-BYBIT_API_SECRET=your_bybit_api_secret
+BYBIT_API_KEY="your_bybit_api_key"
+BYBIT_API_SECRET="your_bybit_api_secret"
+
+# --- Other Feature Flags ---
+ENABLE_NEWS="0"
 ```
 
-### 5. IBKR Setup (for Forex Trading)
+### 5. IBKR Setup
 
-To use the Forex features, you must have Interactive Brokers Trader Workstation (TWS) or IB Gateway running.
+To use the IBKR integration, you must have Interactive Brokers Trader Workstation (TWS) or IB Gateway running.
 
 1.  **Install TWS or Gateway**: Download from the [Interactive Brokers website](https://www.interactivebrokers.com/en/index.php?f=14099).
-2.  **Enable API Access**:
-    - In TWS, go to `File > Global Configuration > API > Settings`.
+2.  **Enable API Access (in TWS/Gateway)**:
+    - Go to `File > Global Configuration > API > Settings`.
     - Check `Enable ActiveX and Socket Clients`.
-    - Make note of the `Socket port` number (it should match `IBKR_PORT` in your `.env` file).
+    - **Crucially, for the initial training phase, check `Read-Only API`**. This provides a server-side safety lock to prevent any order modifications.
+    - Make note of the `Socket port` number (it should match `IBKR_TWS_PORT` in your `.env` file).
     - Add `127.0.0.1` to the `Trusted IP Addresses`.
-3.  **Use a Paper Trading Account**: For development and training, log into TWS/Gateway using your **Paper Trading Account** credentials. The bot is configured by default to connect to the paper trading port (`7497`).
-4.  **Market Data Subscriptions**: Ensure your paper account has the necessary market data subscriptions for the Forex pairs you intend to trade. The bot will fail to fetch data without them.
+3.  **Run the Client Portal API Gateway (Optional but Recommended)**:
+    - The bot uses the Client Portal API for robust contract searches (especially for options). To enable this, you need to run the local gateway.
+    - Follow the instructions on the [Interactive Brokers GitHub page](https://interactivebrokers.github.io/) to download and run the `run.sh` (or `run.bat`) script for the `clientportal.gw`.
+4.  **Use a Paper Trading Account**: For all development and training, log into TWS/Gateway using your **Paper Trading Account** credentials. The bot validates this and will raise an error if `IBKR_API_MODE` is `"paper"` but it detects a live account.
+5.  **Market Data Subscriptions**: Ensure your paper account has the necessary market data subscriptions. The bot will perform a pre-flight check and fail if data is missing.
+    - For **Forex Spot**, you need "Forex" data.
+    - For **Forex Options**, you need "US Options" data (as FX options are often cleared through US exchanges).
 
-## How to Run the Bot
+## Running the Bot
 
-Once the setup is complete, you can run the bot from the root directory.
+The bot now operates based on the `PRODUCTS_ENABLED` variable in your `.env` file. It will initialize the required connections and run the corresponding training pipelines for each enabled product.
 
-### Default Mode (Crypto)
+### Example: Running Crypto and Forex Spot
 
-With `ENABLE_FOREX=0` in your `.env` file, the bot will run in its default crypto mode. It will use the `Null` adapters for market data and execution but can be configured to use real crypto exchange adapters.
+1.  Ensure your Bybit API keys are set in `.env`.
+2.  Ensure TWS or Gateway is running and you are logged into your paper account.
+3.  Set the products in your `.env` file:
+
+```ini
+PRODUCTS_ENABLED="CRYPTO_SPOT,FOREX_SPOT"
+TRAINING_MODE="True"
+```
+
+4.  Run the bot:
 
 ```bash
 python main.py
 ```
 
-### Forex Training Mode
+The bot will now connect to both Bybit (for wallet sync) and IBKR. It will run the training pipeline for `CRYPTO_SPOT` (using Bybit data if configured) and `FOREX_SPOT` (using IBKR data). All order placements will be blocked because `TRAINING_MODE` is on.
 
-To enable the IBKR integration for Forex paper trading:
+### Example: Running Forex Options Only
 
-1.  Make sure TWS or Gateway is running and you are logged into your paper account.
-2.  Set `ENABLE_FOREX=1` in your `.env` file.
+1.  Ensure TWS or Gateway is running.
+2.  Set the products in your `.env` file:
 
 ```ini
-# .env file
-ENABLE_FOREX=1
+PRODUCTS_ENABLED="FOREX_OPTIONS"
+TRAINING_MODE="True"
 ```
 
 3.  Run the bot:
@@ -110,16 +136,7 @@ ENABLE_FOREX=1
 python main.py
 ```
 
-The bot will now connect to IBKR, and you will see logs related to Forex data fetching and order placement (if triggered).
-
-### Enabling News
-
-To enable the news feed adapter, set `ENABLE_NEWS=1`. The bot will then fetch news from RSS feeds and can block trades based on macro events.
-
-```ini
-# .env file
-ENABLE_NEWS=1
-```
+The bot will now connect to IBKR and start the training pipeline for Forex options, which involves fetching option chains and greeks.
 
 ## Project Structure
 

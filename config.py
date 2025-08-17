@@ -36,6 +36,38 @@ SIMULATION_BYBIT_API_KEY = os.getenv(
 SIMULATION_BYBIT_API_SECRET = os.getenv(
     "SIMULATION_BYBIT_API_SECRET", "0oT2ENYllETn3sKXx0m42LvWG8zWnEqhN72k")
 
+
+# ───────────────────────────────────────────────
+# IBKR (Interactive Brokers)
+# ───────────────────────────────────────────────
+IBKR_API_MODE = os.getenv("IBKR_API_MODE", "paper")  # paper | live
+TRAINING_MODE = os.getenv("TRAINING_MODE", "True").lower() in {"1", "true", "yes", "on"}
+ALLOW_FUNDS_TRANSFER = os.getenv("ALLOW_FUNDS_TRANSFER", "False").lower() in {"1", "true", "yes", "on"}
+
+# Define which products are enabled and their corresponding broker
+_products_enabled_str = os.getenv("PRODUCTS_ENABLED", "CRYPTO_SPOT,FOREX_SPOT,FOREX_OPTIONS")
+PRODUCTS_ENABLED = [p.strip() for p in _products_enabled_str.split(',')]
+
+ACCOUNT_SCOPE = {
+    "CRYPTO_SPOT": "BYBIT",
+    "FOREX_SPOT": "IBKR",
+    "FOREX_OPTIONS": "IBKR"
+}
+
+# TWS/Gateway Connection Settings
+IBKR_TWS_HOST = os.getenv("IBKR_TWS_HOST", "127.0.0.1")
+IBKR_TWS_PORT = int(os.getenv("IBKR_TWS_PORT", os.getenv("IBKR_PORT", "7497"))) # IBKR_PORT for backwards compat
+IBKR_TWS_CLIENT_ID = int(os.getenv("IBKR_TWS_CLIENT_ID", os.getenv("IBKR_CLIENT_ID", "1"))) # IBKR_CLIENT_ID for backwards compat
+
+# Client Portal API (Web API)
+IBKR_CPAPI_GATEWAY_URL = os.getenv("IBKR_CPAPI_GATEWAY_URL", "https://localhost:5000")
+
+# Market Data Subscription Check
+# Example: MD_SUBSCRIPTIONS = {"FX": "realtime", "US_OPTIONS": "realtime", "US_EQUITIES": "delayed"}
+_md_subscriptions_str = os.getenv("MD_SUBSCRIPTIONS", '{"FX":"realtime","OPTIONS":"realtime"}')
+MD_SUBSCRIPTIONS = orjson.loads(_md_subscriptions_str)
+
+
 # ───────────────────────────────────────────────
 # Telegram
 # ───────────────────────────────────────────────
