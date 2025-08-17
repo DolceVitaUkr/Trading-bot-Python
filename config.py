@@ -1,6 +1,7 @@
 import os
 from typing import Literal
 from dotenv import load_dotenv
+import orjson
 
 # Load .env if present
 load_dotenv()

@@ -1,0 +1,1425 @@
+{
+  "Self_test.test": {
+    "file": "Self_test/test.py",
+    "has_main": true,
+    "imports": [
+      "traceback",
+      "modules.trade_executor",
+      "modules.technical_indicators",
+      "modules.telegram_bot.TelegramNotifier",
+      "modules.technical_indicators.atr",
+      "modules.health_monitor",
+      "time",
+      "modules.exchange.ExchangeAPI",
+      "modules.technical_indicators.rsi",
+      "modules.trade_executor.TradeExecutor",
+      "sys",
+      "modules.technical_indicators.sma",
+      "modules.telegram_bot",
+      "modules.health_monitor.HealthMonitor",
+      "config",
+      "os",
+      "modules.exchange"
+    ],
+    "is_executable": true,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 151,
+    "module": "Self_test.test",
+    "size_bytes": 4779,
+    "used_by": []
+  },
+  "__init__": {
+    "file": "__init__.py",
+    "has_main": false,
+    "imports": [],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 0,
+    "module": "__init__",
+    "size_bytes": 0,
+    "used_by": []
+  },
+  "adapters.composite_wallet": {
+    "file": "adapters/composite_wallet.py",
+    "has_main": false,
+    "imports": [
+      "typing",
+      "core.interfaces.WalletSync",
+      "core.interfaces"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 32,
+    "module": "adapters.composite_wallet",
+    "size_bytes": 1101,
+    "used_by": []
+  },
+  "adapters.ibkr_exec": {
+    "file": "adapters/ibkr_exec.py",
+    "has_main": false,
+    "imports": [
+      "adapters.ibkr_market",
+      "ib_insync",
+      "typing",
+      "asyncio",
+      "core.interfaces.Execution",
+      "core.interfaces",
+      "adapters.ibkr_market.IbkrMarketData"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 142,
+    "module": "adapters.ibkr_exec",
+    "size_bytes": 5714,
+    "used_by": []
+  },
+  "adapters.ibkr_market": {
+    "file": "adapters/ibkr_market.py",
+    "has_main": false,
+    "imports": [
+      "core.interfaces.OHLCV",
+      "ib_insync",
+      "tenacity",
+      "pandas",
+      "typing",
+      "asyncio",
+      "os",
+      "core.interfaces",
+      "core.interfaces.MarketData"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 142,
+    "module": "adapters.ibkr_market",
+    "size_bytes": 5935,
+    "used_by": [
+      "adapters.ibkr_exec"
+    ]
+  },
+  "adapters.news_rss": {
+    "file": "adapters/news_rss.py",
+    "has_main": false,
+    "imports": [
+      "datetime",
+      "vaderSentiment.vaderSentiment",
+      "re",
+      "feedparser",
+      "typing",
+      "core.interfaces.NewsFeed",
+      "core.interfaces"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 98,
+    "module": "adapters.news_rss",
+    "size_bytes": 3694,
+    "used_by": []
+  },
+  "adapters.null_adapters": {
+    "file": "adapters/null_adapters.py",
+    "has_main": false,
+    "imports": [
+      "core.interfaces.WalletSync",
+      "pandas",
+      "typing",
+      "core.interfaces.Execution",
+      "core.interfaces.NewsFeed",
+      "core.interfaces.ValidationRunner",
+      "core.interfaces",
+      "core.interfaces.MarketData"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 59,
+    "module": "adapters.null_adapters",
+    "size_bytes": 2575,
+    "used_by": [
+      "main"
+    ]
+  },
+  "adapters.wallet_bybit": {
+    "file": "adapters/wallet_bybit.py",
+    "has_main": false,
+    "imports": [
+      "core.interfaces.WalletSync",
+      "aiohttp",
+      "time",
+      "typing",
+      "os",
+      "core.interfaces",
+      "hashlib",
+      "hmac"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 72,
+    "module": "adapters.wallet_bybit",
+    "size_bytes": 2845,
+    "used_by": [
+      "main"
+    ]
+  },
+  "adapters.wallet_ibkr": {
+    "file": "adapters/wallet_ibkr.py",
+    "has_main": false,
+    "imports": [
+      "ib_insync",
+      "core.interfaces.WalletSync",
+      "core.interfaces",
+      "typing"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 38,
+    "module": "adapters.wallet_ibkr",
+    "size_bytes": 1284,
+    "used_by": []
+  },
+  "config": {
+    "file": "config.py",
+    "has_main": false,
+    "imports": [
+      "typing",
+      "os",
+      "dotenv"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 221,
+    "module": "config",
+    "size_bytes": 10385,
+    "used_by": [
+      "modules.Strategy_Manager",
+      "modules.rollout_manager",
+      "modules.data_manager",
+      "modules.risk_management",
+      "modules.brokers.ibkr.Fetch_IBKR_MarketData",
+      "modules.parameter_optimization",
+      "forex.forex_exchange",
+      "Self_test.test",
+      "modules.brokers.ibkr.Place_IBKR_Order",
+      "modules.brokers.ibkr.Connect_IBKR_API",
+      "modules.telegram_bot",
+      "modules.brokers.ibkr.Contracts_IBKR",
+      "modules.trade_calculator",
+      "main",
+      "modules.trade_simulator",
+      "modules.exchange"
+    ]
+  },
+  "core.interfaces": {
+    "file": "core/interfaces.py",
+    "has_main": false,
+    "imports": [
+      "typing",
+      "pandas"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 78,
+    "module": "core.interfaces",
+    "size_bytes": 2065,
+    "used_by": [
+      "managers.validation_manager",
+      "adapters.ibkr_market",
+      "adapters.news_rss",
+      "adapters.null_adapters",
+      "adapters.ibkr_exec",
+      "managers.sizer",
+      "adapters.wallet_bybit",
+      "adapters.wallet_ibkr",
+      "adapters.composite_wallet"
+    ]
+  },
+  "core.schemas": {
+    "file": "core/schemas.py",
+    "has_main": false,
+    "imports": [
+      "typing",
+      "datetime",
+      "pydantic"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 58,
+    "module": "core.schemas",
+    "size_bytes": 1620,
+    "used_by": [
+      "managers.validation_manager",
+      "managers.kill_switch",
+      "managers.strategy_manager"
+    ]
+  },
+  "examples.ibkr_demo_forex_options": {
+    "file": "examples/ibkr_demo_forex_options.py",
+    "has_main": true,
+    "imports": [
+      "modules.Logger_Config",
+      "modules.Logger_Config.setup_logging",
+      "modules.training.Train_Forex_Options.ForexOptionsTrainer",
+      "modules.brokers.ibkr.Fetch_IBKR_MarketData",
+      "modules.Logger_Config.get_logger",
+      "modules.brokers.ibkr.Connect_IBKR_API.IBKRConnectionManager",
+      "modules.training.Train_Forex_Options",
+      "modules.storage.Save_AI_Update.save_model_artifact",
+      "logging",
+      "modules.brokers.ibkr.Connect_IBKR_API",
+      "modules.storage.Save_AI_Update",
+      "asyncio",
+      "modules.brokers.ibkr.Fetch_IBKR_MarketData.IBKRMarketDataFetcher"
+    ],
+    "is_executable": true,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 77,
+    "module": "examples.ibkr_demo_forex_options",
+    "size_bytes": 2976,
+    "used_by": []
+  },
+  "examples.ibkr_demo_forex_spot": {
+    "file": "examples/ibkr_demo_forex_spot.py",
+    "has_main": true,
+    "imports": [
+      "modules.Logger_Config",
+      "modules.Logger_Config.setup_logging",
+      "modules.brokers.ibkr.Fetch_IBKR_MarketData",
+      "modules.Logger_Config.get_logger",
+      "modules.brokers.ibkr.Connect_IBKR_API.IBKRConnectionManager",
+      "modules.storage.Save_AI_Update.save_model_artifact",
+      "logging",
+      "modules.brokers.ibkr.Connect_IBKR_API",
+      "modules.storage.Save_AI_Update",
+      "asyncio",
+      "modules.training.Train_Forex_Spot.ForexSpotTrainer",
+      "modules.brokers.ibkr.Fetch_IBKR_MarketData.IBKRMarketDataFetcher",
+      "modules.training.Train_Forex_Spot"
+    ],
+    "is_executable": true,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 78,
+    "module": "examples.ibkr_demo_forex_spot",
+    "size_bytes": 2899,
+    "used_by": []
+  },
+  "forex": {
+    "file": "forex/__init__.py",
+    "has_main": false,
+    "imports": [],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 0,
+    "module": "forex",
+    "size_bytes": 0,
+    "used_by": []
+  },
+  "forex.forex_exchange": {
+    "file": "forex/forex_exchange.py",
+    "has_main": false,
+    "imports": [
+      "dataclasses",
+      "time",
+      "__future__",
+      "typing",
+      "asyncio",
+      "config",
+      "decimal"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 263,
+    "module": "forex.forex_exchange",
+    "size_bytes": 9251,
+    "used_by": []
+  },
+  "forex.forex_strategy": {
+    "file": "forex/forex_strategy.py",
+    "has_main": false,
+    "imports": [
+      "modules.trade_executor",
+      "modules.technical_indicators",
+      "modules.data_manager",
+      "typing",
+      "logging",
+      "modules.technical_indicators.TechnicalIndicators",
+      "modules.data_manager.DataManager",
+      "modules.trade_executor.TradeExecutor"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 98,
+    "module": "forex.forex_strategy",
+    "size_bytes": 3281,
+    "used_by": []
+  },
+  "main": {
+    "file": "main.py",
+    "has_main": true,
+    "imports": [
+      "modules.Logger_Config.setup_logging",
+      "modules.training.Train_Forex_Options.ForexOptionsTrainer",
+      "modules.storage.Save_AI_Update",
+      "adapters.wallet_bybit.BybitWalletSync",
+      "config",
+      "modules.training.Train_Forex_Spot.ForexSpotTrainer",
+      "managers.validation_manager",
+      "modules.storage.Save_AI_Update.save_model_artifact",
+      "adapters.null_adapters.NullMarketData",
+      "adapters.wallet_bybit",
+      "modules.brokers.ibkr.Fetch_IBKR_Account",
+      "managers.validation_manager.ValidationManager",
+      "modules.Logger_Config",
+      "modules.brokers.ibkr.Fetch_IBKR_MarketData",
+      "modules.Logger_Config.get_logger",
+      "adapters.null_adapters",
+      "modules.brokers.ibkr.Fetch_IBKR_Account.IBKRAccountFetcher",
+      "asyncio",
+      "os",
+      "adapters.null_adapters.NullWalletSync",
+      "adapters.null_adapters.NullExecution",
+      "modules.brokers.ibkr.Connect_IBKR_API.IBKRConnectionManager",
+      "typing",
+      "modules.training.Train_Forex_Options",
+      "modules.brokers.ibkr.Place_IBKR_Order",
+      "modules.brokers.ibkr.Connect_IBKR_API",
+      "modules.brokers.ibkr.Place_IBKR_Order.TrainingOnlyError",
+      "modules.brokers.ibkr.Fetch_IBKR_MarketData.IBKRMarketDataFetcher",
+      "modules.brokers.ibkr.Place_IBKR_Order.IBKROrderPlacer",
+      "modules.training.Train_Forex_Spot"
+    ],
+    "is_executable": true,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 179,
+    "module": "main",
+    "size_bytes": 6999,
+    "used_by": []
+  },
+  "managers.kill_switch": {
+    "file": "managers/kill_switch.py",
+    "has_main": false,
+    "imports": [
+      "datetime",
+      "core.schemas.KillEvent",
+      "orjson",
+      "typing",
+      "os",
+      "core.schemas"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 110,
+    "module": "managers.kill_switch",
+    "size_bytes": 4270,
+    "used_by": []
+  },
+  "managers.sizer": {
+    "file": "managers/sizer.py",
+    "has_main": false,
+    "imports": [
+      "typing",
+      "core.interfaces.WalletSync",
+      "core.interfaces"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 69,
+    "module": "managers.sizer",
+    "size_bytes": 2306,
+    "used_by": []
+  },
+  "managers.strategy_manager": {
+    "file": "managers/strategy_manager.py",
+    "has_main": false,
+    "imports": [
+      "core.schemas.StrategyMeta",
+      "orjson",
+      "typing",
+      "os",
+      "core.schemas"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 34,
+    "module": "managers.strategy_manager",
+    "size_bytes": 1018,
+    "used_by": []
+  },
+  "managers.validation_manager": {
+    "file": "managers/validation_manager.py",
+    "has_main": false,
+    "imports": [
+      "datetime",
+      "orjson",
+      "typing",
+      "os",
+      "core.schemas.ValidationRecord",
+      "core.interfaces.ValidationRunner",
+      "core.interfaces",
+      "core.schemas"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 122,
+    "module": "managers.validation_manager",
+    "size_bytes": 5042,
+    "used_by": [
+      "main"
+    ]
+  },
+  "modules": {
+    "file": "modules/__init__.py",
+    "has_main": false,
+    "imports": [],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 0,
+    "module": "modules",
+    "size_bytes": 0,
+    "used_by": []
+  },
+  "modules.Funds_Controller": {
+    "file": "modules/Funds_Controller.py",
+    "has_main": false,
+    "imports": [
+      "typing",
+      "datetime",
+      "logging"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 129,
+    "module": "modules.Funds_Controller",
+    "size_bytes": 5035,
+    "used_by": []
+  },
+  "modules.Kill_Switch": {
+    "file": "modules/Kill_Switch.py",
+    "has_main": false,
+    "imports": [
+      "typing",
+      "logging",
+      "collections"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 107,
+    "module": "modules.Kill_Switch",
+    "size_bytes": 4499,
+    "used_by": [
+      "modules.risk_management"
+    ]
+  },
+  "modules.Logger_Config": {
+    "file": "modules/Logger_Config.py",
+    "has_main": false,
+    "imports": [
+      "structlog",
+      "structlog.types",
+      "logging",
+      "sys",
+      "os"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 102,
+    "module": "modules.Logger_Config",
+    "size_bytes": 3775,
+    "used_by": [
+      "main",
+      "examples.ibkr_demo_forex_options",
+      "utils.utilities",
+      "examples.ibkr_demo_forex_spot"
+    ]
+  },
+  "modules.News_Agent": {
+    "file": "modules/News_Agent.py",
+    "has_main": false,
+    "imports": [
+      "typing",
+      "logging"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 88,
+    "module": "modules.News_Agent",
+    "size_bytes": 3210,
+    "used_by": [
+      "modules.Strategy_Manager"
+    ]
+  },
+  "modules.Portfolio_Manager": {
+    "file": "modules/Portfolio_Manager.py",
+    "has_main": false,
+    "imports": [
+      "typing",
+      "logging",
+      "uuid"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 228,
+    "module": "modules.Portfolio_Manager",
+    "size_bytes": 9414,
+    "used_by": [
+      "modules.Strategy_Manager"
+    ]
+  },
+  "modules.Sizer": {
+    "file": "modules/Sizer.py",
+    "has_main": false,
+    "imports": [
+      "logging",
+      "json",
+      "typing"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 178,
+    "module": "modules.Sizer",
+    "size_bytes": 7592,
+    "used_by": []
+  },
+  "modules.Strategies": {
+    "file": "modules/Strategies.py",
+    "has_main": false,
+    "imports": [
+      "modules.technical_indicators",
+      "pandas",
+      "modules.technical_indicators.TechnicalIndicators"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 183,
+    "module": "modules.Strategies",
+    "size_bytes": 7179,
+    "used_by": [
+      "modules.Strategy_Manager"
+    ]
+  },
+  "modules.Strategy_Manager": {
+    "file": "modules/Strategy_Manager.py",
+    "has_main": false,
+    "imports": [
+      "modules.data_manager",
+      "modules.Strategies.MeanReversionStrategy",
+      "numpy",
+      "logging",
+      "config",
+      "modules.data_manager.DataManager",
+      "modules.technical_indicators",
+      "modules.News_Agent",
+      "dataclasses",
+      "modules.Portfolio_Manager.PortfolioManager",
+      "modules.Validation_Manager",
+      "modules.News_Agent.NewsAgent",
+      "modules.Strategies",
+      "modules.Portfolio_Manager",
+      "modules.Strategies.BaseStrategy",
+      "modules.Strategies.TrendFollowStrategy",
+      "modules.Validation_Manager.ValidationManager",
+      "typing",
+      "modules.technical_indicators.TechnicalIndicators"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 260,
+    "module": "modules.Strategy_Manager",
+    "size_bytes": 10862,
+    "used_by": [
+      "modules.trade_executor"
+    ]
+  },
+  "modules.Validation_Manager": {
+    "file": "modules/Validation_Manager.py",
+    "has_main": false,
+    "imports": [
+      "typing",
+      "logging"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 131,
+    "module": "modules.Validation_Manager",
+    "size_bytes": 6187,
+    "used_by": [
+      "modules.Strategy_Manager"
+    ]
+  },
+  "modules.Wallet_Sync": {
+    "file": "modules/Wallet_Sync.py",
+    "has_main": false,
+    "imports": [
+      "typing",
+      "logging"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 83,
+    "module": "modules.Wallet_Sync",
+    "size_bytes": 3641,
+    "used_by": []
+  },
+  "modules.brokers.ibkr": {
+    "file": "modules/brokers/ibkr/__init__.py",
+    "has_main": false,
+    "imports": [],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 0,
+    "module": "modules.brokers.ibkr",
+    "size_bytes": 0,
+    "used_by": []
+  },
+  "modules.brokers.ibkr.Connect_IBKR_API": {
+    "file": "modules/brokers/ibkr/Connect_IBKR_API.py",
+    "has_main": true,
+    "imports": [
+      "aiohttp",
+      "config.IBKR_CPAPI_GATEWAY_URL",
+      "ib_insync",
+      "config.IBKR_TWS_PORT",
+      "typing",
+      "logging",
+      "config.IBKR_API_MODE",
+      "asyncio",
+      "config",
+      "config.TRAINING_MODE",
+      "config.IBKR_TWS_CLIENT_ID",
+      "config.IBKR_TWS_HOST"
+    ],
+    "is_executable": true,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 182,
+    "module": "modules.brokers.ibkr.Connect_IBKR_API",
+    "size_bytes": 6896,
+    "used_by": [
+      "modules.brokers.ibkr.Fetch_IBKR_MarketData",
+      "examples.ibkr_demo_forex_options",
+      "modules.brokers.ibkr.Place_IBKR_Order",
+      "examples.ibkr_demo_forex_spot",
+      "modules.brokers.ibkr.Fetch_IBKR_Account",
+      "main"
+    ]
+  },
+  "modules.brokers.ibkr.Contracts_IBKR": {
+    "file": "modules/brokers/ibkr/Contracts_IBKR.py",
+    "has_main": false,
+    "imports": [
+      "aiohttp",
+      "config.IBKR_CPAPI_GATEWAY_URL",
+      "ib_insync",
+      "typing",
+      "logging",
+      "config"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 118,
+    "module": "modules.brokers.ibkr.Contracts_IBKR",
+    "size_bytes": 3824,
+    "used_by": [
+      "modules.training.Train_Forex_Options",
+      "modules.brokers.ibkr.Fetch_IBKR_MarketData",
+      "modules.training.Train_Forex_Spot"
+    ]
+  },
+  "modules.brokers.ibkr.Fetch_IBKR_Account": {
+    "file": "modules/brokers/ibkr/Fetch_IBKR_Account.py",
+    "has_main": false,
+    "imports": [
+      "ib_insync",
+      "modules.brokers.ibkr.Connect_IBKR_API.IBKRConnectionManager",
+      "typing",
+      "logging",
+      "modules.brokers.ibkr.Connect_IBKR_API"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 76,
+    "module": "modules.brokers.ibkr.Fetch_IBKR_Account",
+    "size_bytes": 2756,
+    "used_by": [
+      "main"
+    ]
+  },
+  "modules.brokers.ibkr.Fetch_IBKR_MarketData": {
+    "file": "modules/brokers/ibkr/Fetch_IBKR_MarketData.py",
+    "has_main": false,
+    "imports": [
+      "utils.rate_limiter.ibkr_rate_limiter",
+      "ib_insync",
+      "modules.brokers.ibkr.Connect_IBKR_API.IBKRConnectionManager",
+      "pandas",
+      "utils.rate_limiter",
+      "config.MD_SUBSCRIPTIONS",
+      "typing",
+      "modules.brokers.ibkr.Contracts_IBKR.get_conid_by_symbol",
+      "logging",
+      "pathlib",
+      "modules.brokers.ibkr.Connect_IBKR_API",
+      "modules.brokers.ibkr.Contracts_IBKR.build_fx_spot_contract",
+      "modules.brokers.ibkr.Contracts_IBKR",
+      "config"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 205,
+    "module": "modules.brokers.ibkr.Fetch_IBKR_MarketData",
+    "size_bytes": 8406,
+    "used_by": [
+      "examples.ibkr_demo_forex_options",
+      "modules.training.Train_Forex_Options",
+      "examples.ibkr_demo_forex_spot",
+      "main",
+      "modules.training.Train_Forex_Spot"
+    ]
+  },
+  "modules.brokers.ibkr.Place_IBKR_Order": {
+    "file": "modules/brokers/ibkr/Place_IBKR_Order.py",
+    "has_main": false,
+    "imports": [
+      "config.ALLOW_FUNDS_TRANSFER",
+      "ib_insync",
+      "modules.brokers.ibkr.Connect_IBKR_API.IBKRConnectionManager",
+      "typing",
+      "logging",
+      "modules.brokers.ibkr.Connect_IBKR_API",
+      "config",
+      "config.TRAINING_MODE"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 146,
+    "module": "modules.brokers.ibkr.Place_IBKR_Order",
+    "size_bytes": 5632,
+    "used_by": [
+      "main"
+    ]
+  },
+  "modules.data_manager": {
+    "file": "modules/data_manager.py",
+    "has_main": false,
+    "imports": [
+      "utils.utilities.write_json",
+      "utils.utilities.retry",
+      "time",
+      "utils.utilities.ensure_directory",
+      "modules.exchange.ExchangeAPI",
+      "modules.exchange",
+      "pandas",
+      "utils.utilities.format_timestamp",
+      "typing",
+      "logging",
+      "config",
+      "os",
+      "utils.utilities"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 443,
+    "module": "modules.data_manager",
+    "size_bytes": 16625,
+    "used_by": [
+      "modules.Strategy_Manager",
+      "modules.parameter_optimization",
+      "forex.forex_strategy"
+    ]
+  },
+  "modules.error_handler": {
+    "file": "modules/error_handler.py",
+    "has_main": false,
+    "imports": [
+      "typing",
+      "logging"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 78,
+    "module": "modules.error_handler",
+    "size_bytes": 2922,
+    "used_by": [
+      "modules.exchange"
+    ]
+  },
+  "modules.exchange": {
+    "file": "modules/exchange.py",
+    "has_main": false,
+    "imports": [
+      "modules.error_handler",
+      "time",
+      "typing",
+      "logging",
+      "modules.error_handler.ErrorHandler",
+      "math",
+      "ccxt",
+      "config"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 444,
+    "module": "modules.exchange",
+    "size_bytes": 16620,
+    "used_by": [
+      "Self_test.test",
+      "modules.data_manager",
+      "modules.trade_executor",
+      "state.position_reconciler"
+    ]
+  },
+  "modules.health_monitor": {
+    "file": "modules/health_monitor.py",
+    "has_main": false,
+    "imports": [
+      "threading",
+      "time",
+      "typing",
+      "logging",
+      "modules.telegram_bot",
+      "modules.telegram_bot.TelegramNotifier"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 223,
+    "module": "modules.health_monitor",
+    "size_bytes": 8711,
+    "used_by": [
+      "Self_test.test"
+    ]
+  },
+  "modules.notification_manager": {
+    "file": "modules/notification_manager.py",
+    "has_main": false,
+    "imports": [
+      "time",
+      "typing",
+      "logging",
+      "modules.telegram_bot",
+      "modules.telegram_bot.TelegramNotifier"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 183,
+    "module": "modules.notification_manager",
+    "size_bytes": 6466,
+    "used_by": []
+  },
+  "modules.parameter_optimization": {
+    "file": "modules/parameter_optimization.py",
+    "has_main": false,
+    "imports": [
+      "itertools",
+      "modules.data_manager",
+      "concurrent.futures",
+      "deap",
+      "pickle",
+      "pandas",
+      "typing",
+      "numpy",
+      "random",
+      "logging",
+      "config",
+      "os",
+      "modules.data_manager.DataManager"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 292,
+    "module": "modules.parameter_optimization",
+    "size_bytes": 11353,
+    "used_by": []
+  },
+  "modules.reward_system": {
+    "file": "modules/reward_system.py",
+    "has_main": false,
+    "imports": [
+      "typing",
+      "logging"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 57,
+    "module": "modules.reward_system",
+    "size_bytes": 2095,
+    "used_by": [
+      "modules.trade_calculator",
+      "modules.trade_simulator"
+    ]
+  },
+  "modules.risk_management": {
+    "file": "modules/risk_management.py",
+    "has_main": false,
+    "imports": [
+      "datetime",
+      "dataclasses",
+      "modules.Kill_Switch",
+      "typing",
+      "logging",
+      "modules.Kill_Switch.KillSwitch",
+      "config"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 213,
+    "module": "modules.risk_management",
+    "size_bytes": 9894,
+    "used_by": []
+  },
+  "modules.rollout_manager": {
+    "file": "modules/rollout_manager.py",
+    "has_main": false,
+    "imports": [
+      "typing",
+      "config",
+      "logging",
+      "dataclasses"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 123,
+    "module": "modules.rollout_manager",
+    "size_bytes": 3881,
+    "used_by": []
+  },
+  "modules.storage": {
+    "file": "modules/storage/__init__.py",
+    "has_main": false,
+    "imports": [],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 0,
+    "module": "modules.storage",
+    "size_bytes": 0,
+    "used_by": []
+  },
+  "modules.storage.Save_AI_Update": {
+    "file": "modules/storage/Save_AI_Update.py",
+    "has_main": false,
+    "imports": [
+      "typing",
+      "pathlib",
+      "logging",
+      "pickle"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 63,
+    "module": "modules.storage.Save_AI_Update",
+    "size_bytes": 1842,
+    "used_by": [
+      "main",
+      "examples.ibkr_demo_forex_options",
+      "examples.ibkr_demo_forex_spot"
+    ]
+  },
+  "modules.technical_indicators": {
+    "file": "modules/technical_indicators.py",
+    "has_main": false,
+    "imports": [
+      "typing",
+      "math",
+      "pandas",
+      "scipy.stats"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 552,
+    "module": "modules.technical_indicators",
+    "size_bytes": 19370,
+    "used_by": [
+      "Self_test.test",
+      "modules.Strategies",
+      "modules.Strategy_Manager",
+      "forex.forex_strategy"
+    ]
+  },
+  "modules.telegram_bot": {
+    "file": "modules/telegram_bot.py",
+    "has_main": false,
+    "imports": [
+      "telegram",
+      "telegram.ext",
+      "json",
+      "logging",
+      "config"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 143,
+    "module": "modules.telegram_bot",
+    "size_bytes": 4341,
+    "used_by": [
+      "Self_test.test",
+      "modules.notification_manager",
+      "modules.health_monitor",
+      "state.position_reconciler"
+    ]
+  },
+  "modules.top_pairs": {
+    "file": "modules/top_pairs.py",
+    "has_main": false,
+    "imports": [
+      "dataclasses",
+      "time",
+      "typing",
+      "logging",
+      "ccxt"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 182,
+    "module": "modules.top_pairs",
+    "size_bytes": 6108,
+    "used_by": []
+  },
+  "modules.trade_calculator": {
+    "file": "modules/trade_calculator.py",
+    "has_main": false,
+    "imports": [
+      "datetime",
+      "typing",
+      "modules.reward_system",
+      "logging",
+      "modules.reward_system.calculate_points",
+      "config",
+      "decimal"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 159,
+    "module": "modules.trade_calculator",
+    "size_bytes": 5490,
+    "used_by": []
+  },
+  "modules.trade_executor": {
+    "file": "modules/trade_executor.py",
+    "has_main": false,
+    "imports": [
+      "modules.Strategy_Manager",
+      "modules.exchange.ExchangeAPI",
+      "typing",
+      "logging",
+      "modules.Strategy_Manager.Decision",
+      "modules.exchange"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 118,
+    "module": "modules.trade_executor",
+    "size_bytes": 3912,
+    "used_by": [
+      "Self_test.test",
+      "modules.trade_simulator",
+      "forex.forex_strategy"
+    ]
+  },
+  "modules.trade_simulator": {
+    "file": "modules/trade_simulator.py",
+    "has_main": false,
+    "imports": [
+      "modules.trade_executor",
+      "datetime",
+      "typing",
+      "modules.reward_system",
+      "logging",
+      "modules.reward_system.calculate_points",
+      "config",
+      "modules.trade_executor.TradeExecutor"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 179,
+    "module": "modules.trade_simulator",
+    "size_bytes": 6194,
+    "used_by": []
+  },
+  "modules.training": {
+    "file": "modules/training/__init__.py",
+    "has_main": false,
+    "imports": [],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 0,
+    "module": "modules.training",
+    "size_bytes": 0,
+    "used_by": []
+  },
+  "modules.training.Train_Forex_Options": {
+    "file": "modules/training/Train_Forex_Options.py",
+    "has_main": false,
+    "imports": [
+      "modules.brokers.ibkr.Fetch_IBKR_MarketData",
+      "pandas",
+      "modules.brokers.ibkr.Contracts_IBKR.build_fx_option_contract",
+      "logging",
+      "modules.brokers.ibkr.Contracts_IBKR.build_fx_spot_contract",
+      "modules.brokers.ibkr.Contracts_IBKR",
+      "modules.brokers.ibkr.Fetch_IBKR_MarketData.IBKRMarketDataFetcher"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 96,
+    "module": "modules.training.Train_Forex_Options",
+    "size_bytes": 3785,
+    "used_by": [
+      "main",
+      "examples.ibkr_demo_forex_options"
+    ]
+  },
+  "modules.training.Train_Forex_Spot": {
+    "file": "modules/training/Train_Forex_Spot.py",
+    "has_main": false,
+    "imports": [
+      "modules.brokers.ibkr.Fetch_IBKR_MarketData",
+      "pandas",
+      "logging",
+      "modules.brokers.ibkr.Contracts_IBKR.build_fx_spot_contract",
+      "modules.brokers.ibkr.Contracts_IBKR",
+      "pandas_ta",
+      "modules.brokers.ibkr.Fetch_IBKR_MarketData.IBKRMarketDataFetcher"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 80,
+    "module": "modules.training.Train_Forex_Spot",
+    "size_bytes": 2864,
+    "used_by": [
+      "main",
+      "examples.ibkr_demo_forex_spot"
+    ]
+  },
+  "options": {
+    "file": "options/__init__.py",
+    "has_main": false,
+    "imports": [],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 0,
+    "module": "options",
+    "size_bytes": 0,
+    "used_by": []
+  },
+  "options.options_exchange": {
+    "file": "options/options_exchange.py",
+    "has_main": false,
+    "imports": [
+      "typing",
+      "decimal"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 68,
+    "module": "options.options_exchange",
+    "size_bytes": 2174,
+    "used_by": []
+  },
+  "scheduler": {
+    "file": "scheduler.py",
+    "has_main": false,
+    "imports": [
+      "threading",
+      "time",
+      "typing",
+      "dataclasses"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 89,
+    "module": "scheduler",
+    "size_bytes": 2291,
+    "used_by": []
+  },
+  "state": {
+    "file": "state/__init__.py",
+    "has_main": false,
+    "imports": [],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 0,
+    "module": "state",
+    "size_bytes": 0,
+    "used_by": []
+  },
+  "state.position_reconciler": {
+    "file": "state/position_reconciler.py",
+    "has_main": false,
+    "imports": [
+      "modules.telegram_bot.TelegramNotifier",
+      "state.runtime_state",
+      "state.runtime_state.RuntimeState",
+      "modules.exchange.ExchangeAPI",
+      "typing",
+      "logging",
+      "modules.telegram_bot",
+      "asyncio",
+      "modules.exchange"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 95,
+    "module": "state.position_reconciler",
+    "size_bytes": 3203,
+    "used_by": []
+  },
+  "state.runtime_state": {
+    "file": "state/runtime_state.py",
+    "has_main": false,
+    "imports": [
+      "threading",
+      "time",
+      "json",
+      "typing",
+      "os"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 431,
+    "module": "state.runtime_state",
+    "size_bytes": 17909,
+    "used_by": [
+      "state.position_reconciler"
+    ]
+  },
+  "telemetry": {
+    "file": "telemetry/__init__.py",
+    "has_main": false,
+    "imports": [],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 0,
+    "module": "telemetry",
+    "size_bytes": 0,
+    "used_by": []
+  },
+  "telemetry.metrics_exporter": {
+    "file": "telemetry/metrics_exporter.py",
+    "has_main": false,
+    "imports": [
+      "prometheus_client",
+      "logging",
+      "typing"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 91,
+    "module": "telemetry.metrics_exporter",
+    "size_bytes": 3138,
+    "used_by": []
+  },
+  "telemetry.report_generator": {
+    "file": "telemetry/report_generator.py",
+    "has_main": false,
+    "imports": [
+      "datetime",
+      "matplotlib.pyplot",
+      "pandas",
+      "typing",
+      "logging",
+      "os"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 84,
+    "module": "telemetry.report_generator",
+    "size_bytes": 2435,
+    "used_by": []
+  },
+  "tests": {
+    "file": "tests/__init__.py",
+    "has_main": false,
+    "imports": [],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 0,
+    "module": "tests",
+    "size_bytes": 0,
+    "used_by": []
+  },
+  "tests.conftest": {
+    "file": "tests/conftest.py",
+    "has_main": false,
+    "imports": [
+      "os",
+      "sys"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 6,
+    "module": "tests.conftest",
+    "size_bytes": 152,
+    "used_by": []
+  },
+  "tools.Build_Dependency_Graph": {
+    "file": "tools/Build_Dependency_Graph.py",
+    "has_main": true,
+    "imports": [
+      "time",
+      "json",
+      "collections",
+      "ast",
+      "typing",
+      "subprocess",
+      "pathlib",
+      "sys",
+      "os"
+    ],
+    "is_executable": true,
+    "last_modified": "2025-08-17 14:37:38",
+    "line_count": 384,
+    "module": "tools.Build_Dependency_Graph",
+    "size_bytes": 14308,
+    "used_by": []
+  },
+  "utils": {
+    "file": "utils/__init__.py",
+    "has_main": false,
+    "imports": [],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 0,
+    "module": "utils",
+    "size_bytes": 0,
+    "used_by": []
+  },
+  "utils.rate_limiter": {
+    "file": "utils/rate_limiter.py",
+    "has_main": false,
+    "imports": [
+      "time",
+      "collections",
+      "random",
+      "logging",
+      "functools",
+      "asyncio"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 69,
+    "module": "utils.rate_limiter",
+    "size_bytes": 2880,
+    "used_by": [
+      "modules.brokers.ibkr.Fetch_IBKR_MarketData"
+    ]
+  },
+  "utils.utilities": {
+    "file": "utils/utilities.py",
+    "has_main": false,
+    "imports": [
+      "datetime",
+      "modules.Logger_Config",
+      "modules.Logger_Config.setup_logging",
+      "io",
+      "time",
+      "json",
+      "typing",
+      "logging",
+      "functools",
+      "os"
+    ],
+    "is_executable": false,
+    "last_modified": "2025-08-17 14:33:17",
+    "line_count": 166,
+    "module": "utils.utilities",
+    "size_bytes": 7073,
+    "used_by": [
+      "modules.data_manager"
+    ]
+  }
+}
