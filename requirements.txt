@@ -12,6 +12,7 @@ feedparser
 vaderSentiment
 structlog
 ruff
+black
 mypy
 pytest
 pip-audit

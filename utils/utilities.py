@@ -13,6 +13,8 @@ from typing import (
 # Import the new logging setup function
 from modules.Logger_Config import setup_logging as new_setup_logging
 
+logger = logging.getLogger(__name__)
+
 # ────────────────────────────────────────────────────────────────────────────────
 # Filesystem helpers
 # ────────────────────────────────────────────────────────────────────────────────

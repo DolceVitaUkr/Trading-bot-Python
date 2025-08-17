@@ -1,53 +1,58 @@
 # Architectural Problems Report
 
-Generated: 2025-08-17 14:37:48
+Generated: 2025-08-17 15:00:40
 
 ## Orphans
 
-- modules.rollout_manager
-- modules.training
-- utils
-- forex.forex_exchange
-- modules.notification_manager
 - managers.strategy_manager
-- modules.trade_calculator
-- modules.trade_simulator
-- modules.Sizer
+- modules.training
+- __init__
+- modules.notification_manager
+- modules.Funds_Controller
+- modules
+- adapters.news_rss
+- state
 - adapters.composite_wallet
 - telemetry.report_generator
 - tests
-- modules.Wallet_Sync
+- modules.top_pairs
+- modules.Sizer
 - forex.forex_strategy
-- state.position_reconciler
-- telemetry.metrics_exporter
+- managers.kill_switch
+- scheduler
+- modules.rollout_manager
+- utils
+- modules.Wallet_Sync
+- options.options_exchange
+- modules.risk_management
+- modules.trade_simulator
+- adapters.wallet_ibkr
 - adapters.ibkr_exec
-- modules.Funds_Controller
+- forex.forex_exchange
+- modules.brokers.ibkr
+- forex
+- state.position_reconciler
+- modules.storage
+- modules.trade_calculator
+- managers.sizer
+- telemetry
 - modules.parameter_optimization
 - options
-- modules
-- adapters.wallet_ibkr
-- telemetry
-- modules.top_pairs
-- adapters.news_rss
 - tests.conftest
-- managers.kill_switch
-- options.options_exchange
-- forex
-- modules.risk_management
-- modules.storage
-- scheduler
-- __init__
-- managers.sizer
-- modules.brokers.ibkr
-- state
+- telemetry.metrics_exporter
 
 ## Leaf Executables
 
-- examples.ibkr_demo_forex_spot
+- Data_Registry
+- tools.Find_Hardcoded_Paths
 - tools.Build_Dependency_Graph
-- examples.ibkr_demo_forex_options
+- examples.ibkr_demo_forex_spot
+- tools.Check_Interface_Conformance
+- tools.Replace_Print_With_Logger
 - Self_test.test
 - main
+- examples.ibkr_demo_forex_options
+- tools.Check_Schemas
 
 ## Cyclic Dependencies
 
@@ -56,8 +61,13 @@ Generated: 2025-08-17 14:37:48
 ## Multiple Mains
 
 - main
+- Data_Registry
 - examples.ibkr_demo_forex_spot
 - examples.ibkr_demo_forex_options
+- tools.Find_Hardcoded_Paths
+- tools.Check_Schemas
+- tools.Check_Interface_Conformance
+- tools.Replace_Print_With_Logger
 - tools.Build_Dependency_Graph
 - Self_test.test
 - modules.brokers.ibkr.Connect_IBKR_API

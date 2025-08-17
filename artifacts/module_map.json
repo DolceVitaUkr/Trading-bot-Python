@@ -1,25 +1,41 @@
 {
+  "Data_Registry": {
+    "file": "Data_Registry.py",
+    "has_main": true,
+    "imports": [
+      "pathlib",
+      "typing",
+      "os",
+      "config"
+    ],
+    "is_executable": true,
+    "last_modified": "2025-08-17 14:40:59",
+    "line_count": 300,
+    "module": "Data_Registry",
+    "size_bytes": 11844,
+    "used_by": []
+  },
   "Self_test.test": {
     "file": "Self_test/test.py",
     "has_main": true,
     "imports": [
-      "traceback",
-      "modules.trade_executor",
-      "modules.technical_indicators",
-      "modules.telegram_bot.TelegramNotifier",
-      "modules.technical_indicators.atr",
-      "modules.health_monitor",
-      "time",
       "modules.exchange.ExchangeAPI",
-      "modules.technical_indicators.rsi",
-      "modules.trade_executor.TradeExecutor",
       "sys",
       "modules.technical_indicators.sma",
-      "modules.telegram_bot",
+      "modules.technical_indicators.rsi",
+      "modules.telegram_bot.TelegramNotifier",
+      "modules.trade_executor.TradeExecutor",
+      "modules.trade_executor",
+      "modules.technical_indicators",
+      "time",
+      "modules.exchange",
+      "modules.health_monitor",
       "modules.health_monitor.HealthMonitor",
-      "config",
+      "traceback",
+      "modules.technical_indicators.atr",
       "os",
-      "modules.exchange"
+      "config",
+      "modules.telegram_bot"
     ],
     "is_executable": true,
     "last_modified": "2025-08-17 14:33:17",
@@ -44,8 +60,8 @@
     "has_main": false,
     "imports": [
       "typing",
-      "core.interfaces.WalletSync",
-      "core.interfaces"
+      "core.interfaces",
+      "core.interfaces.WalletSync"
     ],
     "is_executable": false,
     "last_modified": "2025-08-17 14:33:17",
@@ -58,34 +74,35 @@
     "file": "adapters/ibkr_exec.py",
     "has_main": false,
     "imports": [
-      "adapters.ibkr_market",
       "ib_insync",
-      "typing",
       "asyncio",
+      "adapters.ibkr_market.IbkrMarketData",
+      "typing",
+      "adapters.ibkr_market",
       "core.interfaces.Execution",
       "core.interfaces",
-      "adapters.ibkr_market.IbkrMarketData"
+      "logging"
     ],
     "is_executable": false,
-    "last_modified": "2025-08-17 14:33:17",
-    "line_count": 142,
+    "last_modified": "2025-08-17 14:53:00",
+    "line_count": 145,
     "module": "adapters.ibkr_exec",
-    "size_bytes": 5714,
+    "size_bytes": 5789,
     "used_by": []
   },
   "adapters.ibkr_market": {
     "file": "adapters/ibkr_market.py",
     "has_main": false,
     "imports": [
-      "core.interfaces.OHLCV",
+      "core.interfaces.MarketData",
       "ib_insync",
-      "tenacity",
-      "pandas",
-      "typing",
       "asyncio",
+      "typing",
+      "tenacity",
       "os",
+      "pandas",
       "core.interfaces",
-      "core.interfaces.MarketData"
+      "core.interfaces.OHLCV"
     ],
     "is_executable": false,
     "last_modified": "2025-08-17 14:33:17",
@@ -100,12 +117,12 @@
     "file": "adapters/news_rss.py",
     "has_main": false,
     "imports": [
-      "datetime",
-      "vaderSentiment.vaderSentiment",
-      "re",
       "feedparser",
+      "vaderSentiment.vaderSentiment",
+      "datetime",
       "typing",
       "core.interfaces.NewsFeed",
+      "re",
       "core.interfaces"
     ],
     "is_executable": false,
@@ -119,14 +136,14 @@
     "file": "adapters/null_adapters.py",
     "has_main": false,
     "imports": [
+      "core.interfaces.MarketData",
+      "core.interfaces.Execution",
+      "typing",
+      "core.interfaces.ValidationRunner",
+      "core.interfaces.NewsFeed",
       "core.interfaces.WalletSync",
       "pandas",
-      "typing",
-      "core.interfaces.Execution",
-      "core.interfaces.NewsFeed",
-      "core.interfaces.ValidationRunner",
-      "core.interfaces",
-      "core.interfaces.MarketData"
+      "core.interfaces"
     ],
     "is_executable": false,
     "last_modified": "2025-08-17 14:33:17",
@@ -141,13 +158,13 @@
     "file": "adapters/wallet_bybit.py",
     "has_main": false,
     "imports": [
-      "core.interfaces.WalletSync",
-      "aiohttp",
       "time",
+      "hashlib",
+      "aiohttp",
       "typing",
       "os",
+      "core.interfaces.WalletSync",
       "core.interfaces",
-      "hashlib",
       "hmac"
     ],
     "is_executable": false,
@@ -163,10 +180,10 @@
     "file": "adapters/wallet_ibkr.py",
     "has_main": false,
     "imports": [
+      "typing",
       "ib_insync",
-      "core.interfaces.WalletSync",
       "core.interfaces",
-      "typing"
+      "core.interfaces.WalletSync"
     ],
     "is_executable": false,
     "last_modified": "2025-08-17 14:33:17",
@@ -180,31 +197,34 @@
     "has_main": false,
     "imports": [
       "typing",
+      "dotenv",
       "os",
-      "dotenv"
+      "orjson"
     ],
     "is_executable": false,
-    "last_modified": "2025-08-17 14:33:17",
-    "line_count": 221,
+    "last_modified": "2025-08-17 14:42:55",
+    "line_count": 222,
     "module": "config",
-    "size_bytes": 10385,
+    "size_bytes": 10399,
     "used_by": [
-      "modules.Strategy_Manager",
-      "modules.rollout_manager",
-      "modules.data_manager",
-      "modules.risk_management",
-      "modules.brokers.ibkr.Fetch_IBKR_MarketData",
-      "modules.parameter_optimization",
-      "forex.forex_exchange",
       "Self_test.test",
+      "modules.risk_management",
+      "tools.Check_Schemas",
+      "main",
+      "forex.forex_exchange",
+      "modules.data_manager",
+      "modules.exchange",
+      "modules.rollout_manager",
+      "Data_Registry",
+      "modules.Strategy_Manager",
+      "modules.parameter_optimization",
+      "modules.trade_simulator",
       "modules.brokers.ibkr.Place_IBKR_Order",
       "modules.brokers.ibkr.Connect_IBKR_API",
-      "modules.telegram_bot",
       "modules.brokers.ibkr.Contracts_IBKR",
+      "modules.brokers.ibkr.Fetch_IBKR_MarketData",
       "modules.trade_calculator",
-      "main",
-      "modules.trade_simulator",
-      "modules.exchange"
+      "modules.telegram_bot"
     ]
   },
   "core.interfaces": {
@@ -220,15 +240,16 @@
     "module": "core.interfaces",
     "size_bytes": 2065,
     "used_by": [
-      "managers.validation_manager",
-      "adapters.ibkr_market",
-      "adapters.news_rss",
-      "adapters.null_adapters",
-      "adapters.ibkr_exec",
-      "managers.sizer",
       "adapters.wallet_bybit",
+      "adapters.ibkr_exec",
+      "tools.Check_Interface_Conformance",
+      "adapters.null_adapters",
+      "adapters.composite_wallet",
+      "adapters.ibkr_market",
+      "managers.validation_manager",
       "adapters.wallet_ibkr",
-      "adapters.composite_wallet"
+      "managers.sizer",
+      "adapters.news_rss"
     ]
   },
   "core.schemas": {
@@ -236,8 +257,8 @@
     "has_main": false,
     "imports": [
       "typing",
-      "datetime",
-      "pydantic"
+      "pydantic",
+      "datetime"
     ],
     "is_executable": false,
     "last_modified": "2025-08-17 14:33:17",
@@ -245,28 +266,28 @@
     "module": "core.schemas",
     "size_bytes": 1620,
     "used_by": [
+      "managers.strategy_manager",
       "managers.validation_manager",
-      "managers.kill_switch",
-      "managers.strategy_manager"
+      "managers.kill_switch"
     ]
   },
   "examples.ibkr_demo_forex_options": {
     "file": "examples/ibkr_demo_forex_options.py",
     "has_main": true,
     "imports": [
-      "modules.Logger_Config",
-      "modules.Logger_Config.setup_logging",
-      "modules.training.Train_Forex_Options.ForexOptionsTrainer",
-      "modules.brokers.ibkr.Fetch_IBKR_MarketData",
-      "modules.Logger_Config.get_logger",
-      "modules.brokers.ibkr.Connect_IBKR_API.IBKRConnectionManager",
       "modules.training.Train_Forex_Options",
-      "modules.storage.Save_AI_Update.save_model_artifact",
-      "logging",
-      "modules.brokers.ibkr.Connect_IBKR_API",
+      "modules.training.Train_Forex_Options.ForexOptionsTrainer",
+      "modules.Logger_Config",
       "modules.storage.Save_AI_Update",
       "asyncio",
-      "modules.brokers.ibkr.Fetch_IBKR_MarketData.IBKRMarketDataFetcher"
+      "modules.storage.Save_AI_Update.save_model_artifact",
+      "modules.brokers.ibkr.Connect_IBKR_API.IBKRConnectionManager",
+      "modules.Logger_Config.get_logger",
+      "modules.brokers.ibkr.Fetch_IBKR_MarketData.IBKRMarketDataFetcher",
+      "modules.brokers.ibkr.Fetch_IBKR_MarketData",
+      "modules.Logger_Config.setup_logging",
+      "modules.brokers.ibkr.Connect_IBKR_API",
+      "logging"
     ],
     "is_executable": true,
     "last_modified": "2025-08-17 14:33:17",
@@ -279,19 +300,19 @@
     "file": "examples/ibkr_demo_forex_spot.py",
     "has_main": true,
     "imports": [
-      "modules.Logger_Config",
-      "modules.Logger_Config.setup_logging",
-      "modules.brokers.ibkr.Fetch_IBKR_MarketData",
-      "modules.Logger_Config.get_logger",
-      "modules.brokers.ibkr.Connect_IBKR_API.IBKRConnectionManager",
-      "modules.storage.Save_AI_Update.save_model_artifact",
-      "logging",
-      "modules.brokers.ibkr.Connect_IBKR_API",
       "modules.storage.Save_AI_Update",
+      "modules.Logger_Config",
+      "modules.training.Train_Forex_Spot",
       "asyncio",
-      "modules.training.Train_Forex_Spot.ForexSpotTrainer",
+      "modules.storage.Save_AI_Update.save_model_artifact",
+      "modules.brokers.ibkr.Connect_IBKR_API.IBKRConnectionManager",
+      "modules.Logger_Config.get_logger",
       "modules.brokers.ibkr.Fetch_IBKR_MarketData.IBKRMarketDataFetcher",
-      "modules.training.Train_Forex_Spot"
+      "modules.training.Train_Forex_Spot.ForexSpotTrainer",
+      "modules.brokers.ibkr.Fetch_IBKR_MarketData",
+      "modules.Logger_Config.setup_logging",
+      "modules.brokers.ibkr.Connect_IBKR_API",
+      "logging"
     ],
     "is_executable": true,
     "last_modified": "2025-08-17 14:33:17",
@@ -315,13 +336,13 @@
     "file": "forex/forex_exchange.py",
     "has_main": false,
     "imports": [
-      "dataclasses",
-      "time",
-      "__future__",
-      "typing",
       "asyncio",
-      "config",
-      "decimal"
+      "time",
+      "decimal",
+      "typing",
+      "dataclasses",
+      "__future__",
+      "config"
     ],
     "is_executable": false,
     "last_modified": "2025-08-17 14:33:17",
@@ -334,14 +355,14 @@
     "file": "forex/forex_strategy.py",
     "has_main": false,
     "imports": [
+      "modules.trade_executor.TradeExecutor",
       "modules.trade_executor",
       "modules.technical_indicators",
       "modules.data_manager",
-      "typing",
-      "logging",
-      "modules.technical_indicators.TechnicalIndicators",
       "modules.data_manager.DataManager",
-      "modules.trade_executor.TradeExecutor"
+      "modules.technical_indicators.TechnicalIndicators",
+      "typing",
+      "logging"
     ],
     "is_executable": false,
     "last_modified": "2025-08-17 14:33:17",
@@ -354,36 +375,36 @@
     "file": "main.py",
     "has_main": true,
     "imports": [
-      "modules.Logger_Config.setup_logging",
-      "modules.training.Train_Forex_Options.ForexOptionsTrainer",
-      "modules.storage.Save_AI_Update",
-      "adapters.wallet_bybit.BybitWalletSync",
-      "config",
-      "modules.training.Train_Forex_Spot.ForexSpotTrainer",
-      "managers.validation_manager",
-      "modules.storage.Save_AI_Update.save_model_artifact",
-      "adapters.null_adapters.NullMarketData",
-      "adapters.wallet_bybit",
-      "modules.brokers.ibkr.Fetch_IBKR_Account",
-      "managers.validation_manager.ValidationManager",
-      "modules.Logger_Config",
-      "modules.brokers.ibkr.Fetch_IBKR_MarketData",
-      "modules.Logger_Config.get_logger",
-      "adapters.null_adapters",
-      "modules.brokers.ibkr.Fetch_IBKR_Account.IBKRAccountFetcher",
-      "asyncio",
       "os",
-      "adapters.null_adapters.NullWalletSync",
-      "adapters.null_adapters.NullExecution",
-      "modules.brokers.ibkr.Connect_IBKR_API.IBKRConnectionManager",
-      "typing",
-      "modules.training.Train_Forex_Options",
-      "modules.brokers.ibkr.Place_IBKR_Order",
-      "modules.brokers.ibkr.Connect_IBKR_API",
       "modules.brokers.ibkr.Place_IBKR_Order.TrainingOnlyError",
-      "modules.brokers.ibkr.Fetch_IBKR_MarketData.IBKRMarketDataFetcher",
+      "config",
+      "adapters.null_adapters.NullWalletSync",
+      "modules.Logger_Config.setup_logging",
+      "adapters.null_adapters.NullExecution",
+      "modules.Logger_Config",
+      "modules.training.Train_Forex_Spot",
+      "modules.brokers.ibkr.Fetch_IBKR_Account",
+      "typing",
+      "modules.Logger_Config.get_logger",
+      "modules.brokers.ibkr.Place_IBKR_Order",
+      "modules.training.Train_Forex_Spot.ForexSpotTrainer",
+      "modules.brokers.ibkr.Fetch_IBKR_Account.IBKRAccountFetcher",
+      "managers.validation_manager",
+      "adapters.wallet_bybit.BybitWalletSync",
+      "modules.brokers.ibkr.Connect_IBKR_API",
       "modules.brokers.ibkr.Place_IBKR_Order.IBKROrderPlacer",
-      "modules.training.Train_Forex_Spot"
+      "adapters.null_adapters.NullMarketData",
+      "modules.training.Train_Forex_Options.ForexOptionsTrainer",
+      "modules.brokers.ibkr.Connect_IBKR_API.IBKRConnectionManager",
+      "modules.brokers.ibkr.Fetch_IBKR_MarketData",
+      "managers.validation_manager.ValidationManager",
+      "modules.training.Train_Forex_Options",
+      "adapters.wallet_bybit",
+      "modules.storage.Save_AI_Update.save_model_artifact",
+      "asyncio",
+      "adapters.null_adapters",
+      "modules.brokers.ibkr.Fetch_IBKR_MarketData.IBKRMarketDataFetcher",
+      "modules.storage.Save_AI_Update"
     ],
     "is_executable": true,
     "last_modified": "2025-08-17 14:33:17",
@@ -396,12 +417,12 @@
     "file": "managers/kill_switch.py",
     "has_main": false,
     "imports": [
-      "datetime",
+      "core.schemas",
       "core.schemas.KillEvent",
-      "orjson",
+      "datetime",
       "typing",
-      "os",
-      "core.schemas"
+      "orjson",
+      "os"
     ],
     "is_executable": false,
     "last_modified": "2025-08-17 14:33:17",
@@ -415,8 +436,8 @@
     "has_main": false,
     "imports": [
       "typing",
-      "core.interfaces.WalletSync",
-      "core.interfaces"
+      "core.interfaces",
+      "core.interfaces.WalletSync"
     ],
     "is_executable": false,
     "last_modified": "2025-08-17 14:33:17",
@@ -429,11 +450,11 @@
     "file": "managers/strategy_manager.py",
     "has_main": false,
     "imports": [
+      "core.schemas",
+      "typing",
       "core.schemas.StrategyMeta",
       "orjson",
-      "typing",
-      "os",
-      "core.schemas"
+      "os"
     ],
     "is_executable": false,
     "last_modified": "2025-08-17 14:33:17",
@@ -446,14 +467,14 @@
     "file": "managers/validation_manager.py",
     "has_main": false,
     "imports": [
-      "datetime",
-      "orjson",
-      "typing",
-      "os",
       "core.schemas.ValidationRecord",
+      "core.schemas",
+      "datetime",
+      "typing",
+      "orjson",
       "core.interfaces.ValidationRunner",
-      "core.interfaces",
-      "core.schemas"
+      "os",
+      "core.interfaces"
     ],
     "is_executable": false,
     "last_modified": "2025-08-17 14:33:17",
@@ -495,8 +516,8 @@
     "has_main": false,
     "imports": [
       "typing",
-      "logging",
-      "collections"
+      "collections",
+      "logging"
     ],
     "is_executable": false,
     "last_modified": "2025-08-17 14:33:17",
@@ -511,11 +532,11 @@
     "file": "modules/Logger_Config.py",
     "has_main": false,
     "imports": [
-      "structlog",
       "structlog.types",
-      "logging",
       "sys",
-      "os"
+      "structlog",
+      "os",
+      "logging"
     ],
     "is_executable": false,
     "last_modified": "2025-08-17 14:33:17",
@@ -523,10 +544,10 @@
     "module": "modules.Logger_Config",
     "size_bytes": 3775,
     "used_by": [
-      "main",
+      "examples.ibkr_demo_forex_spot",
       "examples.ibkr_demo_forex_options",
       "utils.utilities",
-      "examples.ibkr_demo_forex_spot"
+      "main"
     ]
   },
   "modules.News_Agent": {
@@ -550,8 +571,8 @@
     "has_main": false,
     "imports": [
       "typing",
-      "logging",
-      "uuid"
+      "uuid",
+      "logging"
     ],
     "is_executable": false,
     "last_modified": "2025-08-17 14:33:17",
@@ -566,9 +587,9 @@
     "file": "modules/Sizer.py",
     "has_main": false,
     "imports": [
-      "logging",
+      "typing",
       "json",
-      "typing"
+      "logging"
     ],
     "is_executable": false,
     "last_modified": "2025-08-17 14:33:17",
@@ -581,9 +602,9 @@
     "file": "modules/Strategies.py",
     "has_main": false,
     "imports": [
-      "modules.technical_indicators",
       "pandas",
-      "modules.technical_indicators.TechnicalIndicators"
+      "modules.technical_indicators.TechnicalIndicators",
+      "modules.technical_indicators"
     ],
     "is_executable": false,
     "last_modified": "2025-08-17 14:33:17",
@@ -599,24 +620,24 @@
     "has_main": false,
     "imports": [
       "modules.data_manager",
-      "modules.Strategies.MeanReversionStrategy",
-      "numpy",
-      "logging",
+      "modules.Strategies",
+      "modules.technical_indicators.TechnicalIndicators",
       "config",
+      "modules.Strategies.BaseStrategy",
+      "modules.Validation_Manager",
+      "modules.Validation_Manager.ValidationManager",
       "modules.data_manager.DataManager",
       "modules.technical_indicators",
-      "modules.News_Agent",
-      "dataclasses",
-      "modules.Portfolio_Manager.PortfolioManager",
-      "modules.Validation_Manager",
-      "modules.News_Agent.NewsAgent",
-      "modules.Strategies",
-      "modules.Portfolio_Manager",
-      "modules.Strategies.BaseStrategy",
-      "modules.Strategies.TrendFollowStrategy",
-      "modules.Validation_Manager.ValidationManager",
       "typing",
-      "modules.technical_indicators.TechnicalIndicators"
+      "modules.Portfolio_Manager.PortfolioManager",
+      "modules.News_Agent",
+      "modules.News_Agent.NewsAgent",
+      "modules.Strategies.TrendFollowStrategy",
+      "numpy",
+      "logging",
+      "dataclasses",
+      "modules.Portfolio_Manager",
+      "modules.Strategies.MeanReversionStrategy"
     ],
     "is_executable": false,
     "last_modified": "2025-08-17 14:33:17",
@@ -672,18 +693,18 @@
     "file": "modules/brokers/ibkr/Connect_IBKR_API.py",
     "has_main": true,
     "imports": [
-      "aiohttp",
-      "config.IBKR_CPAPI_GATEWAY_URL",
-      "ib_insync",
-      "config.IBKR_TWS_PORT",
-      "typing",
-      "logging",
       "config.IBKR_API_MODE",
       "asyncio",
+      "aiohttp",
+      "ib_insync",
+      "config.IBKR_CPAPI_GATEWAY_URL",
+      "config.IBKR_TWS_HOST",
+      "typing",
+      "config.IBKR_TWS_PORT",
       "config",
-      "config.TRAINING_MODE",
       "config.IBKR_TWS_CLIENT_ID",
-      "config.IBKR_TWS_HOST"
+      "config.TRAINING_MODE",
+      "logging"
     ],
     "is_executable": true,
     "last_modified": "2025-08-17 14:33:17",
@@ -691,24 +712,24 @@
     "module": "modules.brokers.ibkr.Connect_IBKR_API",
     "size_bytes": 6896,
     "used_by": [
-      "modules.brokers.ibkr.Fetch_IBKR_MarketData",
-      "examples.ibkr_demo_forex_options",
-      "modules.brokers.ibkr.Place_IBKR_Order",
       "examples.ibkr_demo_forex_spot",
+      "main",
       "modules.brokers.ibkr.Fetch_IBKR_Account",
-      "main"
+      "modules.brokers.ibkr.Place_IBKR_Order",
+      "examples.ibkr_demo_forex_options",
+      "modules.brokers.ibkr.Fetch_IBKR_MarketData"
     ]
   },
   "modules.brokers.ibkr.Contracts_IBKR": {
     "file": "modules/brokers/ibkr/Contracts_IBKR.py",
     "has_main": false,
     "imports": [
+      "ib_insync",
       "aiohttp",
       "config.IBKR_CPAPI_GATEWAY_URL",
-      "ib_insync",
       "typing",
-      "logging",
-      "config"
+      "config",
+      "logging"
     ],
     "is_executable": false,
     "last_modified": "2025-08-17 14:33:17",
@@ -726,10 +747,10 @@
     "has_main": false,
     "imports": [
       "ib_insync",
-      "modules.brokers.ibkr.Connect_IBKR_API.IBKRConnectionManager",
       "typing",
-      "logging",
-      "modules.brokers.ibkr.Connect_IBKR_API"
+      "modules.brokers.ibkr.Connect_IBKR_API.IBKRConnectionManager",
+      "modules.brokers.ibkr.Connect_IBKR_API",
+      "logging"
     ],
     "is_executable": false,
     "last_modified": "2025-08-17 14:33:17",
@@ -744,32 +765,33 @@
     "file": "modules/brokers/ibkr/Fetch_IBKR_MarketData.py",
     "has_main": false,
     "imports": [
-      "utils.rate_limiter.ibkr_rate_limiter",
-      "ib_insync",
-      "modules.brokers.ibkr.Connect_IBKR_API.IBKRConnectionManager",
-      "pandas",
-      "utils.rate_limiter",
-      "config.MD_SUBSCRIPTIONS",
-      "typing",
-      "modules.brokers.ibkr.Contracts_IBKR.get_conid_by_symbol",
-      "logging",
-      "pathlib",
-      "modules.brokers.ibkr.Connect_IBKR_API",
-      "modules.brokers.ibkr.Contracts_IBKR.build_fx_spot_contract",
       "modules.brokers.ibkr.Contracts_IBKR",
-      "config"
+      "utils.rate_limiter",
+      "ib_insync",
+      "Data_Registry",
+      "modules.brokers.ibkr.Contracts_IBKR.build_fx_spot_contract",
+      "typing",
+      "modules.brokers.ibkr.Connect_IBKR_API.IBKRConnectionManager",
+      "modules.brokers.ibkr.Contracts_IBKR.get_conid_by_symbol",
+      "utils.rate_limiter.ibkr_rate_limiter",
+      "config",
+      "pathlib",
+      "pandas",
+      "config.MD_SUBSCRIPTIONS",
+      "modules.brokers.ibkr.Connect_IBKR_API",
+      "logging"
     ],
     "is_executable": false,
-    "last_modified": "2025-08-17 14:33:17",
-    "line_count": 205,
+    "last_modified": "2025-08-17 14:48:16",
+    "line_count": 206,
     "module": "modules.brokers.ibkr.Fetch_IBKR_MarketData",
-    "size_bytes": 8406,
+    "size_bytes": 8465,
     "used_by": [
-      "examples.ibkr_demo_forex_options",
       "modules.training.Train_Forex_Options",
       "examples.ibkr_demo_forex_spot",
       "main",
-      "modules.training.Train_Forex_Spot"
+      "modules.training.Train_Forex_Spot",
+      "examples.ibkr_demo_forex_options"
     ]
   },
   "modules.brokers.ibkr.Place_IBKR_Order": {
@@ -778,12 +800,12 @@
     "imports": [
       "config.ALLOW_FUNDS_TRANSFER",
       "ib_insync",
-      "modules.brokers.ibkr.Connect_IBKR_API.IBKRConnectionManager",
       "typing",
-      "logging",
-      "modules.brokers.ibkr.Connect_IBKR_API",
+      "modules.brokers.ibkr.Connect_IBKR_API.IBKRConnectionManager",
       "config",
-      "config.TRAINING_MODE"
+      "config.TRAINING_MODE",
+      "modules.brokers.ibkr.Connect_IBKR_API",
+      "logging"
     ],
     "is_executable": false,
     "last_modified": "2025-08-17 14:33:17",
@@ -798,29 +820,30 @@
     "file": "modules/data_manager.py",
     "has_main": false,
     "imports": [
-      "utils.utilities.write_json",
-      "utils.utilities.retry",
-      "time",
-      "utils.utilities.ensure_directory",
       "modules.exchange.ExchangeAPI",
-      "modules.exchange",
-      "pandas",
       "utils.utilities.format_timestamp",
+      "utils.utilities.write_json",
+      "time",
+      "modules.exchange",
+      "Data_Registry",
       "typing",
-      "logging",
-      "config",
       "os",
-      "utils.utilities"
+      "config",
+      "utils.utilities.ensure_directory",
+      "utils.utilities.retry",
+      "pandas",
+      "utils.utilities",
+      "logging"
     ],
     "is_executable": false,
-    "last_modified": "2025-08-17 14:33:17",
-    "line_count": 443,
+    "last_modified": "2025-08-17 14:49:00",
+    "line_count": 439,
     "module": "modules.data_manager",
-    "size_bytes": 16625,
+    "size_bytes": 16537,
     "used_by": [
       "modules.Strategy_Manager",
-      "modules.parameter_optimization",
-      "forex.forex_strategy"
+      "forex.forex_strategy",
+      "modules.parameter_optimization"
     ]
   },
   "modules.error_handler": {
@@ -831,10 +854,10 @@
       "logging"
     ],
     "is_executable": false,
-    "last_modified": "2025-08-17 14:33:17",
-    "line_count": 78,
+    "last_modified": "2025-08-17 15:00:29",
+    "line_count": 80,
     "module": "modules.error_handler",
-    "size_bytes": 2922,
+    "size_bytes": 2957,
     "used_by": [
       "modules.exchange"
     ]
@@ -843,14 +866,14 @@
     "file": "modules/exchange.py",
     "has_main": false,
     "imports": [
-      "modules.error_handler",
+      "ccxt",
       "time",
+      "modules.error_handler",
       "typing",
-      "logging",
       "modules.error_handler.ErrorHandler",
       "math",
-      "ccxt",
-      "config"
+      "config",
+      "logging"
     ],
     "is_executable": false,
     "last_modified": "2025-08-17 14:33:17",
@@ -858,22 +881,22 @@
     "module": "modules.exchange",
     "size_bytes": 16620,
     "used_by": [
-      "Self_test.test",
-      "modules.data_manager",
       "modules.trade_executor",
-      "state.position_reconciler"
+      "Self_test.test",
+      "state.position_reconciler",
+      "modules.data_manager"
     ]
   },
   "modules.health_monitor": {
     "file": "modules/health_monitor.py",
     "has_main": false,
     "imports": [
-      "threading",
+      "modules.telegram_bot.TelegramNotifier",
       "time",
       "typing",
-      "logging",
+      "threading",
       "modules.telegram_bot",
-      "modules.telegram_bot.TelegramNotifier"
+      "logging"
     ],
     "is_executable": false,
     "last_modified": "2025-08-17 14:33:17",
@@ -888,11 +911,11 @@
     "file": "modules/notification_manager.py",
     "has_main": false,
     "imports": [
+      "modules.telegram_bot.TelegramNotifier",
       "time",
       "typing",
-      "logging",
       "modules.telegram_bot",
-      "modules.telegram_bot.TelegramNotifier"
+      "logging"
     ],
     "is_executable": false,
     "last_modified": "2025-08-17 14:33:17",
@@ -905,19 +928,19 @@
     "file": "modules/parameter_optimization.py",
     "has_main": false,
     "imports": [
-      "itertools",
-      "modules.data_manager",
-      "concurrent.futures",
-      "deap",
       "pickle",
-      "pandas",
-      "typing",
+      "modules.data_manager",
+      "modules.data_manager.DataManager",
       "numpy",
+      "typing",
       "random",
-      "logging",
-      "config",
       "os",
-      "modules.data_manager.DataManager"
+      "deap",
+      "config",
+      "pandas",
+      "concurrent.futures",
+      "itertools",
+      "logging"
     ],
     "is_executable": false,
     "last_modified": "2025-08-17 14:33:17",
@@ -947,13 +970,13 @@
     "file": "modules/risk_management.py",
     "has_main": false,
     "imports": [
-      "datetime",
-      "dataclasses",
-      "modules.Kill_Switch",
-      "typing",
-      "logging",
       "modules.Kill_Switch.KillSwitch",
-      "config"
+      "datetime",
+      "typing",
+      "modules.Kill_Switch",
+      "dataclasses",
+      "config",
+      "logging"
     ],
     "is_executable": false,
     "last_modified": "2025-08-17 14:33:17",
@@ -967,9 +990,9 @@
     "has_main": false,
     "imports": [
       "typing",
+      "dataclasses",
       "config",
-      "logging",
-      "dataclasses"
+      "logging"
     ],
     "is_executable": false,
     "last_modified": "2025-08-17 14:33:17",
@@ -993,10 +1016,10 @@
     "file": "modules/storage/Save_AI_Update.py",
     "has_main": false,
     "imports": [
-      "typing",
       "pathlib",
-      "logging",
-      "pickle"
+      "pickle",
+      "typing",
+      "logging"
     ],
     "is_executable": false,
     "last_modified": "2025-08-17 14:33:17",
@@ -1004,9 +1027,9 @@
     "module": "modules.storage.Save_AI_Update",
     "size_bytes": 1842,
     "used_by": [
-      "main",
+      "examples.ibkr_demo_forex_spot",
       "examples.ibkr_demo_forex_options",
-      "examples.ibkr_demo_forex_spot"
+      "main"
     ]
   },
   "modules.technical_indicators": {
@@ -1014,8 +1037,8 @@
     "has_main": false,
     "imports": [
       "typing",
-      "math",
       "pandas",
+      "math",
       "scipy.stats"
     ],
     "is_executable": false,
@@ -1024,21 +1047,21 @@
     "module": "modules.technical_indicators",
     "size_bytes": 19370,
     "used_by": [
-      "Self_test.test",
-      "modules.Strategies",
       "modules.Strategy_Manager",
-      "forex.forex_strategy"
+      "forex.forex_strategy",
+      "Self_test.test",
+      "modules.Strategies"
     ]
   },
   "modules.telegram_bot": {
     "file": "modules/telegram_bot.py",
     "has_main": false,
     "imports": [
-      "telegram",
       "telegram.ext",
+      "telegram",
       "json",
-      "logging",
-      "config"
+      "config",
+      "logging"
     ],
     "is_executable": false,
     "last_modified": "2025-08-17 14:33:17",
@@ -1046,21 +1069,21 @@
     "module": "modules.telegram_bot",
     "size_bytes": 4341,
     "used_by": [
-      "Self_test.test",
       "modules.notification_manager",
-      "modules.health_monitor",
-      "state.position_reconciler"
+      "Self_test.test",
+      "state.position_reconciler",
+      "modules.health_monitor"
     ]
   },
   "modules.top_pairs": {
     "file": "modules/top_pairs.py",
     "has_main": false,
     "imports": [
-      "dataclasses",
+      "ccxt",
       "time",
       "typing",
-      "logging",
-      "ccxt"
+      "dataclasses",
+      "logging"
     ],
     "is_executable": false,
     "last_modified": "2025-08-17 14:33:17",
@@ -1073,13 +1096,13 @@
     "file": "modules/trade_calculator.py",
     "has_main": false,
     "imports": [
-      "datetime",
-      "typing",
       "modules.reward_system",
-      "logging",
-      "modules.reward_system.calculate_points",
+      "datetime",
+      "decimal",
+      "typing",
       "config",
-      "decimal"
+      "modules.reward_system.calculate_points",
+      "logging"
     ],
     "is_executable": false,
     "last_modified": "2025-08-17 14:33:17",
@@ -1092,12 +1115,12 @@
     "file": "modules/trade_executor.py",
     "has_main": false,
     "imports": [
-      "modules.Strategy_Manager",
       "modules.exchange.ExchangeAPI",
+      "modules.exchange",
       "typing",
-      "logging",
+      "modules.Strategy_Manager",
       "modules.Strategy_Manager.Decision",
-      "modules.exchange"
+      "logging"
     ],
     "is_executable": false,
     "last_modified": "2025-08-17 14:33:17",
@@ -1105,23 +1128,23 @@
     "module": "modules.trade_executor",
     "size_bytes": 3912,
     "used_by": [
-      "Self_test.test",
+      "forex.forex_strategy",
       "modules.trade_simulator",
-      "forex.forex_strategy"
+      "Self_test.test"
     ]
   },
   "modules.trade_simulator": {
     "file": "modules/trade_simulator.py",
     "has_main": false,
     "imports": [
+      "modules.reward_system",
+      "modules.trade_executor.TradeExecutor",
       "modules.trade_executor",
       "datetime",
       "typing",
-      "modules.reward_system",
-      "logging",
-      "modules.reward_system.calculate_points",
       "config",
-      "modules.trade_executor.TradeExecutor"
+      "modules.reward_system.calculate_points",
+      "logging"
     ],
     "is_executable": false,
     "last_modified": "2025-08-17 14:33:17",
@@ -1145,13 +1168,13 @@
     "file": "modules/training/Train_Forex_Options.py",
     "has_main": false,
     "imports": [
-      "modules.brokers.ibkr.Fetch_IBKR_MarketData",
-      "pandas",
-      "modules.brokers.ibkr.Contracts_IBKR.build_fx_option_contract",
-      "logging",
-      "modules.brokers.ibkr.Contracts_IBKR.build_fx_spot_contract",
       "modules.brokers.ibkr.Contracts_IBKR",
-      "modules.brokers.ibkr.Fetch_IBKR_MarketData.IBKRMarketDataFetcher"
+      "modules.brokers.ibkr.Contracts_IBKR.build_fx_option_contract",
+      "modules.brokers.ibkr.Contracts_IBKR.build_fx_spot_contract",
+      "modules.brokers.ibkr.Fetch_IBKR_MarketData.IBKRMarketDataFetcher",
+      "pandas",
+      "modules.brokers.ibkr.Fetch_IBKR_MarketData",
+      "logging"
     ],
     "is_executable": false,
     "last_modified": "2025-08-17 14:33:17",
@@ -1159,21 +1182,21 @@
     "module": "modules.training.Train_Forex_Options",
     "size_bytes": 3785,
     "used_by": [
-      "main",
-      "examples.ibkr_demo_forex_options"
+      "examples.ibkr_demo_forex_options",
+      "main"
     ]
   },
   "modules.training.Train_Forex_Spot": {
     "file": "modules/training/Train_Forex_Spot.py",
     "has_main": false,
     "imports": [
-      "modules.brokers.ibkr.Fetch_IBKR_MarketData",
-      "pandas",
+      "modules.brokers.ibkr.Contracts_IBKR",
       "logging",
       "modules.brokers.ibkr.Contracts_IBKR.build_fx_spot_contract",
-      "modules.brokers.ibkr.Contracts_IBKR",
-      "pandas_ta",
-      "modules.brokers.ibkr.Fetch_IBKR_MarketData.IBKRMarketDataFetcher"
+      "modules.brokers.ibkr.Fetch_IBKR_MarketData.IBKRMarketDataFetcher",
+      "pandas",
+      "modules.brokers.ibkr.Fetch_IBKR_MarketData",
+      "pandas_ta"
     ],
     "is_executable": false,
     "last_modified": "2025-08-17 14:33:17",
@@ -1181,8 +1204,8 @@
     "module": "modules.training.Train_Forex_Spot",
     "size_bytes": 2864,
     "used_by": [
-      "main",
-      "examples.ibkr_demo_forex_spot"
+      "examples.ibkr_demo_forex_spot",
+      "main"
     ]
   },
   "options": {
@@ -1200,8 +1223,8 @@
     "file": "options/options_exchange.py",
     "has_main": false,
     "imports": [
-      "typing",
-      "decimal"
+      "decimal",
+      "typing"
     ],
     "is_executable": false,
     "last_modified": "2025-08-17 14:33:17",
@@ -1214,9 +1237,9 @@
     "file": "scheduler.py",
     "has_main": false,
     "imports": [
+      "typing",
       "threading",
       "time",
-      "typing",
       "dataclasses"
     ],
     "is_executable": false,
@@ -1241,15 +1264,15 @@
     "file": "state/position_reconciler.py",
     "has_main": false,
     "imports": [
-      "modules.telegram_bot.TelegramNotifier",
-      "state.runtime_state",
       "state.runtime_state.RuntimeState",
       "modules.exchange.ExchangeAPI",
-      "typing",
-      "logging",
-      "modules.telegram_bot",
+      "modules.telegram_bot.TelegramNotifier",
       "asyncio",
-      "modules.exchange"
+      "modules.exchange",
+      "typing",
+      "state.runtime_state",
+      "modules.telegram_bot",
+      "logging"
     ],
     "is_executable": false,
     "last_modified": "2025-08-17 14:33:17",
@@ -1262,17 +1285,18 @@
     "file": "state/runtime_state.py",
     "has_main": false,
     "imports": [
-      "threading",
-      "time",
       "json",
+      "time",
+      "Data_Registry",
       "typing",
-      "os"
+      "os",
+      "threading"
     ],
     "is_executable": false,
-    "last_modified": "2025-08-17 14:33:17",
-    "line_count": 431,
+    "last_modified": "2025-08-17 14:51:09",
+    "line_count": 444,
     "module": "state.runtime_state",
-    "size_bytes": 17909,
+    "size_bytes": 18339,
     "used_by": [
       "state.position_reconciler"
     ]
@@ -1292,9 +1316,9 @@
     "file": "telemetry/metrics_exporter.py",
     "has_main": false,
     "imports": [
+      "typing",
       "prometheus_client",
-      "logging",
-      "typing"
+      "logging"
     ],
     "is_executable": false,
     "last_modified": "2025-08-17 14:33:17",
@@ -1307,18 +1331,19 @@
     "file": "telemetry/report_generator.py",
     "has_main": false,
     "imports": [
+      "Data_Registry",
       "datetime",
       "matplotlib.pyplot",
-      "pandas",
       "typing",
-      "logging",
-      "os"
+      "os",
+      "pandas",
+      "logging"
     ],
     "is_executable": false,
-    "last_modified": "2025-08-17 14:33:17",
-    "line_count": 84,
+    "last_modified": "2025-08-17 14:50:09",
+    "line_count": 87,
     "module": "telemetry.report_generator",
-    "size_bytes": 2435,
+    "size_bytes": 2550,
     "used_by": []
   },
   "tests": {
@@ -1336,8 +1361,8 @@
     "file": "tests/conftest.py",
     "has_main": false,
     "imports": [
-      "os",
-      "sys"
+      "sys",
+      "os"
     ],
     "is_executable": false,
     "last_modified": "2025-08-17 14:33:17",
@@ -1350,21 +1375,100 @@
     "file": "tools/Build_Dependency_Graph.py",
     "has_main": true,
     "imports": [
-      "time",
+      "sys",
       "json",
-      "collections",
-      "ast",
+      "time",
       "typing",
+      "collections",
+      "os",
       "subprocess",
       "pathlib",
-      "sys",
-      "os"
+      "ast"
     ],
     "is_executable": true,
     "last_modified": "2025-08-17 14:37:38",
     "line_count": 384,
     "module": "tools.Build_Dependency_Graph",
     "size_bytes": 14308,
+    "used_by": []
+  },
+  "tools.Check_Interface_Conformance": {
+    "file": "tools/Check_Interface_Conformance.py",
+    "has_main": true,
+    "imports": [
+      "sys",
+      "inspect",
+      "abc",
+      "time",
+      "importlib",
+      "typing",
+      "pathlib",
+      "core.interfaces",
+      "ast"
+    ],
+    "is_executable": true,
+    "last_modified": "2025-08-17 14:44:23",
+    "line_count": 404,
+    "module": "tools.Check_Interface_Conformance",
+    "size_bytes": 16948,
+    "used_by": []
+  },
+  "tools.Check_Schemas": {
+    "file": "tools/Check_Schemas.py",
+    "has_main": true,
+    "imports": [
+      "sys",
+      "json",
+      "Data_Registry",
+      "datetime",
+      "typing",
+      "os",
+      "config",
+      "pathlib",
+      "pandas"
+    ],
+    "is_executable": true,
+    "last_modified": "2025-08-17 14:58:19",
+    "line_count": 604,
+    "module": "tools.Check_Schemas",
+    "size_bytes": 24036,
+    "used_by": []
+  },
+  "tools.Find_Hardcoded_Paths": {
+    "file": "tools/Find_Hardcoded_Paths.py",
+    "has_main": true,
+    "imports": [
+      "json",
+      "time",
+      "typing",
+      "os",
+      "pathlib",
+      "re",
+      "ast"
+    ],
+    "is_executable": true,
+    "last_modified": "2025-08-17 14:39:13",
+    "line_count": 297,
+    "module": "tools.Find_Hardcoded_Paths",
+    "size_bytes": 12403,
+    "used_by": []
+  },
+  "tools.Replace_Print_With_Logger": {
+    "file": "tools/Replace_Print_With_Logger.py",
+    "has_main": true,
+    "imports": [
+      "sys",
+      "time",
+      "typing",
+      "pathlib",
+      "re",
+      "ast"
+    ],
+    "is_executable": true,
+    "last_modified": "2025-08-17 14:45:58",
+    "line_count": 356,
+    "module": "tools.Replace_Print_With_Logger",
+    "size_bytes": 13037,
     "used_by": []
   },
   "utils": {
@@ -1382,12 +1486,12 @@
     "file": "utils/rate_limiter.py",
     "has_main": false,
     "imports": [
+      "functools",
+      "asyncio",
       "time",
       "collections",
       "random",
-      "logging",
-      "functools",
-      "asyncio"
+      "logging"
     ],
     "is_executable": false,
     "last_modified": "2025-08-17 14:33:17",
@@ -1402,16 +1506,16 @@
     "file": "utils/utilities.py",
     "has_main": false,
     "imports": [
-      "datetime",
-      "modules.Logger_Config",
-      "modules.Logger_Config.setup_logging",
-      "io",
-      "time",
-      "json",
-      "typing",
-      "logging",
       "functools",
-      "os"
+      "json",
+      "modules.Logger_Config",
+      "time",
+      "io",
+      "datetime",
+      "typing",
+      "os",
+      "modules.Logger_Config.setup_logging",
+      "logging"
     ],
     "is_executable": false,
     "last_modified": "2025-08-17 14:33:17",

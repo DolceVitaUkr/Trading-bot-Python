@@ -3,6 +3,8 @@
 import logging
 from typing import Any, Dict, Optional
 
+logger = logging.getLogger(__name__)
+
 
 class RiskViolationError(Exception):
     def __init__(self, message: str, context: Optional[Dict[str, Any]] = None):
