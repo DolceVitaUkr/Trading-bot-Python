@@ -2,7 +2,6 @@ import logging
 from typing import Dict, Any, Optional
 
 from modules.exchange import ExchangeAPI
-from modules.error_handler import OrderExecutionError
 from modules.Strategy_Manager import Decision
 
 logger = logging.getLogger(__name__)

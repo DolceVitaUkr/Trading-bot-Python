@@ -18,6 +18,7 @@ def mock_dependencies():
     # Setup default return values for mocks
     df = pd.DataFrame({'high': [1]*200, 'low': [1]*200, 'close': [1]*200})
     data_provider.load_historical_data.return_value = df
+    data_provider.get_daily_volume.return_value = 10_000_000  # Default to liquid
     validation_manager.is_strategy_approved.return_value = True
     news_agent.is_high_impact_event_imminent.return_value = (False, "")
     news_agent.get_news_bias.return_value = 'neutral'

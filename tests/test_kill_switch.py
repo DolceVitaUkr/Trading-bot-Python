@@ -42,17 +42,24 @@ class TestKillSwitch(unittest.TestCase):
 
     def test_trigger_by_slippage(self):
         """Test that the kill switch is triggered by excessive slippage events."""
-        slippage_events = ["event1", "event2", "event3"]
+        slippage_events = [
+            {'asset_class': 'PERP', 'slippage_pct': 0.5},
+            {'asset_class': 'PERP', 'slippage_pct': 0.6},
+            {'asset_class': 'PERP', 'slippage_pct': 0.7}
+        ]
         self.kill_switch.check_slippage(slippage_events)
 
         # The stub activates for "ALL" asset classes on slippage
-        self.assertTrue(self.kill_switch.is_active("ALL"))
+        self.assertTrue(self.kill_switch.is_active("PERP"))
 
     def test_no_trigger_by_slippage_if_below_threshold(self):
         """Test that the kill switch is not triggered if slippage is below threshold."""
-        slippage_events = ["event1", "event2"]
+        slippage_events = [
+            {'asset_class': 'PERP', 'slippage_pct': 0.5},
+            {'asset_class': 'PERP', 'slippage_pct': 0.6}
+        ]
         self.kill_switch.check_slippage(slippage_events)
-        self.assertFalse(self.kill_switch.is_active("ALL"))
+        self.assertFalse(self.kill_switch.is_active("PERP"))
 
     def test_trigger_by_api_errors(self):
         """Test that the kill switch is triggered by excessive API errors."""

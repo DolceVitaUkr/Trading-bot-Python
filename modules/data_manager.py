@@ -4,7 +4,6 @@ import logging
 from typing import List, Optional, Tuple, Dict
 
 import pandas as pd
-import ccxt
 
 import config
 from utils.utilities import ensure_directory, write_json, retry, format_timestamp
