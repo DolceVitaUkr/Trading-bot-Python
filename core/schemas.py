@@ -4,6 +4,15 @@ Pydantic schemas for data validation and serialization.
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
 import datetime
+from enum import Enum
+
+
+class BranchStatus(str, Enum):
+    """Enumeration for the status of a trading branch."""
+    STOPPED = "stopped"
+    RUNNING = "running"
+    ERROR = "error"
+
 
 class StrategyMeta(BaseModel):
     """Metadata for a trading strategy."""

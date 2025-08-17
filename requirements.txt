@@ -15,3 +15,7 @@ ruff
 mypy
 pytest
 pip-audit
+fastapi
+uvicorn
+websockets
+pybit

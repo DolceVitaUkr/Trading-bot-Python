@@ -32,25 +32,31 @@ BYBIT_API_KEY = os.getenv("BYBIT_API_KEY", "TujcvO0Luboj8ET0tp")
 BYBIT_API_SECRET = os.getenv(
     "BYBIT_API_SECRET", "0oT2ENYllETn3sKXx0m42LvWG8zWnEqhN72k")
 
-SIMULATION_BYBIT_API_KEY = os.getenv(
-    "SIMULATION_BYBIT_API_KEY", "TujcvO0Luboj8ET0tp")
-SIMULATION_BYBIT_API_SECRET = os.getenv(
-    "SIMULATION_BYBIT_API_SECRET", "0oT2ENYllETn3sKXx0m42LvWG8zWnEqhN72k")
+# Bybit V5 URL (Mainnet only)
+BYBIT_V5_URL = "https://api.bybit.com"
 
 
 # ───────────────────────────────────────────────
-# IBKR (Interactive Brokers)
+# FastAPI Server
+# ───────────────────────────────────────────────
+FASTAPI_HOST = os.getenv("FASTAPI_HOST", "127.0.0.1")
+FASTAPI_PORT = int(os.getenv("FASTAPI_PORT", "8000"))
+
+
+# ───────────────────────────────────────────────
+# Product & Broker Configuration
 # ───────────────────────────────────────────────
 IBKR_API_MODE = os.getenv("IBKR_API_MODE", "paper")  # paper | live
 TRAINING_MODE = os.getenv("TRAINING_MODE", "True").lower() in {"1", "true", "yes", "on"}
 ALLOW_FUNDS_TRANSFER = os.getenv("ALLOW_FUNDS_TRANSFER", "False").lower() in {"1", "true", "yes", "on"}
 
 # Define which products are enabled and their corresponding broker
-_products_enabled_str = os.getenv("PRODUCTS_ENABLED", "CRYPTO_SPOT,FOREX_SPOT,FOREX_OPTIONS")
+_products_enabled_str = os.getenv("PRODUCTS_ENABLED", "CRYPTO_SPOT,CRYPTO_FUTURES,FOREX_SPOT,FOREX_OPTIONS")
 PRODUCTS_ENABLED = [p.strip() for p in _products_enabled_str.split(',')]
 
 ACCOUNT_SCOPE = {
     "CRYPTO_SPOT": "BYBIT",
+    "CRYPTO_FUTURES": "BYBIT",
     "FOREX_SPOT": "IBKR",
     "FOREX_OPTIONS": "IBKR"
 }
