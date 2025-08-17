@@ -1,60 +1,41 @@
 import logging
-import json
-from datetime import datetime
+import sys
+import structlog
+from structlog.types import Processor
 
-class CustomAdapter(logging.LoggerAdapter):
+def setup_logging(log_level: str = "INFO"):
     """
-    This adapter adds contextual information to the log record.
+    Sets up structured logging using structlog.
+
+    Logs to the console will be human-readable and colored.
+    Logs to a file will be in JSON format (JSONL).
     """
-    def process(self, msg, kwargs):
-        # We merge the 'extra' dict into the kwargs for the formatter
-        if 'extra' in kwargs:
-            kwargs['extra']['extra_info'] = kwargs.pop('extra')
-        return msg, kwargs
-
-class JsonFormatter(logging.Formatter):
-    """
-    Formats log records as a JSON string.
-    """
-    def __init__(self, fields):
-        super().__init__()
-        self.fields = fields
-
-    def format(self, record):
-        # Create a dict from the specified fields
-        log_record = {field: getattr(record, field, None) for field in self.fields}
-        log_record['timestamp'] = datetime.fromtimestamp(record.created).isoformat()
-
-        # Merge the extra dictionary
-        if hasattr(record, 'extra_info'):
-            for key, value in record.extra_info.items():
-                log_record[key] = value
-
-        return json.dumps(log_record)
-
-def setup_logging(log_level=logging.INFO):
-    """
-    Sets up structured JSON logging to a file and standard logging to the console.
-    """
-    logger = logging.getLogger()
-    logger.setLevel(log_level)
-
-    if logger.hasHandlers():
-        logger.handlers.clear()
-
-    # Console Handler (human-readable)
-    console_handler = logging.StreamHandler()
-    console_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    console_handler.setFormatter(console_formatter)
-    logger.addHandler(console_handler)
-
-    # File Handler (JSON)
-    log_fields = [
-        'timestamp', 'levelname', 'name', 'module', 'funcName', 'lineno', 'message',
-        'action', 'asset_class', 'session', 'symbol', 'mode', 'size_usd',
-        'leverage', 'fees_usd', 'pnl_net_usd', 'allowed_funds', 'pair_cap_pct',
-        'reason'
+    shared_processors: list[Processor] = [
+        structlog.contextvars.merge_contextvars,
+        structlog.stdlib.add_logger_name,
+        structlog.stdlib.add_log_level,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.StackInfoRenderer(),
+        structlog.processors.format_exc_info,
     ]
+
+    structlog.configure(
+        processors=shared_processors + [
+            # This is the final processor that formats the log record.
+            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+        ],
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        wrapper_class=structlog.stdlib.BoundLogger,
+        cache_logger_on_first_use=True,
+    )
+
+    # Configure the formatter for file logging (JSON)
+    json_formatter = structlog.stdlib.ProcessorFormatter(
+        # The "event" field is the main message.
+        processor=structlog.processors.JSONRenderer(),
+        foreign_pre_chain=shared_processors,
+    )
+
     # Ensure logs directory exists
     try:
         import os
@@ -62,16 +43,60 @@ def setup_logging(log_level=logging.INFO):
     except OSError:
         pass
 
-    file_handler = logging.FileHandler('logs/trading_bot.json', mode='a')
-    json_formatter = JsonFormatter(fields=log_fields)
+    # Use a .jsonl extension to indicate JSON Lines format
+    file_handler = logging.FileHandler("logs/structured_logs.jsonl", mode="a")
     file_handler.setFormatter(json_formatter)
-    logger.addHandler(file_handler)
 
-    logging.info("Logging configured with console and JSON file handlers.")
+    # Configure the formatter for console logging (human-readable)
+    console_formatter = structlog.stdlib.ProcessorFormatter(
+        processor=structlog.dev.ConsoleRenderer(colors=True),
+        foreign_pre_chain=shared_processors,
+    )
 
-def get_logger(name: str):
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(console_formatter)
+
+    # Get the root logger and add the handlers
+    root_logger = logging.getLogger()
+    # Clear existing handlers to avoid duplicates
+    if root_logger.hasHandlers():
+        root_logger.handlers.clear()
+
+    root_logger.addHandler(file_handler)
+    root_logger.addHandler(console_handler)
+    root_logger.setLevel(log_level.upper())
+
+    # Mute other noisy loggers to keep the output clean
+    logging.getLogger("asyncio").setLevel(logging.WARNING)
+    logging.getLogger("websockets").setLevel(logging.WARNING)
+
+    log = structlog.get_logger("main_config")
+    log.info("Logging configured", log_level=log_level, file_path="logs/structured_logs.jsonl")
+
+def get_logger(name: str) -> structlog.stdlib.BoundLogger:
     """
-    Returns a logger instance.
-    This is a convenience function to ensure all modules get the same logger setup.
+    Returns a structlog logger instance.
     """
-    return logging.getLogger(name)
+    return structlog.get_logger(name)
+
+# Example of how to use the logger with context:
+#
+# from modules.Logger_Config import get_logger
+#
+# # Get a logger for the current module
+# log = get_logger(__name__)
+#
+# # Bind context that will be included in all subsequent logs from this logger instance.
+# # This is perfect for setting the product context at the start of a pipeline.
+# product_log = log.bind(product="FOREX_SPOT", symbol="EURUSD")
+#
+# product_log.info("fetching_data", duration="1M", timeframe="1h")
+# # This log record will contain:
+# # {"product": "FOREX_SPOT", "symbol": "EURUSD", "event": "fetching_data",
+# #  "duration": "1M", "timeframe": "1h", "timestamp": "...", ...}
+#
+# # You can also add context for a single call, which is great for metrics.
+# product_log.info("request_finished", latency_ms=120, req_count=1, pacing_backoffs=0)
+# # This log record will contain:
+# # {"product": "FOREX_SPOT", "symbol": "EURUSD", "event": "request_finished",
+# #  "latency_ms": 120, "req_count": 1, "pacing_backoffs": 0, "timestamp": "...", ...}

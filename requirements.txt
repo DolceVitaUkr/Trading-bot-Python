@@ -10,6 +10,7 @@ aiohttp
 ib_insync
 feedparser
 vaderSentiment
+structlog
 ruff
 mypy
 pytest

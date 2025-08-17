@@ -21,7 +21,8 @@ class StrategyMeta(BaseModel):
 class ValidationRecord(BaseModel):
     """Record of a strategy validation run."""
     strategy_id: str
-    market: str
+    product: str # e.g., FOREX_SPOT, CRYPTO_SPOT
+    market: Optional[str] = None # Market is now optional, product is primary
     period: str
     n_trades: int
     sharpe: float
