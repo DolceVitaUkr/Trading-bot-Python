@@ -1,4 +1,3 @@
-import pytest
 from modules.Wallet_Sync import WalletSync
 
 class MockExchangeAdapter:

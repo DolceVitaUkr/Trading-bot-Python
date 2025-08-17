@@ -8,7 +8,6 @@ or Trend Following. The StrategyManager will instantiate and run the appropriate
 strategy based on its regime detection.
 """
 import pandas as pd
-import config
 from modules.technical_indicators import TechnicalIndicators
 
 class BaseStrategy:

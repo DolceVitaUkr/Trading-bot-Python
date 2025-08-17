@@ -1,6 +1,4 @@
 import pytest
-import json
-import os
 from modules.Sizer import Sizer
 
 @pytest.fixture(scope="module")
@@ -123,7 +121,7 @@ def test_phase_4_good_setup_boost_and_cap(sizer):
 def test_global_pair_allocation_cap_still_applies(sizer):
     """Tests that the global pair allocation cap is always respected."""
     # Test in Phase 2
-    proposal_p2 = sizer.propose(
+    _ = sizer.propose(
         equity=4000, asset_class="SPOT", mode="TREND",
         atr=200, price=50000, pair_cap_pct=0.05, signal_score=1.0
     )

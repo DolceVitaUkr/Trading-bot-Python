@@ -1,6 +1,5 @@
 import pytest
 from unittest.mock import MagicMock
-from datetime import datetime, timedelta, timezone
 from modules.risk_management import RiskManager
 from modules.Kill_Switch import KillSwitch
 import config

@@ -1,6 +1,5 @@
 import pytest
 from modules.Portfolio_Manager import PortfolioManager
-from modules.Wallet_Sync import WalletSync
 
 class MockWalletSync:
     def __init__(self, is_live=False):
@@ -42,7 +41,7 @@ def test_pm_initialization_percentage():
 def test_pm_initialization_informs_wallet_sync(mock_wallet_sync_sim):
     """Tests that PM sets initial simulation balances in WalletSync."""
     allocations = {"SPOT": 10000}
-    pm = PortfolioManager(allocations=allocations, wallet_sync=mock_wallet_sync_sim)
+    _ = PortfolioManager(allocations=allocations, wallet_sync=mock_wallet_sync_sim)
     assert mock_wallet_sync_sim.get_equity("SPOT") == 10000
 
 def test_available_budget_simulation(mock_wallet_sync_sim):

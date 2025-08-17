@@ -13,15 +13,17 @@ class TestNewsAgent(unittest.TestCase):
 
     def test_get_sentiment_simulation(self):
         """Test the simulated sentiment scores."""
-        symbols = ["BTCUSDT", "ETHUSDT", "EURUSD"]
+        symbols = ["BTC/USDT", "ETH/USDT", "EUR/USD", "UNKNOWN"]
         sentiments = self.news_agent.get_sentiment(symbols)
 
-        self.assertIn("BTCUSDT", sentiments)
-        self.assertEqual(sentiments["BTCUSDT"], 0.6) # Bullish simulation
-        self.assertIn("EURUSD", sentiments)
-        self.assertEqual(sentiments["EURUSD"], -0.4) # Bearish simulation
-        self.assertIn("ETHUSDT", sentiments)
-        self.assertEqual(sentiments["ETHUSDT"], 0.0) # Neutral default
+        self.assertIn("BTC/USDT", sentiments)
+        self.assertEqual(sentiments["BTC/USDT"], 0.7) # Strong bullish
+        self.assertIn("EUR/USD", sentiments)
+        self.assertEqual(sentiments["EUR/USD"], -0.4) # Mildly bearish
+        self.assertIn("ETH/USDT", sentiments)
+        self.assertEqual(sentiments["ETH/USDT"], -0.6) # Strong bearish
+        self.assertIn("UNKNOWN", sentiments)
+        self.assertEqual(sentiments["UNKNOWN"], 0.0) # Neutral default
 
     def test_get_news_bias(self):
         """Test the translation of sentiment scores to trading biases."""

@@ -1,4 +1,3 @@
-import pytest
 from modules.Funds_Controller import FundsController
 
 def test_initial_state():
