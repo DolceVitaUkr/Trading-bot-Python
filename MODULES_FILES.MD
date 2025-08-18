@@ -1,63 +1,156 @@
-# MODULES_FILES.MD
-_Last updated: 2025-08-17_
+# Modules Documentation
 
-This document outlines the purpose and high-level API of each core module in the trading bot.
+This document describes the architecture and role of each module in the **Trading Bot** project.  
+All modules follow a consistent naming convention and interact through well-defined interfaces.  
 
-## Logging & Utilities
-### `modules/Logger_Config.py`
-- **What:** Configures the global structured logger using `structlog`. Outputs colored, human-readable logs to the console and structured JSONL logs to `logs/structured_logs.jsonl`.
-- **API:** `setup_logging()` is called at startup. `get_logger(name)` provides a logger instance that supports context binding (e.g., `log.bind(product="FOREX_SPOT")`).
-
-### `utils/rate_limiter.py`
-- **What:** Provides a `RateLimiter` class to manage API call frequency, respecting broker-specific limits (e.g., requests per second, historical data pacing).
-- **API:** A global `ibkr_rate_limiter` instance is created. Methods like `wait_for_historical_slot()` are awaited before making API calls.
-
-## IBKR Broker Modules (`modules/brokers/ibkr/`)
-This suite of modules provides an institutional-grade integration with Interactive Brokers.
-
-### `Connect_IBKR_API.py`
-- **What:** Manages connections to both the TWS/Gateway socket API and the Client Portal Web API.
-- **API:** `IBKRConnectionManager` class provides `connect_tws()`, `connect_web_api()`, and methods to get connected clients. Handles connection validation (paper vs. live) and safety checks.
-
-### `Contracts_IBKR.py`
-- **What:** Helper functions to build canonical IBKR contract objects.
-- **API:** `build_fx_spot_contract()`, `build_fx_option_contract()`, and `get_conid_by_symbol()` (which uses the Web API to find contract IDs).
-
-### `Fetch_IBKR_Account.py`
-- **What:** Fetches read-only account data, including balances, buying power, and portfolio positions.
-- **API:** `IBKRAccountFetcher` class with `get_account_summary()` and `get_positions()`.
-
-### `Fetch_IBKR_MarketData.py`
-- **What:** Fetches market data with integrated rate limiting and caching. Performs a pre-flight check for market data subscriptions.
-- **API:** `IBKRMarketDataFetcher` class with `fetch_historical_bars()`, `fetch_option_chain()`, and `fetch_greeks_for_contract()`.
-
-### `Place_IBKR_Order.py`
-- **What:** Handles order placement with critical safety guards.
-- **API:** `IBKROrderPlacer` class. All order methods (`place_market_order`, etc.) will raise a `TrainingOnlyError` if `TRAINING_MODE` is True in the config. Also includes a policy guard to prevent fund transfers.
-
-## Training & Storage Modules
-### `modules/training/Train_Forex_Spot.py`
-- **What:** A training pipeline for Forex spot strategies. Consumes data from the IBKR fetchers, performs feature engineering, and simulates a strategy to generate metrics.
-- **API:** `ForexSpotTrainer.train_strategy()`.
-
-### `modules/training/Train_Forex_Options.py`
-- **What:** A training/analysis pipeline for Forex options. Fetches option chains and greeks to perform analysis (e.g., on ATM options).
-- **API:** `ForexOptionsTrainer.analyze_atm_greeks()`.
-
-### `modules/storage/Save_AI_Update.py`
-- **What:** Saves and loads trained model artifacts.
-- **API:** `save_model_artifact(product_name, ...)` and `load_model_artifact(product_name, ...)` functions that persist objects to product-specific directories (e.g., `models/forex_spot/`).
+---
 
 ## Core Managers
-### `managers/Validation_Manager.py`
-- **What:** Handles the backtesting and approval/rejection of trading strategies.
-- **Update:** The validation logic is now product-centric.
-- **API:** `approved(strategy_id, product)` checks if a strategy is approved for a given product line (e.g., `FOREX_SPOT`). It enforces a minimum trade count (e.g., >=500) per product before approval.
 
-### `managers/Sizer.py`
-- **What:** Calculates trade size based on risk parameters and portfolio equity.
-- **Notes:** No major changes, but now consumes equity data from different products/brokers.
+### Config_Manager
+- **Purpose:** Centralized configuration and environment manager.
+- **Responsibilities:**
+  - Load API keys, secrets, and global settings (from `.env` or `config/*.json`).
+  - Provide per-asset configurations (Crypto, Futures, Forex, Options).
+  - Store thresholds: risk %, SL/TP defaults, kill-switch triggers.
+- **Dependencies:** Used by all modules for configuration values.
 
-### `managers/Kill_Switch.py`
-- **What:** A circuit breaker that monitors portfolio-level risk.
-- **Notes:** The scope of the kill switch can be applied per product.
+### Data_Manager
+- **Purpose:** Unified access layer for historical and live market data.
+- **Responsibilities:**
+  - Fetch OHLCV and tick data from `Exchange_Bybit` and `Exchange_IBKR`.
+  - Normalize data into a unified candle/tick schema.
+  - Save and load historical data for backtests (CSV/JSON).
+- **Dependencies:** Broker adapters (`Exchange_Bybit`, `Exchange_IBKR`).
+
+### Strategy_Manager
+- **Purpose:** Central strategy decision hub.
+- **Responsibilities:**
+  - Load and run strategies depending on flags:
+    - **Asset class:** Crypto, Crypto Futures, Forex, Forex Options.
+    - **Market condition:** Trending, ranging, volatile, stable.
+    - **Wallet balance:** Enable/disable depending on account size.
+    - **Time/day filters.**
+  - Pass signals to `Trade_Executor`.
+- **Dependencies:** Uses trained models (`Train_RL_Model`, `Train_ML_Model`) and configs.
+
+### Risk_Manager
+- **Purpose:** Enforces global risk controls.
+- **Responsibilities:**
+  - Position sizing (based on equity and % risk).
+  - Enforce max SL = 15% (never increase SL further into loss).
+  - Kill-switch logic (pause trading after consecutive losses).
+  - Trailing stop & TP management.
+- **Dependencies:** `Portfolio_Manager`, `Trade_Calculator`.
+
+### Trade_Executor
+- **Purpose:** Execution layer for trade orders.
+- **Responsibilities:**
+  - Translate trade signals into broker API orders.
+  - Attach SL/TP immediately on order placement.
+  - Monitor open positions and manage graceful exit.
+- **Dependencies:** `Exchange_Bybit`, `Exchange_IBKR`, `Risk_Manager`.
+
+### Portfolio_Manager
+- **Purpose:** Track live and paper portfolio state.
+- **Responsibilities:**
+  - Store open trades, balance, margin usage.
+  - Reconcile with broker balances periodically.
+  - Provide equity curve and stats to `UI_Manager`.
+- **Dependencies:** Data from `Trade_Executor` and broker adapters.
+
+### Validation_Manager
+- **Purpose:** Gatekeeper for strategy quality.
+- **Responsibilities:**
+  - Backtest strategies using historical data.
+  - Forward-walk validate strategies on paper trading.
+  - Only promote strategies that meet thresholds (Sharpe, Win %, Max Drawdown).
+- **Dependencies:** `Data_Manager`, `Strategy_Manager`.
+
+### Notification_Manager
+- **Purpose:** Event and alert system.
+- **Responsibilities:**
+  - Push key events to Telegram or log channels.
+  - Configurable verbosity (quiet/normal/verbose).
+- **Dependencies:** `Config_Manager` for API tokens.
+
+---
+
+## Learning Modules
+
+### Train_RL_Model
+- **Purpose:** Train reinforcement learning agents.
+- **Responsibilities:**
+  - Use historical data + simulated trading environment.
+  - Apply reward system:
+    - +points for profit after fees.
+    - -points for losses.
+    - Reset environment on equity < $10.
+- **Dependencies:** `Data_Manager`, `Validation_Manager`.
+
+### Train_ML_Model
+- **Purpose:** Train machine learning models for predictive signals.
+- **Responsibilities:**
+  - Feature engineering (indicators, market features).
+  - Train ML classifiers/regressors for signal prediction.
+- **Dependencies:** `Data_Manager`.
+
+### Save_AI_Update
+- **Purpose:** Manage persistence of trained models.
+- **Responsibilities:**
+  - Save model checkpoints to `models/`.
+  - Update strategies with newly trained versions.
+
+---
+
+## Calculation Modules
+
+### Trade_Calculator
+- **Purpose:** Financial and technical calculations.
+- **Responsibilities:**
+  - Position sizing math.
+  - P&L calculations.
+  - Technical indicators (EMA, RSI, ATR, Fibonacci).
+- **Dependencies:** Used by `Strategy_Manager`, `Risk_Manager`.
+
+---
+
+## Exchange Adapters
+
+### Exchange_Bybit
+- **Purpose:** Adapter for Bybit API (Crypto + Futures).
+- **Responsibilities:**
+  - REST/WebSocket connections.
+  - Place/modify/cancel orders.
+  - Fetch account balances and positions.
+- **Dependencies:** `Config_Manager`.
+
+### Exchange_IBKR
+- **Purpose:** Adapter for Interactive Brokers API (Forex + Options).
+- **Responsibilities:**
+  - Connect to IBKR Gateway/TWS.
+  - Define contracts (Forex pairs, Options).
+  - Place trades and fetch account data.
+- **Dependencies:** `Config_Manager`.
+
+---
+
+## User Interface
+
+### UI_Manager
+- **Purpose:** Unified dashboard for all asset classes.
+- **Screens:**
+  - Crypto
+  - Crypto Futures
+  - Forex
+  - Forex Options
+- **Features:**
+  - Toggle On/Off, Live/Paper.
+  - Show wallet stats, open positions, P&L%.
+  - Kill switch status.
+  - Graceful Exit button.
+  - Graph of balance/equity curve.
+  - Global footer with total equity across all assets.
+- **Style:** Clean, minimal (see [Dribbble example](https://cdn.dribbble.com/userupload/10326065/file/original-99f8889a83078eebe74d91c2da49c13a.jpg?resize=1024x768&vertical=center)).
+
+---
