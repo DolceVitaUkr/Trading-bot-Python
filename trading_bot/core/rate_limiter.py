@@ -4,6 +4,10 @@ from collections import deque
 from functools import wraps
 import random
 import logging
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections import deque
 
 log = logging.getLogger(__name__)
 
@@ -22,7 +26,7 @@ class RateLimiter:
         # Sliding window for historical data pacing
         self.historical_limit = historical_limit  # e.g., 60 requests
         self.historical_period = historical_period  # e.g., 600 seconds (10 minutes)
-        self.historical_requests = deque()
+        self.historical_requests: "deque[float]" = deque()
 
     async def _refill_tokens(self):
         """Refills tokens based on the time elapsed since the last refill."""

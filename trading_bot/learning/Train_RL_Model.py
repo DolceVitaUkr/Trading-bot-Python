@@ -1,6 +1,4 @@
 import logging
-import pandas as pd
-import pandas_ta as ta
 
 from modules.brokers.ibkr.Fetch_IBKR_MarketData import IBKRMarketDataFetcher
 from modules.brokers.ibkr.Contracts_IBKR import build_fx_spot_contract

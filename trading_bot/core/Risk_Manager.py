@@ -191,7 +191,8 @@ class Risk_Manager:
 
     def _is_within_daily_loss_limit(self) -> bool:
         """Checks if the daily loss is within the defined limit."""
-        if self.daily_start_equity <= 0: return True # Avoid division by zero
+        if self.daily_start_equity <= 0:
+            return True  # Avoid division by zero
         current_loss_pct = (self.daily_start_equity - self.equity) / self.daily_start_equity
         if current_loss_pct >= self.daily_loss_limit_pct:
             logger.critical(f"Daily loss limit hit! Loss: {current_loss_pct:.2%}")

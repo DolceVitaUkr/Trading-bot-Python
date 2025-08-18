@@ -5,7 +5,7 @@ import logging
 
 from telegram import Bot, Update
 from telegram.ext import (
-    Updater, CommandHandler, CallbackContext, filters, MessageHandler
+    Application, CommandHandler, CallbackContext, filters, MessageHandler
 )
 
 from trading_bot.core.Config_Manager import config_manager
@@ -46,24 +46,6 @@ class TelegramNotifier:
         self.bot = Bot(token=self.token)
         self.use_async = not disable_async
 
-    def send_message_sync(self, text: str, format: str = "text"):
-        """
-        Sends a message synchronously.
-
-        Args:
-            text: The text of the message to send.
-            format: The format of the message.
-        """
-        if not self.bot:
-            return
-        try:
-            # Simple formatter for dicts
-            if isinstance(text, dict):
-                text = json.dumps(text, indent=2)
-            self.bot.send_message(chat_id=self.chat_id, text=str(text))
-        except Exception as e:
-            logger.error(f"[Telegram] Failed to send sync message: {e}")
-
     async def send_message_async(self, text: str, format: str = "text"):
         """
         Sends a message asynchronously.
@@ -99,45 +81,48 @@ class TelegramBot(TelegramNotifier):
         super().__init__(token, chat_id)
         if not self.bot:
             return
-        self.updater = Updater(token=self.token, use_context=True)
-        dp = self.updater.dispatcher
-        dp.add_handler(CommandHandler("start", self.start))
-        dp.add_handler(CommandHandler("help", self.help))
-        dp.add_handler(MessageHandler(
+        self.application = Application.builder().token(token).build()
+        self.application.add_handler(CommandHandler("start", self.start))
+        self.application.add_handler(CommandHandler("help", self.help))
+        self.application.add_handler(MessageHandler(
             filters.TEXT & ~filters.COMMAND, self.echo))
-        dp.add_error_handler(self.error)
+        self.application.add_error_handler(self.error)
 
-    def start(self, update: Update, context: CallbackContext):
+    async def start(self, update: Update, context: CallbackContext):
         """
         Sends a message when the command /start is issued.
         """
-        update.message.reply_text("Bot started! Use /help for commands.")
+        if update.message:
+            await update.message.reply_text("Bot started! Use /help for commands.")
 
-    def help(self, update: Update, context: CallbackContext):
+    async def help(self, update: Update, context: CallbackContext):
         """
         Sends a message when the command /help is issued.
         """
-        update.message.reply_text(
-            "Available commands: /start, /help, /status")
+        if update.message:
+            await update.message.reply_text(
+                "Available commands: /start, /help, /status")
 
-    def echo(self, update: Update, context: CallbackContext):
+    async def echo(self, update: Update, context: CallbackContext):
         """
         Echo the user message.
         """
-        update.message.reply_text(f"Echo: {update.message.text}")
+        if update.message:
+            await update.message.reply_text(f"Echo: {update.message.text}")
 
-    def error(self, update: Update, context: CallbackContext):
+    async def error(self, update: Update, context: CallbackContext):
         """
         Log Errors caused by Updates.
         """
         logger.warning(f'Update "{update}" caused error "{context.error}"')
 
-    def run(self):
+    async def run(self):
         """
         Run the bot.
         """
         if not self.bot:
             return
         logger.info("Telegram bot is now polling...")
-        self.updater.start_polling()
-        self.updater.idle()
+        await self.application.initialize()
+        await self.application.start()
+        await self.application.idle()

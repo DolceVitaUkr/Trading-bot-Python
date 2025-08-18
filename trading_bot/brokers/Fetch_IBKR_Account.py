@@ -1,5 +1,5 @@
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 from ib_insync import IB, Position, AccountValue
 
@@ -16,7 +16,7 @@ class IBKRAccountFetcher:
 
     def __init__(self, conn_manager: IBKRConnectionManager):
         self.conn_manager = conn_manager
-        self.ib: IB = None
+        self.ib: Optional[IB] = None
 
     async def _ensure_connected(self):
         """Ensures the IB client is connected before making a request."""
@@ -31,11 +31,11 @@ class IBKRAccountFetcher:
             A dictionary containing key account values.
         """
         await self._ensure_connected()
+        assert self.ib is not None
         log.info("Fetching account summary...")
 
         # Request all summary tags
-        summary_tags = "NetLiquidation,TotalCashValue,BuyingPower,GrossPositionValue,MaintMarginReq,InitMarginReq"
-        account_values: List[AccountValue] = await self.ib.reqAccountSummaryAsync(tags=summary_tags)
+        account_values: List[AccountValue] = self.ib.accountSummary()
 
         summary = {
             "account_id": self.ib.managedAccounts()[0],
@@ -52,25 +52,26 @@ class IBKRAccountFetcher:
             A list of dictionaries, where each dictionary represents a position.
         """
         await self._ensure_connected()
+        assert self.ib is not None
         log.info("Fetching portfolio positions...")
 
-        # Using reqPositionsAsync to avoid blocking and potential timeouts on large accounts
-        positions: List[Position] = await self.ib.reqPositionsAsync()
+        # Using portfolio() to get a complete snapshot of portfolio items
+        portfolio_items = self.ib.portfolio()
 
         position_list = [
             {
-                "conId": pos.contract.conId,
-                "symbol": pos.contract.localSymbol,
-                "secType": pos.contract.secType,
-                "currency": pos.contract.currency,
-                "position": pos.position,
-                "market_price": pos.marketPrice,
-                "market_value": pos.marketValue,
-                "average_cost": pos.avgCost,
-                "unrealized_pnl": pos.unrealizedPNL,
-                "realized_pnl": pos.realizedPNL,
+                "conId": item.contract.conId,
+                "symbol": item.contract.localSymbol,
+                "secType": item.contract.secType,
+                "currency": item.contract.currency,
+                "position": item.position,
+                "market_price": item.marketPrice,
+                "market_value": item.marketValue,
+                "average_cost": item.averageCost,
+                "unrealized_pnl": item.unrealizedPNL,
+                "realized_pnl": item.realizedPNL,
             }
-            for pos in positions
+            for item in portfolio_items
         ]
         log.info(f"Found {len(position_list)} positions.")
         return position_list

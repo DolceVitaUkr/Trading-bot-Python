@@ -1,7 +1,8 @@
 import logging
 from typing import Dict, Any
 
-from ib_insync import IB, Contract, MarketOrder, LimitOrder, StopOrder, Order, Trade
+from ib_insync import IB, Contract, MarketOrder, LimitOrder, Trade
+from typing import Optional
 
 from trading_bot.brokers.Connect_IBKR_API import IBKRConnectionManager
 from trading_bot.core.Config_Manager import config_manager
@@ -27,7 +28,7 @@ class IBKROrderPlacer:
 
     def __init__(self, conn_manager: IBKRConnectionManager):
         self.conn_manager = conn_manager
-        self.ib: IB = None
+        self.ib: Optional[IB] = None
 
     async def _ensure_connected(self):
         """Ensures the IB client is connected before making a request."""
@@ -65,7 +66,7 @@ class IBKROrderPlacer:
         self._check_training_mode()
         await self._ensure_connected()
 
-        order = MarketOrder(action, quantity)
+        MarketOrder(action, quantity)
 
         log.info(f"STUB: Placing MARKET order: {action} {quantity} {contract.localSymbol}")
 
@@ -85,7 +86,7 @@ class IBKROrderPlacer:
         self._check_training_mode()
         await self._ensure_connected()
 
-        order = LimitOrder(action, quantity, limit_price)
+        LimitOrder(action, quantity, limit_price)
         log.info(f"STUB: Placing LIMIT order: {action} {quantity} {contract.localSymbol} @ {limit_price}")
 
         # trade = self.ib.placeOrder(contract, order)
@@ -102,9 +103,10 @@ class IBKROrderPlacer:
         """
         self._check_training_mode()
         await self._ensure_connected()
+        assert self.ib is not None
 
         # Create the parent LMT order and the attached TP and SL orders
-        bracket_orders = self.ib.bracketOrder(
+        self.ib.bracketOrder(
             action=action,
             quantity=quantity,
             limitPrice=limit_price,
@@ -134,7 +136,8 @@ class IBKROrderPlacer:
     def _format_trade_status(self, trade: Trade) -> Dict[str, Any]:
         """Helper to format the response from ib.placeOrder."""
         # Wait for the order status to be populated
-        self.ib.sleep(0.1) # Use a small sleep to allow status to arrive
+        if self.ib:
+            self.ib.sleep(0.1) # Use a small sleep to allow status to arrive
         return {
             "status": trade.orderStatus.status,
             "orderId": trade.order.orderId,

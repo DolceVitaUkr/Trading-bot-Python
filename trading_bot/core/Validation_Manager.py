@@ -78,7 +78,7 @@ class Validation_Manager(ValidationRunner):
 
         # 2. Get simulated results (in a real bot, this would come from a backtesting engine or training pipeline)
         # We now use the in-memory trade count.
-        simulated_results = {
+        simulated_results: Dict[str, Any] = {
             "n_trades": self.trade_counts.get(product, 0),
             "sharpe": 2.5, # Placeholder
             "max_dd": 0.10, # Placeholder

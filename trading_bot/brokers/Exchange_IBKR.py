@@ -1,9 +1,6 @@
-import asyncio
-import logging
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 
-from ib_insync import IB, Contract, Forex, Option, MarketOrder, LimitOrder, Trade
-import pandas as pd
+from ib_insync import IB, Forex, Option, MarketOrder, LimitOrder, StopOrder, Trade
 
 from trading_bot.core.Config_Manager import config_manager
 from trading_bot.core.Logger_Config import get_logger
@@ -59,10 +56,11 @@ class Exchange_IBKR:
     async def get_wallet_balance(self) -> Optional[PortfolioState]:
         """Fetches account summary and normalizes it into a PortfolioState object."""
         self.log.info("Fetching IBKR wallet balance...")
-        if not self.ib.isConnected(): await self.connect()
+        if not self.ib.isConnected():
+            await self.connect()
 
         summary_tags = "NetLiquidation,TotalCashValue,BuyingPower,GrossPositionValue,MaintMarginReq,InitMarginReq,UnrealizedPnL,RealizedPnL"
-        account_values = await self.ib.reqAccountSummaryAsync(tags=summary_tags)
+        account_values = self.ib.accountSummary()
 
         summary = {val.tag: val.value for val in account_values if val.currency == 'USD'} # Assuming USD base
 
@@ -81,19 +79,20 @@ class Exchange_IBKR:
     async def get_positions(self) -> List[Position]:
         """Fetches current open positions and normalizes them."""
         self.log.info("Fetching IBKR positions...")
-        if not self.ib.isConnected(): await self.connect()
+        if not self.ib.isConnected():
+            await self.connect()
 
-        ib_positions = await self.ib.reqPositionsAsync()
+        portfolio_items = self.ib.portfolio()
         normalized_positions = []
-        for pos in ib_positions:
+        for item in portfolio_items:
             normalized_positions.append(
                 Position(
-                    symbol=pos.contract.localSymbol,
-                    side="long" if pos.position > 0 else "short",
-                    quantity=abs(pos.position),
-                    entry_price=pos.avgCost,
-                    current_price=pos.marketPrice,
-                    unrealized_pnl=pos.unrealizedPNL,
+                    symbol=item.contract.localSymbol,
+                    side="long" if item.position > 0 else "short",
+                    quantity=abs(item.position),
+                    entry_price=item.averageCost,
+                    current_price=item.marketPrice,
+                    unrealized_pnl=item.unrealizedPNL,
                     leverage=1, # IBKR portfolio margin is complex, defaulting to 1
                     liquidation_price=None, # Not directly available
                 )
@@ -113,41 +112,48 @@ class Exchange_IBKR:
             self.log.warning("TRAINING MODE is ON. Order placement is disabled.")
             return {"status": "REJECTED", "reason": "Training mode is on."}
 
-        if not self.ib.isConnected(): await self.connect()
+        if not self.ib.isConnected():
+            await self.connect()
 
         # Build contract
         # This is simplified; a real implementation would need more robust contract resolution
         contract = self._build_fx_spot_contract(order.symbol)
 
         # Build order
-        ib_order: Order
+        ib_order: Union[MarketOrder, LimitOrder]
         if order.order_type == "market":
             ib_order = MarketOrder(action=order.side.upper(), totalQuantity=order.quantity)
         elif order.order_type == "limit":
+            if order.limit_price is None:
+                raise ValueError("Limit price must be set for a limit order.")
             ib_order = LimitOrder(action=order.side.upper(), totalQuantity=order.quantity, lmtPrice=order.limit_price)
         else:
             raise ValueError(f"Unsupported order type for IBKR: {order.order_type}")
 
         # Attach SL/TP if present
         if order.stop_loss or order.take_profit:
-            ib_order.transmit = False # Do not transmit parent order alone
+            if order.order_type != 'limit':
+                raise ValueError("Bracket orders (SL/TP) are only supported for limit orders in this implementation.")
+            if not order.take_profit or not order.stop_loss:
+                raise ValueError("Both take_profit and stop_loss must be specified for a bracket order.")
 
-            sl_order = StopOrder(action="SELL" if order.side == "buy" else "BUY", totalQuantity=order.quantity, stopPrice=order.stop_loss)
-            sl_order.parentId = ib_order.orderId
-            sl_order.transmit = False if order.take_profit else True
-
-            tp_order = LimitOrder(action="SELL" if order.side == "buy" else "BUY", totalQuantity=order.quantity, lmtPrice=order.take_profit)
-            tp_order.parentId = ib_order.orderId
-            tp_order.transmit = True
-
-            trade = self.ib.placeOrder(contract, ib_order)
-            self.ib.placeOrder(contract, sl_order)
-            self.ib.placeOrder(contract, tp_order)
+            if order.limit_price is None:
+                raise ValueError("Limit price must be set for a bracket order.")
+            bracket_orders = self.ib.bracketOrder(
+                action=order.side.upper(),
+                quantity=order.quantity,
+                limitPrice=order.limit_price,
+                takeProfitPrice=order.take_profit,
+                stopLossPrice=order.stop_loss
+            )
+            # Transmit all orders
+            trades = [self.ib.placeOrder(contract, o) for o in bracket_orders]
+            trade = trades[0] # The parent order
         else:
-             trade = self.ib.placeOrder(contract, ib_order)
+            trade = self.ib.placeOrder(contract, ib_order)
 
+        # The trade object itself is not returned, but its order status
         self.log.info(f"Placed order with id: {trade.order.orderId}")
-        # In a real scenario, you'd monitor the trade object for status updates.
         return {"status": "SUBMITTED", "id": trade.order.orderId}
 
     # --- Private helper methods for contract building ---

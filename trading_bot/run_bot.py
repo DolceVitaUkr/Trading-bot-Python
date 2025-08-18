@@ -33,12 +33,12 @@ async def main():
         portfolio_manager = Portfolio_Manager(bybit_adapter=bybit_adapter)
         trade_executor = Trade_Executor(bybit_adapter=bybit_adapter)
         # These managers have more complex dependencies, which have been simplified in the refactoring.
-        strategy_manager = Strategy_Manager()
+        Strategy_Manager()
 
         # Mock dependencies for Risk_Manager
         mock_kill_switch = type('KillSwitch', (), {'is_active': lambda self, asset: False})()
         mock_data_provider = type('DataProvider', (), {'get_funding_rate': lambda self, symbol: 0.0001})()
-        risk_manager = Risk_Manager(account_balance=10000, sizing_policy={}, kill_switch=mock_kill_switch, data_provider=mock_data_provider)
+        Risk_Manager(account_balance=10000, sizing_policy={}, kill_switch=mock_kill_switch, data_provider=mock_data_provider)
 
         log.info("Core components initialized successfully.")
     except Exception as e:

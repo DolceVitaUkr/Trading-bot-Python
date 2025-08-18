@@ -1,7 +1,7 @@
 import logging
 import pickle
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 log = logging.getLogger(__name__)
 

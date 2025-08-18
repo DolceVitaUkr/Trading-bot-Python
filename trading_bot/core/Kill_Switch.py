@@ -31,7 +31,8 @@ class KillSwitch:
         """
         asset_classes = self.portfolio_manager.get_all_asset_classes()
         for asset in asset_classes:
-            if self.is_active(asset): continue
+            if self.is_active(asset):
+                continue
 
             history = self.portfolio_manager.get_equity_history(asset, days=30)
             if not history or len(history) < 2:
@@ -59,7 +60,7 @@ class KillSwitch:
         Checks for excessive slippage events per asset class.
         Expects a list of dicts, e.g., [{'asset_class': 'PERP', 'slippage_pct': 0.5}, ...]
         """
-        counts = defaultdict(int)
+        counts: Dict[str, int] = defaultdict(int)
         for event in slippage_events:
             asset_class = event.get('asset_class')
             if asset_class:

@@ -1,9 +1,10 @@
 import logging
-from typing import List, Optional, Dict
+from typing import Dict, Optional
 import pandas as pd
+import asyncio
 from pathlib import Path
 
-from ib_insync import IB, Contract, util
+from ib_insync import IB, Contract, util, Ticker, OptionComputation
 
 from trading_bot.brokers.Connect_IBKR_API import IBKRConnectionManager
 from trading_bot.brokers.Contracts_IBKR import build_fx_spot_contract, get_conid_by_symbol
@@ -24,8 +25,8 @@ class IBKRMarketDataFetcher:
 
     def __init__(self, conn_manager: IBKRConnectionManager):
         self.conn_manager = conn_manager
-        self.ib: IB = None
-        self.active_tickers = {} # To track streaming data subscriptions
+        self.ib: Optional[IB] = None
+        self.active_tickers: Dict[str, Ticker] = {} # To track streaming data subscriptions
 
     async def _ensure_connected(self):
         """Ensures the IB client is connected before making a request."""
@@ -83,6 +84,7 @@ class IBKRMarketDataFetcher:
         Fetches historical bar data with rate limiting and caching.
         """
         await self._ensure_connected()
+        assert self.ib is not None
 
         cache_filename = f"{contract.symbol}_{contract.currency}_{bar_size.replace(' ','')}_{duration.replace(' ','')}.parquet"
         cache_path = CACHE_DIR / cache_filename
@@ -134,9 +136,13 @@ class IBKRMarketDataFetcher:
         For Forex, use the pair symbol (e.g., 'EURUSD') and sec_type='CASH'.
         """
         await self._ensure_connected()
+        assert self.ib is not None
 
         # First, we need the conId of the underlying
         web_session = await self.conn_manager.get_web_session()
+        if web_session is None:
+            log.error("Web session is not available, cannot fetch option chain.")
+            return {}
         # For CASH, the symbol to search for is the base currency
         underlying_symbol_for_search = symbol[:3] if sec_type == 'CASH' else symbol
 
@@ -180,6 +186,7 @@ class IBKRMarketDataFetcher:
         This requires a real-time data subscription.
         """
         await self._ensure_connected()
+        assert self.ib is not None
 
         log.info(f"Fetching greeks for {contract.localSymbol}...")
 
@@ -188,15 +195,18 @@ class IBKRMarketDataFetcher:
 
         # Request streaming data, wait for a tick, then cancel.
         # Use snapshot=True for a single update. Generic tick list 258 is for Option Greeks.
-        ticker = await self.ib.reqMktDataAsync(contract, "258", snapshot=True, timeout=timeout)
+        ticker = self.ib.reqMktData(contract, "258", False, False)
+        await asyncio.sleep(1) # Wait for the ticker to update
 
         if not ticker or not ticker.modelGreeks:
+            self.ib.cancelMktData(contract)
             log.warning(f"Could not fetch model greeks for {contract.localSymbol}. Check market data subscriptions.")
             return None
 
         greeks = ticker.modelGreeks
-        return {
-            "iv": greeks.iv,
+        if isinstance(greeks, OptionComputation):
+            return {
+                "iv": greeks.iv,
             "delta": greeks.delta,
             "gamma": greeks.gamma,
             "vega": greeks.vega,
