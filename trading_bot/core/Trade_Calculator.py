@@ -2,7 +2,7 @@
 
 import logging
 from decimal import Decimal, getcontext
-from typing import Dict, Union
+from typing import Dict, Union, Optional
 from datetime import datetime
 
 import config
@@ -24,7 +24,7 @@ def calculate_trade_result(
     entry_price: Union[float, Decimal],
     exit_price: Union[float, Decimal],
     quantity: Union[float, Decimal],
-    fee_percentage: float = None
+    fee_percentage: Optional[float] = None
 ) -> Dict[str, float]:
     """
     Basic trade P&L calculation with fees.
@@ -63,10 +63,10 @@ class Trade_Calculator:
     """
     def __init__(
         self,
-        maker_fee: Decimal = None,
-        taker_fee: Decimal = None,
-        maintenance_margin: Decimal = None,
-        daily_interest_rate: Decimal = None
+        maker_fee: Optional[Decimal] = None,
+        taker_fee: Optional[Decimal] = None,
+        maintenance_margin: Optional[Decimal] = None,
+        daily_interest_rate: Optional[Decimal] = None
     ):
         """
         Initializes the Trade_Calculator.
@@ -89,8 +89,8 @@ class Trade_Calculator:
         is_maker: bool = False,
         holding_days: int = 0,
         slippage: Decimal = Decimal('0.0005'),
-        entry_time: datetime = None,
-        exit_time: datetime = None,
+        entry_time: Optional[datetime] = None,
+        exit_time: Optional[datetime] = None,
         stop_loss_triggered: bool = False,
         include_points: bool = True
     ) -> Dict[str, Union[Decimal, float]]:
@@ -134,7 +134,7 @@ class Trade_Calculator:
 
         risk_adjusted_roi = effective_roi / Decimal(leverage)
 
-        result = {
+        result: Dict[str, Union[Decimal, float]] = {
             'position_size': position_size,
             'gross_pnl': gross_pnl,
             'net_pnl': net_pnl,

@@ -61,7 +61,7 @@ class Notification_Manager:
         self._snapshot.update(
             {k: v for k, v in kwargs.items() if v is not None})
 
-    def notify_trade(self, event: Dict[str, Any]):
+    async def notify_trade(self, event: Dict[str, Any]):
         """
         Notifies of a trade event.
         """
@@ -74,37 +74,37 @@ class Notification_Manager:
         if lvl == "quiet":
             if event.get("closed") or (
                     event.get("status") in ("closed", "closed_partial")):
-                self._send(self._fmt_trade(event))
+                await self._send(self._fmt_trade(event))
         elif lvl == "normal":
             if event.get("opened") or event.get("closed"):
-                self._send(self._fmt_trade(event))
+                await self._send(self._fmt_trade(event))
         else:  # verbose
-            self._send(self._fmt_trade(event))
+            await self._send(self._fmt_trade(event))
 
-    def notify_status(self, text: str, importance: str = "info"):
+    async def notify_status(self, text: str, importance: str = "info"):
         """
         Notifies of a status event.
         """
         if self.live_alert_level == "quiet" and importance == "info":
             return
-        self._send(text)
+        await self._send(text)
 
-    def notify_error(self, text: str):
+    async def notify_error(self, text: str):
         """
         Notifies of an error event.
         """
-        self._send({"type": "ALERT", "message": text}, fmt="alert")
+        await self._send({"type": "ALERT", "message": text}, fmt="alert")
 
-    def tick(self):
+    async def tick(self):
         """
         Call this periodically from your main loop.
         """
-        self._heartbeat_maybe()
-        self._maybe_flush_paper()
+        await self._heartbeat_maybe()
+        await self._maybe_flush_paper()
 
     # ----- internals -----
 
-    def _heartbeat_maybe(self):
+    async def _heartbeat_maybe(self):
         now = time.time()
         if self.heartbeat_minutes <= 0:
             return
@@ -119,19 +119,19 @@ class Notification_Manager:
             if "balance" in snap:
                 extra.append(f"balance={snap['balance']:.2f}")
             suffix = " | ".join(extra) if extra else ""
-            self._send(f"💓 Bot heartbeat: alive. {suffix}")
+            await self._send(f"💓 Bot heartbeat: alive. {suffix}")
 
-    def _maybe_flush_paper(self):
+    async def _maybe_flush_paper(self):
         now = time.time()
         if not self._paper_events:
             return
         if self.paper_recap_minutes <= 0:
-            self._send(self._fmt_paper_recap(self._paper_events))
+            await self._send(self._fmt_paper_recap(self._paper_events))
             self._paper_events.clear()
             self._last_paper_flush = now
             return
         if now - self._last_paper_flush >= self.paper_recap_minutes * 60:
-            self._send(self._fmt_paper_recap(self._paper_events))
+            await self._send(self._fmt_paper_recap(self._paper_events))
             self._paper_events.clear()
             self._last_paper_flush = now
 
@@ -176,8 +176,8 @@ class Notification_Manager:
             parts.append(f"Return: <b>{float(rp):.2f}%</b>")
         return "\n".join(parts)
 
-    def _send(self, content, fmt: str = "text"):
+    async def _send(self, content, fmt: str = "text"):
         try:
-            self.notifier.send_message_sync(content, format=fmt)
+            await self.notifier.send_message_async(content, format=fmt)
         except Exception:
             logger.exception("Notification send failed")

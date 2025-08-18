@@ -143,7 +143,7 @@ class IBKRConnectionManager:
             await self.connect_tws()
         return self.ib
 
-    async def get_web_session(self) -> aiohttp.ClientSession:
+    async def get_web_session(self) -> Optional[aiohttp.ClientSession]:
         """Returns the aiohttp session for the Web API."""
         if not self.web_session or self.web_session.closed:
             await self.connect_web_api()

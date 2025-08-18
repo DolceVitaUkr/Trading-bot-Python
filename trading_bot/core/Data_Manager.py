@@ -7,7 +7,7 @@ import pandas as pd
 
 from trading_bot.core.Config_Manager import config_manager
 from trading_bot.core.utilities import ensure_directory, write_json, retry, format_timestamp
-from trading_bot.brokers.exchange import ExchangeAPI # Placeholder
+from trading_bot.brokers.Exchange_Bybit import Exchange_Bybit as ExchangeAPI
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:
@@ -88,8 +88,8 @@ class Data_Manager:
         if exchange:
             self.exchange = exchange
         else:
-            self.exchange = ExchangeAPI()
-            self.exchange.load_markets()
+            self.exchange = ExchangeAPI(product_name="CRYPTO")
+            self.exchange.client.load_markets()
 
 
     # ──────────────────────────────────────────────────────────────────────

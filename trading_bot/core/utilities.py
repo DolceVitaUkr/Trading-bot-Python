@@ -74,8 +74,8 @@ def configure_logging(
     """
     Configure the root logger using the new setup from Logger_Config.
     """
-    log_level = level if isinstance(level, int) else getattr(logging, str(level).upper(), logging.INFO)
-    new_setup_logging(log_level=log_level)
+    log_level_str = logging.getLevelName(level)
+    new_setup_logging(log_level=log_level_str)
 
 
 # ────────────────────────────────────────────────────────────────────────────────

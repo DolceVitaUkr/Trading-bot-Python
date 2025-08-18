@@ -1,5 +1,6 @@
 from typing import Optional, Dict, Any, List
 from pybit.unified_trading import HTTP
+import ccxt
 from trading_bot.core.Config_Manager import config_manager
 from trading_bot.core.Logger_Config import get_logger
 from trading_bot.core.schemas import PortfolioState, Position, Order
@@ -37,6 +38,11 @@ class Exchange_Bybit:
             api_key=api_key,
             api_secret=api_secret
         )
+        self.client = ccxt.bybit({
+            'apiKey': api_key,
+            'secret': api_secret,
+        })
+        self.client.set_sandbox_mode(False)
         self.log.info(f"Bybit v5 adapter initialized for {product_name} in {mode} mode (connected to Mainnet).")
 
     @bybit_rate_limiter.limit

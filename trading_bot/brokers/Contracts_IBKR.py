@@ -1,5 +1,5 @@
-from ib_insync import Contract, Forex, Option
-from typing import Dict, Optional, List
+from ib_insync import Forex, Option
+from typing import Dict, Optional
 import aiohttp
 import logging
 

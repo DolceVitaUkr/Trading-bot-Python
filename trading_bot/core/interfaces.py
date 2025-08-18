@@ -1,11 +1,11 @@
 """
 Core interfaces for the trading bot, defined as Protocols.
 """
-from typing import Protocol, List, Dict, Any, Tuple
+from typing import Protocol, List, Dict, Any, Tuple, TypeAlias
 import pandas as pd
 
 # Placeholder for OHLCV data, assuming pandas DataFrame
-OHLCV = pd.DataFrame
+OHLCV: TypeAlias = pd.DataFrame
 
 class MarketData(Protocol):
     """Interface for market data providers."""
@@ -70,7 +70,7 @@ class NewsFeed(Protocol):
 class ValidationRunner(Protocol):
     """Interface for running strategy validation."""
 
-    def approved(self, strategy_id: str, market: str) -> Tuple[bool, Dict[str, Any]]:
+    async def approved(self, strategy_id: str, market: str) -> Tuple[bool, Dict[str, Any]]:
         """
         Checks if a strategy is approved for live trading based on its performance.
         Returns a tuple of (is_approved, metadata).

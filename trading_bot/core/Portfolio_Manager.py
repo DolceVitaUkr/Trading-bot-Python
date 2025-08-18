@@ -1,7 +1,7 @@
 import logging
 from typing import Dict, Optional, List, Any
 
-from trading_bot.core.schemas import PortfolioState, Position
+from trading_bot.core.schemas import PortfolioState
 from trading_bot.brokers.Exchange_Bybit import Exchange_Bybit
 from trading_bot.brokers.Exchange_IBKR import Exchange_IBKR
 

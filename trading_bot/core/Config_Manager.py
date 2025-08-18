@@ -1,7 +1,7 @@
 import orjson
 import os
 from pathlib import Path
-from typing import Dict, Any, Union
+from typing import Dict, Any
 from dotenv import load_dotenv
 
 class Config_Manager:

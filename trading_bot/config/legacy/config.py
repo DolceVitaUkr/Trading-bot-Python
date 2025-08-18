@@ -14,7 +14,7 @@ USE_SIMULATION = ENVIRONMENT == "simulation"
 ROLLOUT_STAGE = int(os.getenv("ROLLOUT_STAGE", "1"))
 EXCHANGE_PROFILE: Literal["spot", "perp", "spot+perp"] = os.getenv(
     "EXCHANGE_PROFILE", "spot"
-).lower()
+).lower()  # type: ignore
 
 FOREX_ENABLED_DEFAULT = False
 OPTIONS_ENABLED_DEFAULT = False

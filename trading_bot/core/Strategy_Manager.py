@@ -7,7 +7,6 @@ from typing import Dict, Any
 
 from trading_bot.core.schemas import StrategyMeta
 from dataclasses import dataclass
-from typing import Dict, Any
 
 @dataclass
 class Decision:
