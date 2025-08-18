@@ -1,0 +1,44 @@
+{
+  "crypto_spot": {
+    "risk_caps": {
+      "per_pair_pct": 0.15,
+      "portfolio_concurrent_pct": 0.30
+    },
+    "fees": {
+      "taker": 0.001,
+      "maker": 0.0007
+    },
+    "slippage_bps": 5
+  },
+  "crypto_futures": {
+    "risk_caps": {
+      "per_pair_pct": 0.15,
+      "portfolio_concurrent_pct": 0.30
+    },
+    "fees": {
+      "taker": 0.00055,
+      "maker": 0.0002
+    },
+    "slippage_bps": 3
+  },
+  "forex": {
+    "risk_caps": {
+      "per_pair_pct": 0.10,
+      "portfolio_concurrent_pct": 0.20
+    },
+    "fees": {
+      "spread_bps": 0.8
+    },
+    "slippage_bps": 1
+  },
+  "forex_options": {
+    "risk_caps": {
+      "per_pair_pct": 0.05,
+      "portfolio_concurrent_pct": 0.10
+    },
+    "fees": {
+      "commission_per_contract": 0.65
+    },
+    "slippage_bps": 5
+  }
+}
