@@ -1,3 +1,16 @@
+"""Telegram bot utilities for sending notifications.
+
+Example:
+    >>> from trading_bot.core.telegram_bot import TelegramNotifier
+    >>> notifier = TelegramNotifier(token="TOKEN", chat_id="CHAT_ID")
+    >>> import asyncio
+    >>> asyncio.run(
+    ...     notifier.send_message_async("*Hello*", parse_mode="Markdown")
+    ... )
+
+This sends a bold "Hello" using Telegram's Markdown formatting.
+"""
+
 import json
 import logging
 
@@ -11,6 +24,7 @@ from telegram.ext import (
 )
 
 from trading_bot.core.configmanager import config_manager
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -48,20 +62,24 @@ class TelegramNotifier:
         self.bot = Bot(token=self.token)
         self.use_async = not disable_async
 
-    async def send_message_async(self, text: str, format: str = "text"):
-        """
-        Sends a message asynchronously.
+    async def send_message_async(
+        self, text: str, parse_mode: Optional[str] = None
+    ):
+        """Sends a message asynchronously.
 
         Args:
             text: The text of the message to send.
-            format: The format of the message.
+            parse_mode: Telegram parse mode (e.g., ``"Markdown"``, ``"HTML"``)
+                for text formatting.
         """
         if not self.bot:
             return
         try:
             if isinstance(text, dict):
                 text = json.dumps(text, indent=2)
-            await self.bot.send_message(chat_id=self.chat_id, text=str(text))
+            await self.bot.send_message(
+                chat_id=self.chat_id, text=str(text), parse_mode=parse_mode
+            )
         except Exception as e:
             logger.error(f"[Telegram] Failed to send async message: {e}")
 
