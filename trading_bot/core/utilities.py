@@ -66,7 +66,7 @@ def read_json(path: str, default: Any = None) -> Any:
 # ────────────────────────────────────────────────────────────────────────────────
 
 # The configure_logging function has been removed.
-# Directy use setup_logging from trading_bot.core.loggerconfig instead.
+# Directly use setup_logging from trading_bot.core.loggerconfig instead.
 
 
 # ────────────────────────────────────────────────────────────────────────────────
