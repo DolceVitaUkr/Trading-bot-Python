@@ -70,8 +70,8 @@ All modules follow a consistent naming convention and interact through well-defi
   - Only promote strategies that meet thresholds (Sharpe, Win %, Max Drawdown).
 - **Dependencies:** `datamanager`, `strategymanager`.
 
-### notificationmanager
-- **File:** `TradingBot/core/notificationmanager.py`
+### NotificationManager
+- **File:** `TradingBot/core/NotificationManager.py`
 - **Purpose:** Event and alert system.
 - **Responsibilities:**
   - Push key events to Telegram or log channels.
@@ -111,8 +111,8 @@ All modules follow a consistent naming convention and interact through well-defi
   - Acts as a default or fallback when a real component is not configured.
   - Useful for testing or running the bot in a state with partial components.
 
-### utilities
-- **File:** `TradingBot/core/utilities.py`
+### Utilities
+- **File:** `TradingBot/core/Utilities.py`
 - **Purpose:** A collection of helper functions and decorators used across the application.
 - **Responsibilities:**
   - Provides common functionalities like filesystem operations (`ensure_directory`, `write_json`), time helpers (`utc_now`), and a `@retry` decorator.

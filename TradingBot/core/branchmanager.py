@@ -2,7 +2,7 @@ from typing import Dict, Optional
 import multiprocessing
 
 from TradingBot.brokers.ConnectIBKRAPI import IBKRConnectionManager
-from TradingBot.core.branch import Branch
+from TradingBot.core.Branch import Branch
 from TradingBot.core.configmanager import config_manager
 from TradingBot.core.loggerconfig import get_logger
 
