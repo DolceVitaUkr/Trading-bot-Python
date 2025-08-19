@@ -1,20 +1,29 @@
-import orjson
 import os
 from pathlib import Path
 from typing import Dict, Any
+
 from dotenv import load_dotenv
 
-class Config_Manager:
+try:
+    import orjson as _json
+except ImportError:
+    import ujson as _json
+
+
+class ConfigManager:
     """
     Manages the bot's configuration by loading from multiple JSON files,
     with support for environment variable substitution.
     """
+
     def __init__(self, config_dir: Path = Path("trading_bot/config")):
-        load_dotenv() # Load .env file
+        load_dotenv()  # Load .env file
         self.config_dir = config_dir
         self.config: Dict[str, Any] = self._load_json(config_dir / "config.json")
         self.assets: Dict[str, Any] = self._load_json(config_dir / "assets.json")
-        self.strategies: Dict[str, Any] = self._load_json(config_dir / "strategies.json")
+        self.strategies: Dict[str, Any] = self._load_json(
+            config_dir / "strategies.json"
+        )
 
     def _substitute_env_vars(self, config_value: Any) -> Any:
         """Recursively substitutes environment variables in config values."""
@@ -22,7 +31,11 @@ class Config_Manager:
             return {k: self._substitute_env_vars(v) for k, v in config_value.items()}
         elif isinstance(config_value, list):
             return [self._substitute_env_vars(v) for v in config_value]
-        elif isinstance(config_value, str) and config_value.startswith("_ENV_") and config_value.endswith("_"):
+        elif (
+            isinstance(config_value, str)
+            and config_value.startswith("_ENV_")
+            and config_value.endswith("_")
+        ):
             env_var_name = config_value.replace("_ENV_", "").strip("_")
             return os.getenv(env_var_name)
         return config_value
@@ -32,7 +45,7 @@ class Config_Manager:
         if not file_path.exists():
             raise FileNotFoundError(f"Configuration file not found: {file_path}")
         with open(file_path, "rb") as f:
-            data = orjson.loads(f.read())
+            data = _json.loads(f.read())
             return self._substitute_env_vars(data)
 
     def get_config(self) -> Dict[str, Any]:
@@ -47,6 +60,7 @@ class Config_Manager:
         """Returns the configuration for a specific strategy."""
         return self.strategies.get(strategy_name, {})
 
+
 # Global instance for easy access
 # This can be replaced with dependency injection later if needed
-config_manager = Config_Manager()
+config_manager = ConfigManager()

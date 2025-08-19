@@ -1,21 +1,20 @@
-# utils/utilities.py
-
-import os
+import functools
 import io
 import json
 import logging
-import functools
+import os
 import time
-from datetime import datetime, date, timezone
-from typing import (
-    Any, Callable, Iterable, Iterator, Tuple, Type, Union, Optional, List)
+from datetime import date, datetime, timezone
+from typing import (Any, Callable, Iterable, Iterator, List, Optional, Tuple,
+                    Type, Union)
 
 # Import the new logging setup function
-from trading_bot.core.Logger_Config import setup_logging as new_setup_logging
+from trading_bot.core.loggerconfig import setup_logging
 
 # ────────────────────────────────────────────────────────────────────────────────
 # Filesystem helpers
 # ────────────────────────────────────────────────────────────────────────────────
+
 
 def ensure_directory(path: str) -> None:
     """
@@ -29,7 +28,8 @@ def ensure_directory(path: str) -> None:
 
 
 def write_json(
-        path: str, data: Any, atomic: bool = True, indent: int = 2) -> None:
+    path: str, data: Any, atomic: bool = True, indent: int = 2
+) -> None:
     """
     Safely write JSON to disk.
     """
@@ -65,17 +65,8 @@ def read_json(path: str, default: Any = None) -> Any:
 # Logging
 # ────────────────────────────────────────────────────────────────────────────────
 
-def configure_logging(
-    level: Union[int, str] = logging.INFO,
-    log_file: Optional[str] = None, # log_file is now handled by the new setup
-    fmt: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    datefmt: str = "%Y-%m-%d %H:%M:%S"
-) -> None:
-    """
-    Configure the root logger using the new setup from Logger_Config.
-    """
-    log_level_str = logging.getLevelName(level)
-    new_setup_logging(log_level=log_level_str)
+# The configure_logging function has been removed.
+# Directy use setup_logging from trading_bot.core.loggerconfig instead.
 
 
 # ────────────────────────────────────────────────────────────────────────────────

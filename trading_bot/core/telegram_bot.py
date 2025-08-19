@@ -1,14 +1,16 @@
-# modules/telegram_bot.py
-
 import json
 import logging
 
 from telegram import Bot, Update
 from telegram.ext import (
-    Application, CommandHandler, CallbackContext, filters, MessageHandler
+    Application,
+    CallbackContext,
+    CommandHandler,
+    MessageHandler,
+    filters,
 )
 
-from trading_bot.core.Config_Manager import config_manager
+from trading_bot.core.configmanager import config_manager
 
 logger = logging.getLogger(__name__)
 

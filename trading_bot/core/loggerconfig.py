@@ -81,7 +81,7 @@ def get_logger(name: str) -> structlog.stdlib.BoundLogger:
 
 # Example of how to use the logger with context:
 #
-# from modules.Logger_Config import get_logger
+# from trading_bot.core.loggerconfig import get_logger
 #
 # # Get a logger for the current module
 # log = get_logger(__name__)

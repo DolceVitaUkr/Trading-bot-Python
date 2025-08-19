@@ -1,13 +1,13 @@
 from typing import Dict, Optional
 import multiprocessing
 
-from trading_bot.core.branch import Branch
-from trading_bot.core.Logger_Config import get_logger
 from trading_bot.brokers.Connect_IBKR_API import IBKRConnectionManager
-from trading_bot.core.Config_Manager import config_manager
+from trading_bot.core.branch import Branch
+from trading_bot.core.configmanager import config_manager
+from trading_bot.core.loggerconfig import get_logger
 
 
-class Branch_Manager:
+class BranchManager:
     def __init__(self):
         self.log = get_logger("branch_manager")
         self.branches: Dict[str, Branch] = {}

@@ -1,7 +1,7 @@
 import logging
 
-from modules.brokers.ibkr.Fetch_IBKR_MarketData import IBKRMarketDataFetcher
-from modules.brokers.ibkr.Contracts_IBKR import build_fx_spot_contract
+from trading_bot.brokers.Contracts_IBKR import build_fx_spot_contract
+from trading_bot.brokers.Fetch_IBKR_MarketData import IBKRMarketDataFetcher
 
 log = logging.getLogger(__name__)
 

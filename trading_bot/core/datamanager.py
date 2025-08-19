@@ -5,20 +5,12 @@ from typing import List, Optional, Tuple, Dict
 
 import pandas as pd
 
-from trading_bot.core.Config_Manager import config_manager
-from trading_bot.core.utilities import ensure_directory, write_json, retry, format_timestamp
 from trading_bot.brokers.Exchange_Bybit import Exchange_Bybit as ExchangeAPI
+from trading_bot.core.configmanager import config_manager
+from trading_bot.core.utilities import (ensure_directory, format_timestamp, retry,
+                                      write_json)
 
 logger = logging.getLogger(__name__)
-if not logger.handlers:
-    h = logging.StreamHandler()
-    h.setFormatter(
-        logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
-    logger.addHandler(h)
-log_config = config_manager.get_config().get("logging", {})
-log_level_str = log_config.get("level", "INFO")
-log_level = getattr(logging, log_level_str, logging.INFO)
-logger.setLevel(log_level)
 
 
 # ccxt timeframe to milliseconds
@@ -52,7 +44,7 @@ def _build_paths(symbol: str,
     return csv_path, meta_path
 
 
-class Data_Manager:
+class DataManager:
     """
     Persisted OHLCV store with incremental backfill using ccxt.
 

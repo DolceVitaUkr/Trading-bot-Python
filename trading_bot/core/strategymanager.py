@@ -2,23 +2,31 @@
 Strategy Manager to handle strategy registration and metadata.
 """
 import os
-import orjson
-from typing import Dict, Any
+from dataclasses import dataclass
+from typing import Any, Dict
 
 from trading_bot.core.schemas import StrategyMeta
-from dataclasses import dataclass
+
+try:
+    import orjson as _json
+except ImportError:
+    import ujson as _json
+
 
 @dataclass
 class Decision:
     """Data class to hold a trading decision."""
+
     signal: str  # 'buy' or 'sell'
-    sl: float    # stop loss
-    tp: float    # take profit
+    sl: float  # stop loss
+    tp: float  # take profit
     meta: Dict[str, Any]
+
 
 STRATEGY_FILE = "state/strategies.jsonl"
 
-class Strategy_Manager:
+
+class StrategyManager:
     """
     Manages the lifecycle and metadata of trading strategies.
     """
@@ -39,5 +47,5 @@ class Strategy_Manager:
         """
         print(f"Registering strategy: {meta.strategy_id}")
         with open(self.strategy_file, "ab") as f:
-            f.write(orjson.dumps(meta.dict(by_alias=True)))
+            f.write(_json.dumps(meta.dict(by_alias=True)))
             f.write(b"\n")

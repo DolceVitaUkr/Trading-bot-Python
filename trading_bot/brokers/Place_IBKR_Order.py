@@ -5,7 +5,7 @@ from ib_insync import IB, Contract, MarketOrder, LimitOrder, Trade
 from typing import Optional
 
 from trading_bot.brokers.Connect_IBKR_API import IBKRConnectionManager
-from trading_bot.core.Config_Manager import config_manager
+from trading_bot.core.configmanager import config_manager
 
 log = logging.getLogger(__name__)
 

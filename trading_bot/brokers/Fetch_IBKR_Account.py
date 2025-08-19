@@ -3,7 +3,7 @@ from typing import List, Dict, Any, Optional
 
 from ib_insync import IB, Position, AccountValue
 
-from modules.brokers.ibkr.Connect_IBKR_API import IBKRConnectionManager
+from trading_bot.brokers.Connect_IBKR_API import IBKRConnectionManager
 
 log = logging.getLogger(__name__)
 

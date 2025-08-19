@@ -1,4 +1,4 @@
-from trading_bot.core.Logger_Config import get_logger
+from trading_bot.core.loggerconfig import get_logger
 # In a real scenario, this would depend on a market data interface
 # from trading_bot.core.interfaces import IMarketDataFetcher
 from trading_bot.brokers.Exchange_Bybit import Exchange_Bybit

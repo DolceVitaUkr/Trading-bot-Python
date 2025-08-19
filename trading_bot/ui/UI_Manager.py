@@ -3,11 +3,18 @@ from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from typing import Dict, Any
 
-from trading_bot.core.Logger_Config import get_logger, setup_logging
+from contextlib import asynccontextmanager
+from typing import Any, Dict
+
+from fastapi import FastAPI
+
+from trading_bot.core.branchmanager import BranchManager
+from trading_bot.core.configmanager import config_manager
+from trading_bot.core.loggerconfig import get_logger, setup_logging
+from trading_bot.ui.routers import branches, telemetry
+
 # from api.websockets import manager as websocket_manager # This will need to be refactored
-from trading_bot.core.Config_Manager import config_manager
-from .routers import branches, telemetry
-from trading_bot.core.Branch_Manager import Branch_Manager
+
 
 # Initialize logger
 log_config = config_manager.get_config().get("logging", {})
@@ -15,7 +22,8 @@ setup_logging(log_level=log_config.get("level", "INFO"))
 log = get_logger(__name__)
 
 # A dictionary to hold our application's shared state
-lifespan_context: Dict[str, Branch_Manager] = {}
+lifespan_context: Dict[str, BranchManager] = {}
+
 
 async def broadcast_telemetry(queue: Any):
     """
@@ -32,6 +40,7 @@ async def broadcast_telemetry(queue: Any):
             # Avoid busy-looping on continuous errors
             await asyncio.sleep(1)
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -40,7 +49,7 @@ async def lifespan(app: FastAPI):
     log.info("--- Starting Trading Bot API ---")
 
     # Initialize BranchManager
-    branch_manager = Branch_Manager()
+    branch_manager = BranchManager()
     await branch_manager.initialize()
     lifespan_context["branch_manager"] = branch_manager
 
@@ -66,10 +75,12 @@ async def lifespan(app: FastAPI):
         await manager.shutdown()
     log.info("Shutdown complete.")
 
+
 app = FastAPI(lifespan=lifespan)
 
+
 # Dependency to get the branch manager
-def get_branch_manager() -> Branch_Manager:
+def get_branch_manager() -> BranchManager:
     return lifespan_context["branch_manager"]
 
 @app.get("/")

@@ -1,14 +1,15 @@
 import logging
 from typing import Dict, Any, Optional
 
-from trading_bot.core.schemas import Order
-from trading_bot.core.Config_Manager import config_manager
 from trading_bot.brokers.Exchange_Bybit import Exchange_Bybit
 from trading_bot.brokers.Exchange_IBKR import Exchange_IBKR
+from trading_bot.core.configmanager import config_manager
+from trading_bot.core.schemas import Order
 
 logger = logging.getLogger(__name__)
 
-class Trade_Executor:
+
+class TradeExecutor:
     """
     Routes standardized Order objects to the correct broker adapter for execution.
     """
