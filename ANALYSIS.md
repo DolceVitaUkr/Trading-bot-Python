@@ -10,7 +10,7 @@ The project was lacking a modern testing framework. I have added `pytest` and a 
 
 I encountered significant difficulties in creating an integration test for the main simulation loop. The test failed repeatedly due to a race condition and issues with mocking the `ccxt` library. I was unable to resolve this issue in a reasonable amount of time.
 
-**Suggestion**: Investigate the integration test failure further. The test file `tests/test_main_simulation.py` can be used as a starting point. The key issue seems to be that a real network call is being made even when the `ExchangeAPI` is mocked. This might be due to the way the `ccxt` library is being used.
+**Suggestion**: Investigate the integration test failure further. The test file `tests/test_retry.py` can be used as a starting point. The key issue seems to be that a real network call is being made even when the `ExchangeAPI` is mocked. This might be due to the way the `ccxt` library is being used.
 
 ### 1.2. UI Testing
 
@@ -26,19 +26,19 @@ I ran `flake8` to identify linting issues. The full output is available in the l
 
 There are many unused imports throughout the codebase. These should be removed to improve code clarity.
 
-**Example**: `import math` in `modules/data_manager.py` is not used.
+**Example**: `import math` in `TradingBot/core/datamanager.py` is not used.
 
 ### 2.2. Redefinition of Unused Variables
 
 There are several instances of variables being redefined without being used. This can indicate a bug or a typo.
 
-**Example**: In `Self_test/test.py`, `TradeExecutor` is redefined on line 61.
+**Example**: In `tests/test_retry.py`, `TradeExecutor` is redefined on line 61.
 
 ### 2.3. Undefined Names
 
-There is an undefined name `pandas` in `forex/forex_strategy.py`. This is a clear bug and should be fixed.
+There is an undefined name `pandas` in `TradingBot/learning/forex_strategy.py`. This is a clear bug and should be fixed.
 
-**Suggestion**: Add `import pandas as pd` to `forex/forex_strategy.py`.
+**Suggestion**: Add `import pandas as pd` to `TradingBot/learning/forex_strategy.py`.
 
 ## 3. Design and Architecture
 
@@ -60,6 +60,6 @@ I have fixed several issues that were causing the application to crash or behave
 *   Fixed an issue where the `dm` (DataManager) variable was not defined in `main.py`.
 *   Added a `load_markets` method to the `ExchangeAPI` class.
 *   Added an `error_handler` attribute to the `ExchangeAPI` class.
-*   Corrected the name of the `ErrorHandler` class in `modules/exchange.py`.
+*   Corrected the name of the `ErrorHandler` class in `TradingBot/brokers/exchange.py`.
 *   Refactored the `SelfLearningBot` to accept its dependencies in the constructor.
 *   Added a placeholder `act_and_learn` method to the `SelfLearningBot`.
