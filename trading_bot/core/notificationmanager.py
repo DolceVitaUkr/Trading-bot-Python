@@ -87,7 +87,7 @@ class NotificationManager:
         """
         Notifies of an error event.
         """
-        await self._send({"type": "ALERT", "message": text}, fmt="alert")
+        await self._send({"type": "ALERT", "message": text})
 
     async def tick(self):
         """
@@ -170,8 +170,8 @@ class NotificationManager:
             parts.append(f"Return: <b>{float(rp):.2f}%</b>")
         return "\n".join(parts)
 
-    async def _send(self, content, fmt: str = "text"):
+    async def _send(self, content, parse_mode: Optional[str] = None):
         try:
-            await self.notifier.send_message_async(content, format=fmt)
+            await self.notifier.send_message_async(content, parse_mode=parse_mode)
         except Exception:
             logger.exception("Notification send failed")
