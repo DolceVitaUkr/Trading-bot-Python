@@ -7,9 +7,10 @@ from pathlib import Path
 from ib_insync import IB, Contract, util, Ticker, OptionComputation
 
 from trading_bot.brokers.Connect_IBKR_API import IBKRConnectionManager
-from trading_bot.brokers.Contracts_IBKR import build_fx_spot_contract, get_conid_by_symbol
-from trading_bot.core.rate_limiter import ibkr_rate_limiter
-from trading_bot.core.Config_Manager import config_manager
+from trading_bot.brokers.Contracts_IBKR import (build_fx_spot_contract,
+                                              get_conid_by_symbol)
+from trading_bot.core.configmanager import config_manager
+from trading_bot.core.ratelimiter import ibkr_rate_limiter
 
 log = logging.getLogger(__name__)
 

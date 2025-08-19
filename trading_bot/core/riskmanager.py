@@ -3,22 +3,24 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional, Tuple, Any
 
-from trading_bot.core.Config_Manager import config_manager
-# Import KillSwitch for integration
-from trading_bot.core.Kill_Switch import KillSwitch
+from trading_bot.core.configmanager import config_manager
+from trading_bot.core.killswitch import KillSwitch
 
 logger = logging.getLogger(__name__)
+
 
 @dataclass
 class PositionRisk:
     """Represents the risk associated with a single open position."""
+
     symbol: str
     quantity: float
     entry_price: float
     dollar_risk: float
     value_usd: float
 
-class Risk_Manager:
+
+class RiskManager:
     """
     Handles all non-sizing related risk checks, such as cooldowns,
     daily loss limits, and final proposal validation.

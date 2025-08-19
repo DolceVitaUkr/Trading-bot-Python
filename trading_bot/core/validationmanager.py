@@ -2,11 +2,16 @@
 Validation Manager to approve strategies based on backtest performance.
 """
 import datetime
-import orjson
-from typing import Tuple, Dict, Any, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from trading_bot.core.interfaces import ValidationRunner
 from trading_bot.core.schemas import ValidationRecord
+
+try:
+    import orjson as _json
+except ImportError:
+    import ujson as _json
+
 
 # Constants for validation thresholds
 MIN_TRADES = 500
@@ -15,7 +20,8 @@ MAX_DD = 0.15
 COOL_OFF_DAYS = 3
 VALIDATION_FILE = "state/validation_runs.jsonl"
 
-class Validation_Manager(ValidationRunner):
+
+class ValidationManager(ValidationRunner):
     """
     Implements the validation logic for strategies, now based on product.
     """
@@ -25,8 +31,11 @@ class Validation_Manager(ValidationRunner):
         self._ensure_file_exists()
         # In a real application, trade counts would be persisted, e.g., in a database or a state file.
         # For this implementation, we'll use an in-memory dictionary.
-        self.trade_counts: Dict[str, int] = {"FOREX_SPOT": 0, "FOREX_OPTIONS": 0, "CRYPTO_SPOT": 0}
-
+        self.trade_counts: Dict[str, int] = {
+            "FOREX_SPOT": 0,
+            "FOREX_OPTIONS": 0,
+            "CRYPTO_SPOT": 0,
+        }
 
     def _ensure_file_exists(self):
         """Ensures the validation JSONL file exists."""
@@ -35,11 +44,14 @@ class Validation_Manager(ValidationRunner):
                 pass
         except IOError:
             import os
+
             os.makedirs(os.path.dirname(self.validation_file), exist_ok=True)
             with open(self.validation_file, "a"):
                 pass
 
-    def _get_last_run(self, strategy_id: str, product: str) -> Optional[ValidationRecord]:
+    def _get_last_run(
+        self, strategy_id: str, product: str
+    ) -> Optional[ValidationRecord]:
         """
         Retrieves the last validation run for a given strategy and product.
         """
@@ -56,7 +68,7 @@ class Validation_Manager(ValidationRunner):
         Appends a new validation record to the JSONL file.
         """
         with open(self.validation_file, "ab") as f:
-            f.write(orjson.dumps(record.dict(by_alias=True)))
+            f.write(_json.dumps(record.dict(by_alias=True)))
             f.write(b"\n")
 
     def update_trade_count(self, product: str, count: int):

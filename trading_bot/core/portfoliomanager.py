@@ -1,13 +1,14 @@
 import logging
 from typing import Dict, Optional, List, Any
 
-from trading_bot.core.schemas import PortfolioState
 from trading_bot.brokers.Exchange_Bybit import Exchange_Bybit
 from trading_bot.brokers.Exchange_IBKR import Exchange_IBKR
+from trading_bot.core.schemas import PortfolioState
 
 logger = logging.getLogger(__name__)
 
-class Portfolio_Manager:
+
+class PortfolioManager:
     """
     Aggregates portfolio information from multiple broker adapters.
     Provides a unified view of the entire portfolio state and equity curves.

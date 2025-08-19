@@ -5,18 +5,24 @@ from typing import Optional
 from ib_insync import IB
 import aiohttp
 
-from trading_bot.core.Config_Manager import config_manager
+from trading_bot.core.configmanager import config_manager
 
 ibkr_config = config_manager.get_config().get("api_keys", {}).get("ibkr", {})
 IBKR_TWS_HOST = ibkr_config.get("host", "127.0.0.1")
 IBKR_TWS_PORT = ibkr_config.get("port", 7497)
 IBKR_TWS_CLIENT_ID = ibkr_config.get("client_id", 1)
-IBKR_API_MODE = config_manager.get_config().get("bot_settings", {}).get("ibkr_api_mode", "paper")
-IBKR_CPAPI_GATEWAY_URL = config_manager.get_config().get("bot_settings", {}).get("ibkr_cpapi_gateway_url", "https://localhost:5000")
-TRAINING_MODE = config_manager.get_config().get("bot_settings", {}).get("training_mode", True)
+IBKR_API_MODE = (
+    config_manager.get_config().get("bot_settings", {}).get("ibkr_api_mode", "paper")
+)
+IBKR_CPAPI_GATEWAY_URL = (
+    config_manager.get_config()
+    .get("bot_settings", {})
+    .get("ibkr_cpapi_gateway_url", "https://localhost:5000")
+)
+TRAINING_MODE = (
+    config_manager.get_config().get("bot_settings", {}).get("training_mode", True)
+)
 
-# Configure logger
-logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
 

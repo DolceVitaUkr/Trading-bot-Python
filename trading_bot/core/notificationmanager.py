@@ -4,15 +4,9 @@ from typing import Dict, Any, Optional, List
 from trading_bot.core.telegram_bot import TelegramNotifier
 
 logger = logging.getLogger(__name__)
-if not logger.handlers:
-    h = logging.StreamHandler()
-    h.setFormatter(
-        logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
-    logger.addHandler(h)
-logger.setLevel(logging.INFO)
 
 
-class Notification_Manager:
+class NotificationManager:
     """
     Policy-driven wrapper around TelegramNotifier.
     - Paper: batched recap every N minutes (configurable)
@@ -24,11 +18,11 @@ class Notification_Manager:
         self,
         notifier: Optional[TelegramNotifier] = None,
         paper_recap_minutes: int = 60,
-        live_alert_level: str = "normal",   # quiet|normal|verbose
+        live_alert_level: str = "normal",  # quiet|normal|verbose
         heartbeat_minutes: int = 30,
     ):
         """
-        Initializes the Notification_Manager.
+        Initializes the NotificationManager.
         """
         self.notifier = notifier or TelegramNotifier(disable_async=False)
         self.paper_recap_minutes = int(paper_recap_minutes)

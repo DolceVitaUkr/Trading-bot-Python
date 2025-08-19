@@ -2,23 +2,23 @@ import asyncio
 import multiprocessing
 from typing import Dict, Any, Optional
 
-from trading_bot.core.null_adapters import NullMarketData, NullExecution, NullWalletSync
-from trading_bot.core.schemas import BranchStatus
-from trading_bot.core.Logger_Config import setup_logging, get_logger
-from trading_bot.core.Config_Manager import config_manager
-
-# Import brokers
-# from modules.brokers.ibkr.Connect_IBKR_API import IBKRConnectionManager # To be refactored
-# from modules.brokers.ibkr.Fetch_IBKR_Account import IBKRAccountFetcher # To be refactored
-from trading_bot.brokers.Fetch_IBKR_MarketData import IBKRMarketDataFetcher
-# from modules.brokers.ibkr.Place_IBKR_Order import IBKROrderPlacer # To be refactored
-from trading_bot.learning.Train_RL_Model import ForexSpotTrainer as Train_RL_Model
-from trading_bot.brokers.Exchange_Bybit import Exchange_Bybit
-from trading_bot.learning.Train_ML_Model import Train_ML_Model
-
-
+import asyncio
 import json
+import multiprocessing
 import time
+from typing import Any, Dict, Optional
+
+from trading_bot.brokers.Exchange_Bybit import Exchange_Bybit
+from trading_bot.brokers.Fetch_IBKR_MarketData import IBKRMarketDataFetcher
+from trading_bot.core.configmanager import config_manager
+from trading_bot.core.loggerconfig import get_logger, setup_logging
+from trading_bot.core.nulladapters import (NullExecution, NullMarketData,
+                                          NullWalletSync)
+from trading_bot.core.schemas import BranchStatus
+from trading_bot.learning.Train_ML_Model import Train_ML_Model
+from trading_bot.learning.Train_RL_Model import \
+    ForexSpotTrainer as Train_RL_Model
+
 
 class Branch:
     def __init__(self, product_name: str, telemetry_queue: multiprocessing.Queue, mode: str = "paper", ibkr_conn_manager: Optional[Any] = None):
@@ -52,7 +52,7 @@ class Branch:
                 self.log.error("IBKR connection not available, cannot build IBKR pipeline.")
                 raise ConnectionError("IBKR connection manager not available for IBKR branch.")
 
-            market_fetcher = IBKRMarketDataFetcher(self.ibkr_conn_manager) # To be refactored
+            market_fetcher = IBKRMarketDataFetcher(self.ibkr_conn_manager)
             self.pipeline["market_fetcher"] = market_fetcher
             # self.pipeline["order_placer"] = IBKROrderPlacer(self.ibkr_conn_manager)
             # self.pipeline["account_fetcher"] = IBKRAccountFetcher(self.ibkr_conn_manager)

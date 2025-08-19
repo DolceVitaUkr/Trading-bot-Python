@@ -3,7 +3,7 @@ from typing import Dict, Optional
 import aiohttp
 import logging
 
-from trading_bot.core.Config_Manager import config_manager
+from trading_bot.core.configmanager import config_manager
 IBKR_CPAPI_GATEWAY_URL = config_manager.get_config().get("bot_settings", {}).get("ibkr_cpapi_gateway_url", "https://localhost:5000")
 
 log = logging.getLogger(__name__)

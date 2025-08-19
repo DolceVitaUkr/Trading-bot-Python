@@ -1,10 +1,10 @@
 from typing import Optional, Dict, Any, List
 from pybit.unified_trading import HTTP
 import ccxt
-from trading_bot.core.Config_Manager import config_manager
-from trading_bot.core.Logger_Config import get_logger
-from trading_bot.core.schemas import PortfolioState, Position, Order
+from trading_bot.core.configmanager import config_manager
+from trading_bot.core.loggerconfig import get_logger
 from trading_bot.core.rate_limiter import bybit_rate_limiter
+from trading_bot.core.schemas import Order, PortfolioState, Position
 
 
 class Exchange_Bybit:
