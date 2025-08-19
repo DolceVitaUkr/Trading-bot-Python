@@ -116,7 +116,8 @@ class TradeCalculator:
         position_size = (risk_capital * leverage) / effective_entry
         fee_rate = self.maker_fee if is_maker else self.taker_fee
 
-        entry_fee = risk_capital * fee_rate
+        # Fees are assessed on the notional trade value, which includes leverage
+        entry_fee = position_size * effective_entry * fee_rate
         exit_fee = position_size * effective_exit * fee_rate
         total_fee = entry_fee + exit_fee
 
