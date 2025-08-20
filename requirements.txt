@@ -11,6 +11,9 @@ ib_insync==0.9.86
 # Data / indicators
 pandas==2.2.2
 pandas-ta==0.3.14b0
+numpy==1.26.4
+torch==2.3.1
+deap==1.4.1
 
 # API / server / schema
 fastapi==0.111.0
