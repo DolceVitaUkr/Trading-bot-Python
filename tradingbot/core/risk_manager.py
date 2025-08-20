@@ -74,6 +74,10 @@ class RiskManager:
         self.require_take_profit = require_take_profit
 
         self.daily_start_equity = balance
+        # ``peak_equity`` is used to determine drawdown based adjustments to
+        # risk.  It starts at the initial balance and gets updated whenever the
+        # balance makes a new high.
+        self.peak_equity = balance
         self.open_exposure = 0.0
 
     # ------------------------------------------------------------------
@@ -84,27 +88,81 @@ class RiskManager:
         price: float,
         stop_loss: float,
         risk_pct: float | None = None,
+        *,
         min_notional: float = 0.0,
+        precision: float | None = None,
+        signal_strength: str | float | None = None,
     ) -> float:
         """Return the notional amount allowed for a trade.
 
-        The size is derived from the configured ``risk_per_trade`` and the
-        distance between ``price`` and ``stop_loss``.  ``min_notional`` acts as
-        a floor required by some exchanges.
+        The sizing logic follows the specification in ``modules.md``:
+
+        * While equity is below 1,000 the bot trades a fixed 10 USD notional.
+        * Above that, risk is a tiered percentage of equity (0.5–2%).
+        * For every 5% of drawdown from the equity peak the risk percentage is
+          reduced by 0.25 percentage points down to a 0.25% floor.
+        * ``signal_strength`` applies a weighting of 0.5/1.0/1.5 for
+          weak/normal/strong signals.
+        * ``precision`` can be used to enforce exchange notional steps.
         """
 
         if price <= 0:
             return 0.0
-        risk_pct = risk_pct if risk_pct is not None else self.risk_per_trade
-        risk_amount = self.balance * risk_pct
-        sl_distance = abs(price - stop_loss)
-        if sl_distance <= 0:
-            return 0.0
-        distance_pct = sl_distance / price
-        if distance_pct <= 0:
-            return 0.0
-        notional = risk_amount / distance_pct
+
+        # fixed notional during learning phase
+        if self.balance < 1_000:
+            notional = 10.0
+        else:
+            distance_pct = abs(price - stop_loss) / price
+            if distance_pct <= 0:
+                return 0.0
+
+            # determine base risk percentage
+            equity = self.balance
+            base_risk = self._tier_risk_pct(equity)
+
+            # adjust for drawdown
+            drawdown = max(0.0, (self.peak_equity - equity) / self.peak_equity)
+            reduction_steps = int(drawdown / 0.05)
+            adj_risk = base_risk - reduction_steps * 0.0025
+            adj_risk = max(adj_risk, 0.0025)
+
+            # optional override / weighting
+            if risk_pct is not None:
+                adj_risk = risk_pct
+
+            weight = self._signal_weight(signal_strength)
+            risk_amount = equity * adj_risk * weight
+            notional = risk_amount / distance_pct
+
+        if precision and precision > 0:
+            notional = (notional // precision) * precision
         return max(notional, min_notional)
+
+    # ------------------------------------------------------------------
+    def _tier_risk_pct(self, equity: float) -> float:
+        """Return the base risk percentage based on equity tiers."""
+
+        if equity < 10_000:
+            return 0.005
+        if equity < 50_000:
+            return 0.01
+        if equity < 100_000:
+            return 0.015
+        return 0.02
+
+    def _signal_weight(self, strength: str | float | None) -> float:
+        """Translate ``signal_strength`` into a multiplier."""
+
+        if isinstance(strength, (int, float)):
+            return float(strength)
+        mapping = {
+            "weak": 0.5,
+            "normal": 1.0,
+            "strong": 1.5,
+            "very_strong": 1.5,
+        }
+        return mapping.get(str(strength).lower(), 1.0)
 
     # ------------------------------------------------------------------
     # Order validation
@@ -173,6 +231,8 @@ class RiskManager:
     def register_close(self, notional: float, pnl: float) -> None:
         self.open_exposure = max(0.0, self.open_exposure - notional)
         self.balance += pnl
+        if self.balance > self.peak_equity:
+            self.peak_equity = self.balance
 
     # ------------------------------------------------------------------
     def risk_breach_check(self) -> List[str]:
