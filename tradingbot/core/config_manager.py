@@ -23,6 +23,21 @@ class ConfigManager:
         self.strategies: Dict[str, Any] = self._load_json(
             config_dir / "strategies.json"
         )
+        # Provide defaults for important safety keys if they are missing
+        self.config.setdefault(
+            "safety",
+            {
+                "START_MODE": "paper",
+                "LIVE_TRADING_ENABLED": False,
+                "REQUIRE_MANUAL_LIVE_CONFIRMATION": True,
+                "ORDER_ROUTING": "paper_first",
+                "MAX_STOP_LOSS_PCT": 0.15,
+                "KILL_SWITCH_ENABLED": True,
+                "CONSECUTIVE_LOSS_KILL": 3,
+                "PAPER_EQUITY_START": 0.0,
+                "PAPER_RESET_THRESHOLD": 0.0,
+            },
+        )
 
     def _substitute_env_vars(self, config_value: Any) -> Any:
         """Recursively substitutes environment variables in config values."""
@@ -58,6 +73,17 @@ class ConfigManager:
     def get_strategy_config(self, strategy_name: str) -> Dict[str, Any]:
         """Returns the configuration for a specific strategy."""
         return self.strategies.get(strategy_name, {})
+
+    # Generic dotted-path getter -------------------------------------------------
+    def get(self, path: str, default: Any | None = None) -> Any:
+        """Retrieve a value from the main config using a dotted path."""
+        node: Any = self.config
+        for part in path.split("."):
+            if isinstance(node, dict) and part in node:
+                node = node[part]
+            else:
+                return default
+        return node
 
 
 # Global instance for easy access

@@ -29,6 +29,17 @@
   "paths": {
     "historical_data": "data/historical"
   },
+  "safety": {
+    "START_MODE": "paper",
+    "LIVE_TRADING_ENABLED": false,
+    "REQUIRE_MANUAL_LIVE_CONFIRMATION": true,
+    "ORDER_ROUTING": "paper_first",
+    "MAX_STOP_LOSS_PCT": 0.15,
+    "KILL_SWITCH_ENABLED": true,
+    "CONSECUTIVE_LOSS_KILL": 3,
+    "PAPER_EQUITY_START": 10000.0,
+    "PAPER_RESET_THRESHOLD": 0.5
+  },
   "bot_settings": {
     "products_enabled": [
       "CRYPTO_SPOT",
