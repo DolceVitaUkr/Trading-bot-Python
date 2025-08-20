@@ -5,7 +5,7 @@ import pytest
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
-from trading_bot.core.utilities import retry
+from TradingBot.core.utilities import retry
 
 
 def test_retry_eventually_succeeds():
