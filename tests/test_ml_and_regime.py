@@ -37,3 +37,11 @@ def test_pair_manager_tag_regimes():
     assert regimes["volatility"] in {"LOW", "HIGH"}
     assert regimes["trend"] == "UP"
     assert regimes["liquidity"] == "HIGH"
+
+
+def test_pair_manager_refresh_and_top():
+    pm = PairManager(default=["AAA", "BBB", "CCC"])
+    pm.set_sentiment(lambda sym: 1.0 if sym == "BBB" else 0.0)
+    uni = pm.refresh_universe()
+    assert uni["crypto"][0] == "BBB"
+    assert pm.get_top(2, "crypto") == uni["crypto"][:2]
