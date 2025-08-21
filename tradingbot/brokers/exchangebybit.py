@@ -1,6 +1,10 @@
+# file: brokers/exchangebybit.py
+import asyncio
 from typing import Optional, Dict, Any, List
+
 from pybit.unified_trading import HTTP
 import ccxt
+
 from tradingbot.core.configmanager import config_manager
 from tradingbot.core.loggerconfig import get_logger
 from tradingbot.core.ratelimiter import bybit_RateLimiter
@@ -160,4 +164,54 @@ class ExchangeBybit:
             return response
         except Exception as e:
             self.log.error(f"An exception occurred while placing order: {e}", exc_info=True)
+            return {"retCode": -1, "retMsg": str(e)}
+
+    @bybit_RateLimiter.limit
+    async def fetch_ohlcv(
+        self, symbol: str, interval: str = "1m", limit: int = 200
+    ) -> List[Dict[str, Any]]:
+        """Fetch historical OHLCV data for a symbol."""
+        try:
+            self.log.info(
+                f"Fetching OHLCV for {symbol} interval {interval} limit {limit}"
+            )
+            ohlcv = await asyncio.to_thread(
+                self.client.fetch_ohlcv, symbol, interval, None, limit
+            )
+            return [
+                {
+                    "timestamp": o[0],
+                    "open": o[1],
+                    "high": o[2],
+                    "low": o[3],
+                    "close": o[4],
+                    "volume": o[5],
+                }
+                for o in ohlcv
+            ]
+        except Exception as e:
+            self.log.error(
+                f"An exception occurred while fetching OHLCV: {e}", exc_info=True
+            )
+            return []
+
+    @bybit_RateLimiter.limit
+    async def cancel_order(
+        self, order_id: str, symbol: str, category: str = "linear"
+    ) -> Dict[str, Any]:
+        """Cancel an existing order."""
+        try:
+            self.log.info(f"Canceling order {order_id} for {symbol}")
+            response = self.session.cancel_order(
+                category=category, symbol=symbol, orderId=order_id
+            )
+            if response.get("retCode") == 0:
+                self.log.info(f"Successfully canceled order: {order_id}")
+            else:
+                self.log.error(f"Error canceling order: {response}")
+            return response
+        except Exception as e:
+            self.log.error(
+                f"An exception occurred while canceling order: {e}", exc_info=True
+            )
             return {"retCode": -1, "retMsg": str(e)}
