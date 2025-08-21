@@ -7,28 +7,28 @@ import pytest
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
-from tradingbot.core.validation_manager import (
+from tradingbot.core.validationmanager import (
     BacktestEngine,
     ValidationManager,
     cvar,
-    max_drawdown,
-    sharpe_ratio,
-    walk_forward_splits,
+    maxdrawdown,
+    sharperatio,
+    walkforwardsplits,
 )
 
 
 def test_metrics_math():
     returns = [0.01, 0.02, -0.01]
     equity = np.cumsum(returns)
-    assert sharpe_ratio(returns, freq=1) == pytest.approx(0.43643578047, rel=1e-6)
-    assert max_drawdown(equity) == pytest.approx(-1 / 3, rel=1e-6)
+    assert sharperatio(returns, freq=1) == pytest.approx(0.43643578047, rel=1e-6)
+    assert maxdrawdown(equity) == pytest.approx(-1 / 3, rel=1e-6)
     tail = [-0.02, -0.05, -0.03, 0.04]
     assert cvar(tail, 0.05) == pytest.approx(0.05)
 
 
 def test_split_purge_embargo():
     data = pd.DataFrame({"x": range(30)})
-    splits = walk_forward_splits(data, n_splits=2, purge=2, embargo=2)
+    splits = walkforwardsplits(data, n_splits=2, purge=2, embargo=2)
     assert len(splits) == 2
     t0, v0 = splits[0]
     t1, v1 = splits[1]
