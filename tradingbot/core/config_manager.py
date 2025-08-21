@@ -1,3 +1,4 @@
+# file: core/config_manager.py
 import os
 from pathlib import Path
 from typing import Dict, Any
@@ -85,7 +86,33 @@ class ConfigManager:
                 return default
         return node
 
+    def reload(self) -> None:
+        """Reload configuration files from disk for all sections."""
+        self.config = self._load_json(self.config_dir / "config.json")
+        self.assets = self._load_json(self.config_dir / "assets.json")
+        self.strategies = self._load_json(self.config_dir / "strategies.json")
+
 
 # Global instance for easy access
 # This can be replaced with dependency injection later if needed
 config_manager = ConfigManager()
+
+
+def load_config() -> None:
+    """Reload the global config manager instance from disk."""
+    config_manager.reload()
+
+
+def save_config() -> None:
+    """Persist the current in-memory configuration back to disk."""
+    with open(config_manager.config_dir / "config.json", "wb") as f:
+        f.write(_json.dumps(config_manager.config))
+    with open(config_manager.config_dir / "assets.json", "wb") as f:
+        f.write(_json.dumps(config_manager.assets))
+    with open(config_manager.config_dir / "strategies.json", "wb") as f:
+        f.write(_json.dumps(config_manager.strategies))
+
+
+def get_param(path: str, default: Any | None = None) -> Any:
+    """Access a nested configuration value from the global instance."""
+    return config_manager.get(path, default)
