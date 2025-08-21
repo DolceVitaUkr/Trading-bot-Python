@@ -272,10 +272,85 @@ All filenames: lowercase with underscores (e.g., core/pair_manager.py)
 
 First line in every source file: # file: <relative-path/filename.py>
 
-Suggestions (optional)
+🧪 Validation Manager
 
-Add offline RL (CQL/TD3+BC) pretraining on historical fills + doubly-robust OPE before paper rollouts
+The Validation Manager ensures that every strategy is thoroughly tested before being promoted to live trading.
+It combines backtesting, walk-forward analysis, stress testing, and gating to guarantee reliability across different markets.
 
-Add correlation/cluster caps across symbols to reduce concentration risk
+🔍 Core Capabilities
 
-Add shadow live (paper mirror) for a week before enabling live on a new asset class
+Event-Driven Backtests
+
+Realistic fills: spread, slippage, exchange precision, fees, latency, and partial fills.
+
+Futures & Options: includes funding, borrowing, and OCO (SL/TP) handling.
+
+Walk-Forward Cross-Validation
+
+Rolling training/validation splits with purge + embargo (prevents look-ahead bias).
+
+Locks hyperparameters per fold and evaluates on forward data.
+
+Aggregates metrics across folds for robust performance estimates.
+
+Stress Testing
+
+Monte-Carlo bootstraps of trade sequences.
+
+Slippage & latency shocks (+50%, +100%).
+
+Parameter perturbations (±10–20%).
+
+Regime slicing: validation in both high-volatility and low-volatility periods.
+
+Off-Policy Evaluation (RL only)
+
+Weighted Importance Sampling (WIS) & Doubly-Robust methods for reinforcement learning strategies.
+
+Allows safe preview of new RL policies using historical logs.
+
+📊 Metrics Reported
+
+Sharpe, Sortino, Calmar, Omega ratios
+
+Maximum Drawdown & CVaR(5%)
+
+Profit Factor, Win %, Avg R multiple, Expectancy
+
+Turnover & holding-time distribution
+
+Slippage error vs. modeled execution
+
+✅ Gatekeeping Rules
+
+Strategies are only promoted to live if they meet configurable thresholds:
+
+≥ 500 trades
+
+Sharpe Ratio ≥ 2.0
+
+Max Drawdown ≤ 15%
+
+Optional: Profit Factor ≥ 1.5, CVaR ≤ threshold
+
+📂 Persistence & Reporting
+
+Results saved to logs/validation/{strategy_id}/ including:
+
+summary.json (aggregate)
+
+Per-fold reports
+
+Stress test results
+
+OPE results (if enabled)
+
+Each run snapshots config, dataset ID, and random seed for reproducibility.
+
+Reports are accessible via the UI and can be exported.
+
+🔔 Notifications
+
+Telegram alerts for pass/fail decisions with Sharpe, MaxDD, Trades, PF.
+
+Optional hourly recap of validation progress.
