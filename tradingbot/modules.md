@@ -1,556 +1,285 @@
-📘 Modules.md
-Project Structure
-tradingbot/
-  core/
-  brokers/
-  learning/
-  ui/
-  config/
-  logs/
-  state/
+modules.md — Full Spec (renamed modules + no-underscore function APIs)
 
-Core Modules
-core/config_manager.py
+All files and functions must follow: lowercase, no underscores.
+Every file begins with # file: <path>/<filename>.py.
 
-Role: Loads & validates configuration (config/config.json, assets.json, strategies.json)
+core/configmanager.py
 
-Functions:
+Purpose: central config load/validate/save.
+Public API (functions):
 
-load_config() – load JSON config
+loadconfig(section: str | None = None) -> dict
 
-save_config() – persist updates
+validateschema(config: dict, schema: dict) -> None
 
-get_param(key) – access nested settings
+saveconfig(section: str, config: dict) -> None
+Notes: JSON only; strict ranges/types; env overrides supported.
+
+core/runtimecontroller.py
+
+Purpose: runtime modes, per-asset live toggles, kill switch, hourly recap, state persistence.
+Public API:
+
+start(), stop()
+
+enablelive(asset: str) -> bool (runs validation gate, double-confirm)
+
+disablelive(asset: str, closeonly: bool = False) -> None
+
+setglobalkill(active: bool) -> None
+
+recordtraderesult(asset: str, islive: bool, pnlafterfees: float) -> None
+
+hourlypaperrecap() -> None
+
+getstate() -> dict
+State: persisted in state/runtime.json.
 
 core/datamanager.py
 
-Role: Data lake & preprocessing
+Purpose: historical/live data, parquet cache, multi-TF joins, gap checks.
+Public API:
 
-Functions:
+fetchklines(symbol: str, timeframe: str, start: str | None, end: str | None) -> DataFrame
 
-fetch_historical(symbol, tf) – get OHLCV
+savelocal(df, symbol: str, timeframe: str) -> None
 
-save_parquet(df, meta) – save with metadata
+loadlocal(symbol: str, timeframe: str) -> DataFrame
 
-multi_tf_join(dfs) – join 5m/15m/1h windows
+jointimeframes(spec: dict) -> DataFrame (e.g., entry=5m, regime=15m, context=1h)
 
-detect_gaps() – find/fill missing bars
+subscribelive(symbol: str, timeframe: str, callback) -> None
+
+core/featurestore.py
+
+Purpose: versioned features with schema.
+Public API: savefeatures, loadfeatures, validatefeatures.
 
 core/indicators.py
 
-Role: Apply technical indicators
+Purpose: TA calculations.
+Coverage: SMA, EMA, MACD, RSI, Stoch, W%R, ATR, stdev bands, MFI, OBV, Fib; HMA, KAMA, SuperTrend, Donchian, Keltner, Bollinger%B, VWAP bands, (optional) Ichimoku.
+Public API: applyindicators(df: DataFrame, spec: dict) -> DataFrame.
 
-Functions:
+core/pairmanager.py
 
-apply_indicators(df, spec) – SMA/EMA/RSI/Stoch/MFI/OBV/ATR/Fib
+Purpose: universe selection & regimes.
+Public API:
 
-Includes advanced set: HMA, KAMA, SuperTrend, Donchian, Keltner, Bollinger %B, VWAP, optional Ichimoku
+refreshuniverse() -> dict[asset, list[str]]
 
-core/pair_manager.py
+gettop(count: int, asset: str) -> list[str]
 
-Role: Dynamic symbol selection & regime tagging
+setsentiment(providerfn) -> None
 
-Functions:
+tagregimes(df: DataFrame) -> DataFrame
+Logic: rank by volatility, momentum, liquidity, spread; optional sentiment boost.
 
-rank_pairs(vol, momentum, liquidity)
+core/riskmanager.py
 
-tag_regimes(df) – volatility/trend/liquidity regime detection
+Purpose: sizing & hard risk.
+Public API:
 
-Optional: HMM regime detection
+validorder(symbol, side, notional, slpct, tpschema) -> tuple[bool, str]
 
-apply_sentiment_hook() – integrate external feeds
+computesize(equity: float, riskpct: float, minnotional: float) -> float
 
-core/strategy_manager.py
+applytrailingtp(position, atrorpct) -> None
 
-Role: Stores & applies strategies (ML, RL, rule-based)
+riskbreachcheck() -> list[str]
 
-Functions:
+positionsize(equity, drawdownpct, signalscore, sldistance, price) -> float
+Rules:
 
-load_strategy(name)
+Equity < $1000 → fixed $10 notional per trade.
 
-apply_strategy(df, model)
+≥ $1000 → tiered risk (0.5–2%), −0.25% per 5% drawdown (floor 0.25%), signal-weighted (0.5×/1.0×/1.5×).
 
-evaluate_signals(df)
+SL ≤ 15%, exposure/daily-loss/correlation caps.
 
-core/reward_system.py
+core/tradeexecutor.py
 
-Role: Reinforcement learning reward shaping
+Purpose: route paper vs live; precision/min-notional; slippage/latency; OCO SL/TP; reconcile.
+Public API:
 
-Logic: PnL_after_fees – λ_dd*drawdown – λ_turn*turnover – λ_tail*CVaR_tail + bonus_TP
+routeorder(orderintent: dict, mode: str = "simulation") -> dict
 
-core/risk_manager.py
+enablelive(asset: str) / disablelive(asset: str, closeonly: bool = False)
 
-Role: Position sizing, exposure, safety rules
+closeallopen(asset: str) -> None
 
-Logic:
+ensuresltp(asset: str) -> None
 
-Learning phase: $10 notional until equity ≥ $1,000
+reconcilepositions(asset: str) -> None
+Execution realism: spread & volatility-based slippage, partial fills, funding (futures), maker/taker fees.
 
-Growth phase: equity-tier % (0.5–2%), −0.25% risk per 5% DD, floor 0.25%
+core/portfoliomanager.py
 
-Signal weighting: weak=0.5×, strong=1.0×, very_strong=1.5×
+Purpose: balances, equity, U/R P&L, reward points, exposures.
+Public API:
 
-Hard SL ≤ 15%, daily loss caps, exposure limits
+updateonfill(fill: dict) -> None
 
-core/trade_executor.py
+valuation(asset: str) -> dict (equity, pnl_u, pnl_r)
 
-Role: Route orders (simulation vs live)
+getopenpositions(asset: str) -> list[dict]
 
-Features:
+flatten(asset: str) -> None
 
-Slippage model (spread×vol×size), partial fills, latency jitter
+core/validationmanager.py
 
-Close-only mode (kill switch)
+Purpose: backtest + walk-forward + stress + (optional) OPE + gate.
+Public API:
 
-Reconcile open positions on restart
+validatestrategy(strategyid: str, dataspec: dict, gates: dict) -> dict
 
-core/portfolio_manager.py
+backtest(strategyid: str, period: dict) -> dict
 
-Role: Tracks balances, equity, open trades, P&L
+walkforward(strategyid: str, dataspec: dict, splits: int, embargobars: int) -> dict
 
-Functions:
+stress(strategyid: str, dataspec: dict, specs: dict) -> dict
 
-update_balance()
+ope(strategyid: str, dataspec: dict, behaviorstats: dict | None) -> dict
 
-get_equity()
+savereport(report: dict, path: Path) -> None
 
-report_positions()
+latestreport(strategyid: str) -> dict
 
-core/validation_manager.py
-Trading Bot – Multi-Asset, Training-First, UI-First (World-Class Edition)
-Overview
-
-Assets: Crypto Spot & Futures (Bybit), Forex & Options (IBKR)
-
-Modes: Training (paper) by default; Live is per-asset toggle with double-confirm + validation gates
-
-UI: FastAPI web dashboard (loads first) with 4 panels (Crypto Spot, Crypto Futures, Forex, Options)
-
-Goal: A robust, self-learning bot (ML + RL), strict risk, and production-grade reliability
-
-Core Principles
-
-Safety first: Paper mode by default; no live orders until explicitly enabled per asset
-
-Transparency: Telegram alerts, hourly paper recap, /diff preview of would-be live orders
-
-Modularity: Clear, testable modules; simple public APIs; cross-platform paths
-
-Consistency: All module filenames lowercase; each file begins with # file: <path>
-
-Architecture (Folders & Responsibilities)
-tradingbot/
-  core/        # config_manager, datamanager, indicators, pair_manager,
-               # strategy_manager, reward_system, risk_manager, trade_executor,
-               # portfolio_manager, validation_manager, optimizer,
-               # notifier, error_handler, runtime_controller
-  brokers/     # exchangebybit.py (spot/futures), exchangeibkr.py (forex/options)
-  learning/    # train_ml_model.py, train_rl_model.py, save_ai_update.py
-  ui/          # FastAPI app, routers, websockets, routes/diff.py (dry-run preview)
-  config/      # config.json, assets.json, strategies.json
-  logs/        # json/csv: trades, decisions, errors, telemetry, validation
-  state/       # models/, replay_buffers/, checkpoints/, caches/, runtime.json
-
-Naming & Headers
-
-File names: lowercase with underscores (e.g., core/datamanager.py)
-
-Header in every file (first line):
-# file: core/datamanager.py
-
-Safety Defaults (Out-of-the-Box)
-
-Start mode: Training (paper)
-
-Live: Disabled for all assets until manually enabled per asset (double-confirm + validation)
-
-Kill switch (Live only): Manual and auto (on consecutive losses); sets close-only; paper continues
-
-Hard SL cap: 15% max per trade (never widen SL)
-
-UI loads first: See everything before any transaction
-
-Features (What You Get)
-
-Unified Dashboard: 4 panels with status, equity, P&L, open positions, logs, controls (live toggle, kill switch, stop options)
-
-Paper & Live Mode: Paper always on; Live only after validation gates pass
-
-/diff Preview: Compare current paper intents vs would-be live orders before enabling Live
-
-Telegram Alerts: Start/Stop, status, hourly paper recap, live opens/closes (P/L%, fees, pure profit, reward points), validation, kill-switch
-
-Dynamic Pair Rotation: Volatility, momentum, liquidity, spread; optional sentiment weights
-
-Indicators: Rich TA set (SMA/EMA, RSI, Stoch, Williams %R, ATR, stdev bands, MFI, OBV, Fib; plus HMA, KAMA, SuperTrend, Donchian, Keltner, Bollinger %B, VWAP bands; Ichimoku optional)
-
-Learning Engine (ML + RL):
-
-RL: Double+Dueling DQN + Prioritized Replay + n-step; PPO+GAE path; LSTM/Transformer encoders
-
-ML: Triple-Barrier labels + Meta-labeling; walk-forward CV with purge/embargo; SHAP pruning
-
-Validation Gates: Trades ≥ 500, Sharpe ≥ 2.0, Max DD ≤ 15% (per asset, before Live)
-
-Persistence & Recovery: Resume models, replay, pair universe, runtime state; reconcile open live positions
-
-Backtesting & OOS: Purged, embargoed walk-forward; stress slippage; Monte Carlo trade bootstraps
-
-Risk Management (Aligned)
-
-Mandatory SL & TP for every trade; SL cap 15%
-
-Learning phase sizing: $10 fixed notional per trade until equity ≥ $1,000
-
-Growth phase sizing (≥ $1,000):
-
-Equity tiers: ~0.5% → 2.0% risk fraction
-
-Drawdown adjuster: −0.25% risk per 5% DD (floor 0.25%)
-
-Signal weighting: weak <0.6 → 0.5×; strong 0.6–0.8 → 1.0×; very strong >0.8 → 1.5×
-
-Size formula: (equity * risk_fraction) / (stop_loss_distance * price)
-
-Daily loss & exposure caps: configurable; enforce per asset
-
-Kill switch: close-only; ensure SL/TP; close profitable where possible; Live paused, Paper continues
-
-Data & Indicators
-
-Data lake: Parquet + metadata; gap detection/backfill; multi-TF joins (5m entry, 15m regime, 1h context)
-
-Regime tagging: Volatility/trend/liquidity regimes; optional HMM (2-state)
-
-Microstructure (optional/where available): spread, imbalance, depth; funding, OI, basis (futures)
-
-Learning Engine (Details)
-
-RL: DQN (Double+Dueling, Prioritized Replay, n-step), PPO (GAE), soft targets, entropy scheduling, obs/reward norm
-
-ML: Gradient boosting / linear / shallow NN; Triple-Barrier & Meta-labeling; purged WFCV; SHAP
-
-Rewards: After-fees P&L − λ_dddrawdown − λ_turnturnover − λ_tail*CVaR_tail + bonus_TP
-
-Curriculum: Phase 1 ($10 fixed, majors), Phase 2 (tiers+more symbols), Phase 3 (futures/options + microstructure)
-
-UI & Endpoints (FastAPI)
-
-Loads first, before any orders
-
-Key endpoints:
-
-GET /status – runtime snapshot
-
-POST /live/{asset}/enable – double-confirm + validation gates
-
-POST /live/{asset}/disable – turn off live for asset
-
-POST /kill/{scope}/{onoff} – scope = asset|global; onoff = true|false
-
-POST /stop/{asset}?mode=close_all|keep_open – stop options
-
-GET /diff/{asset} – dry-run (paper vs would-be live)
-
-POST /diff/confirm/{asset} – confirm and enable live (after gates)
-
-WS /stream – equity, P&L, positions, logs, metrics tiles
-
-Telegram (Examples)
-
-Lifecycle: “🚀 Start (Training). Live disabled for all assets.” / “🛑 Stop.”
-
-Hourly Paper Recap: P/L%, fees, pure profit, reward points, trade count
-
-Paper Intent: “🧪 BUY BTCUSDT ~ $10.00 (dry-run)”
-
-Live Open/Close: includes notional, P/L%, fees, pure profit, reward points
-
-Validation/Kill: pass/fail reports; kill switch on/off; close-only states
-
-Configuration (Samples)
-
-config/config.json
-
-{
-  "START_MODE": "training",
-  "LIVE_TRADING_ENABLED": false,
-  "REQUIRE_MANUAL_LIVE_CONFIRMATION": true,
-  "ORDER_ROUTING": "simulation",
-  "MAX_STOP_LOSS_PCT": 15.0,
-  "KILL_SWITCH_ENABLED": true,
-  "CONSECUTIVE_LOSS_KILL": 3,
-  "PAPER_EQUITY_START": 1000.0,
-  "PAPER_RESET_THRESHOLD": 10.0,
-  "TELEGRAM": {
-    "ENABLED": true,
-    "BOT_TOKEN": "YOUR_TOKEN",
-    "CHAT_ID": "YOUR_CHAT_ID",
-    "SEND_TRADE_INTENTS_IN_TRAINING": true,
-    "SEND_EXECUTIONS_IN_LIVE": true,
-    "SEND_ERRORS": true,
-    "SEND_HOURLY_PAPER_RECAP": true
-  }
-}
-
-
-config/assets.json (example)
-
-{
-  "bybit": {
-    "spot":    { "symbols": ["BTCUSDT","ETHUSDT"], "fees_bps": 10, "min_notional": 10, "tick_size": 0.01, "qty_step": 0.0001 },
-    "futures": { "symbols": ["BTCUSDT","ETHUSDT"], "fees_bps": 10, "tick_size": 0.5,  "qty_step": 0.001,  "leverage_max": 5 }
-  },
-  "ibkr": {
-    "forex":   { "symbols": ["EURUSD","GBPUSD"],   "fees_bps": 2,  "tick_size": 0.00005, "qty_step": 1000 },
-    "options": { "underlyings": ["AAPL","SPY"],    "fees_per_contract": 0.65 }
-  }
-}
-
-
-config/strategies.json (high-level)
-
-{
-  "global": {
-    "validation": { "min_trades": 500, "min_sharpe": 2.0, "max_drawdown_pct": 15.0 }
-  },
-  "state": { "tf": { "entry": "5m", "regime": "15m", "context": "1h" }, "encoder": "lstm" },
-  "indicators": {
-    "ema": { "short": [5, 8, 13], "long": [21, 50] },
-    "atr": { "period": 14, "tp_mult": [2.0, 2.5], "sl_mult": [1.5, 2.0] },
-    "rsi": { "period": 14 },
-    "mfi": { "period": 14 },
-    "williams_r": { "period": 14 },
-    "fib": { "lookback_bars": 300 },
-    "extras": { "hma": 21, "kama": 10, "supertrend": {"atr":10,"mult":3}, "donchian": 20, "keltner": {"ema":20,"atr":2} }
-  },
-  "rl": {
-    "engine": "dqn_dueling_prioritized",
-    "n_step": 3,
-    "double": true,
-    "prio": { "alpha": 0.6, "beta0": 0.4, "anneal_steps": 100000 }
-  },
-  "ppo": { "gae_lambda": 0.95, "entropy_coef": 0.01, "clip_ratio": 0.2 },
-  "reward": { "fee_model": "after_fees", "dd_penalty": 0.5, "turnover_penalty": 0.1, "cvar_tail_pct": 5, "tp_bonus": 0.2 },
-  "sizing": {
-    "fixed_until_equity": 1000,
-    "fixed_notional": 10,
-    "tiers": [[1000,0.01],[5000,0.015],[20000,0.02]],
-    "drawdown_step_pct": 5,
-    "drawdown_step_delta": 0.0025,
-    "signal_weight": {"weak":0.5,"strong":1.0,"very_strong":1.5}
-  }
-}
-
-Getting Started
-git clone https://github.com/DolceVitaUkr/Trading-bot-Python.git
-cd Trading-bot-Python
-python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-python -m tradingbot.run_bot
-# Open the Dashboard URL shown in the console (UI loads first; paper mode only)
-
-Minimal Entrypoint (for reference)
-# file: tradingbot/run_bot.py
-"""
-UI-first, training-first launcher. Live routing is disabled at boot.
-"""
-
-from tradingbot.core.config_manager import ConfigManager
-from tradingbot.core.runtime_controller import RuntimeController
-from tradingbot.ui.app import run_dashboard
-
-def main():
-    cfg = ConfigManager("tradingbot/config/config.json").load()
-    ctl = RuntimeController(cfg)
-    ctl.start()  # sends Telegram "Start", initializes paper mode, persists runtime state
-    run_dashboard(cfg=cfg, controller=ctl)
-
-if __name__ == "__main__":
-    main()
-
-Tests
-
-Unit: risk sizing math ($10 rule + growth tiers), SL cap, kill-switch transitions, broker precision, regime tagging, triple-barrier labeling
-
-Integration: resume/reconcile open live positions; UI /diff → enable live flow; validation gates; Telegram events
-
-Determinism: seeded backtests; logged configs; reproducible reports in logs/validation
-
-Ops & Monitoring
-
-Tracking: MLflow/W&B runs, metrics, artifacts; model registry
-
-Metrics tiles in UI: Sharpe, Sortino, MaxDD, CVaR(5%), PF, Turnover, Slippage error, Latency p95
-
-Alerts: validation pass/fail, kill-switch actions, daily P&L snapshot, OOS breaches
-
-Conventions Recap
-
-All filenames: lowercase with underscores (e.g., core/pair_manager.py)
-
-First line in every source file: # file: <relative-path/filename.py>
-
-Suggestions (optional)
-
-Add offline RL (CQL/TD3+BC) pretraining on historical fills + doubly-robust OPE before paper rollouts
-
-Add correlation/cluster caps across symbols to reduce concentration risk
-
-Add shadow live (paper mirror) for a week before enabling live on a new asset class
+eligibleforlive(strategyid: str, gates: dict | None = None) -> bool
+Gate defaults: trades≥500, sharpe≥2.0, maxdd≤15%, pf≥1.5, cvar within bounds.
+Artifacts: logs/validation/{strategyid}/....
 
 core/optimizer.py
 
-Role: Hyperparameter tuning
-
-Methods: grid search, random search, evolutionary algorithms
-
-Targets: indicator params, RL hyperparams, sizing thresholds
+Purpose: grid/random/evolutionary tuning.
+Public API: optimize(paramspec: dict, objectivefn) -> dict.
 
 core/notifier.py
 
-Role: Telegram integration
+Purpose: Telegram/ops notifications.
+Public API:
 
-Events: start, stop, errors, hourly paper recap, paper intents, live opens/closes, validation pass/fail, kill-switch
+sendstart, sendstop, sendstatus, senderror,
 
-core/error_handler.py
+sendpaperintent, sendpaperhourlyrecap,
 
-Role: Exception handling & logging
+sendliveopen, sendliveclose,
 
-Functions:
+sendmodechange, sendkillswitch.
 
-handle_error() – logs + Telegram alert
+core/errorhandler.py
 
-recover_state() – safe fallback
+Purpose: classify/log exceptions, circuit breaker, restart hooks.
+Public API: handle(exc, context) -> str, errorratecircuitbreaker(window, threshold) -> bool.
 
-core/runtime_controller.py
+core/driftmonitor.py
 
-Role: Orchestrates runtime states
+Purpose: feature/label/model drift; alerts & auto de-risk hooks.
+Public API: checkdrift(features, baseline) -> dict, alertifdrift(report) -> None.
 
-Features:
+brokers/exchangebybit.py
 
-Per-asset live toggles (crypto spot/futures, forex, options)
+Purpose: Bybit adapter (spot + USDT-M futures).
+Public API:
 
-Kill switch (manual & auto on consecutive losses)
+getprecision, getminnotional
 
-Hourly recap scheduling
+getklines, createorder, cancelorder
 
-Persists runtime state in state/runtime.json
+fetchpositions, fetchbalances
 
-Brokers
-brokers/exchange_bybit.py
+brokers/exchangeibkr.py
 
-Role: Bybit Spot & Futures adapter
+Purpose: IBKR adapter (forex + options).
+Public API:
 
-Functions:
+gettick, gethistory
 
-fetch_ohlcv()
+placeorder, cancelorder
 
-place_order()
+fetchbalances, fetchpositions
 
-cancel_order()
+learning/statefeaturizer.py
 
-Fee model, precision, min notional checks
+Purpose: build state tensors (multi-TF, indicators, regimes, embeddings).
+Public API: buildstate(df: DataFrame, spec: dict) -> Any.
 
-brokers/exchange_ibkr.py
+learning/trainmlmodel.py
 
-Role: IBKR Forex & Options adapter
+Purpose: triple-barrier labels, meta-labeling, WFCV, SHAP pruning.
+Public API:
 
-Functions:
+trainml(features: DataFrame, labels: Array, config: dict) -> str (returns path)
 
-fetch_forex_data()
+loadml(path: str) -> Any
 
-place_fx_order()
+predictml(model: Any, features: DataFrame) -> Array
 
-place_option_order()
+learning/trainrlmodel.py
 
-Compliance with IBKR rules
+Purpose: DQN (double/dueling/PER/n-step) & PPO (GAE); optional SAC/TD3; replay & checkpoints.
+Public API:
 
-Learning
-learning/train_ml_model.py
+trainrl(datastream, rewardfn, config) -> str
 
-Role: ML strategy training
+loadrl(path: str) -> Any
 
-Features:
+evaluaterl(datastream) -> dict
 
-Triple-Barrier labeling, Meta-labeling
+learning/saveaiupdate.py
 
-Feature pipeline (lags, rolling stats, PCA/AE opt.)
+Purpose: persist models, replay, metadata.
+Public API: saveaiupdate(models: dict, replay, meta: dict) -> dict.
 
-Purged walk-forward CV
-
-SHAP pruning
-
-learning/train_rl_model.py
-
-Role: Reinforcement learning training
-
-Features:
-
-Double+Dueling DQN + Prioritized Replay + n-step
-
-PPO+GAE path
-
-LSTM/Transformer encoders
-
-Composite reward
-
-learning/save_ai_update.py
-
-Role: Persist and version AI models
-
-Features:
-
-Save weights, replay buffers, validation reports
-
-Register in MLflow/W&B
-
-UI
 ui/app.py
 
-Role: FastAPI dashboard entrypoint
+Purpose: FastAPI app + WebSocket dashboard.
+Routes:
 
-Features: 4 panels (crypto spot/futures, forex, options), WebSocket metrics, control endpoints
+GET /status
+
+POST /live/{asset}/enable, POST /live/{asset}/disable
+
+POST /kill/{scope}/{onoff}
+
+POST /stop/{asset}?mode=close_all|keep_open
+
+GET /diff/{asset}, POST /diff/confirm/{asset}
+
+GET /validation/{strategy}
+
+WS /stream
 
 ui/routes/diff.py
 
-Role: Dry-run preview
-
-Function: show paper vs would-be live orders, require confirmation
+Purpose: dry-run diff (paper vs would-be live).
 
 ui/routes/validation.py
 
-Role: Show validation reports before enabling live
+Purpose: serve latest validation report JSON.
 
-Config
+tests/
 
-config/config.json – runtime, Telegram, kill switch, equity rules
+Unit: risksizing math ($10 rule + tiers + drawdown + signal weight), slcap, precision/minnotional, indicators, splits (purge+embargo), metrics (sharpe/maxdd/cvar).
+Integration: resume/reconcile, /diff enable-live flow, validation e2e snapshot (seeded), killswitch transitions.
 
-config/assets.json – symbols, fees, tick sizes, min notional
+state/ & logs/
 
-config/strategies.json – indicator params, RL/ML settings, sizing, validation
+state/: models/, replay_buffers/, checkpoints/, caches/, runtime.json
 
-Logs
+logs/: trades/, decisions/, errors/, validation/
 
-logs/ contains JSON/CSV logs of: trades, intents, decisions, validation, errors, hourly recaps
+Final consistency checklist
 
-State
+Files & functions: all lowercase, no underscores.
 
-state/ persists:
+Classes: CamelCase.
 
-runtime.json – toggles, kill state, session info
+Header line in every file:
 
-models/ – ML/RL saved weights
+# file: <path>/<filename>.py
 
-replay_buffers/ – RL experiences
 
-checkpoints/ – training snapshots
+Training-first → Validation → per-asset Live; Kill switch semantics unchanged.
 
-caches/ – recent data
-
-Conventions
-
-File names: lowercase with underscores
-
-Header in every file:
-# file: core/datamanager.py
+If you want, I can generate a search-and-replace refactor plan (old→new filenames & function names) so your agent can auto-rename everything safely.
