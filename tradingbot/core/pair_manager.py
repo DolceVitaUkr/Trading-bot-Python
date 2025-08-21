@@ -1,24 +1,78 @@
+# file: core/pair_manager.py
+
 """Dynamic trading pair selection (very small placeholder)."""
 
 from __future__ import annotations
 
-from typing import List, Dict
+from typing import Callable, Dict, List
 
 import pandas as pd
 
 
 class PairManager:
-    """Return a static list of pairs.
+    """Manage trading pair universe and simple regime tags.
 
-    A real implementation would analyse volatility, volume and other
-    metrics.  For the unit tests we simply return a fixed universe.
+    The class is purposely lightweight but exposes a small API that mimics the
+    behaviour described in the project plan.  ``refresh_universe`` produces a
+    deterministic ranking so unit tests can make assertions on the returned
+    ordering without relying on external data.
     """
 
     def __init__(self, default: List[str] | None = None) -> None:
         self._default = default or ["BTCUSDT", "ETHUSDT"]
+        self._sentiment: Callable[[str], float] | None = None
+        self._ranked: List[str] = list(self._default)
 
+    # ------------------------------------------------------------------
+    def set_sentiment(self, providerfn: Callable[[str], float] | None) -> None:
+        """Register an optional sentiment provider.
+
+        The callable should return a numeric sentiment score in the range
+        ``[-1, 1]`` for a given symbol.  Positive numbers boost the ranking
+        produced by :meth:`refresh_universe`.
+        """
+
+        self._sentiment = providerfn
+
+    # ------------------------------------------------------------------
+    def refresh_universe(self) -> Dict[str, List[str]]:
+        """Return a ranked universe grouped by asset class.
+
+        A very small deterministic scoring function is used: the base score is
+        derived from the symbol's character codes, and sentiment (if available)
+        is added on top.  Rankings are stored for subsequent calls to
+        :meth:`get_top` and :meth:`current_universe`.
+        """
+
+        scores: Dict[str, float] = {}
+        for sym in self._default:
+            base = sum(ord(c) for c in sym) / 1000.0
+            sent = self._sentiment(sym) if self._sentiment else 0.0
+            scores[sym] = base + sent
+
+        # sort descending by score
+        self._ranked = [s for s, _ in sorted(scores.items(), key=lambda kv: kv[1], reverse=True)]
+        return {"crypto": list(self._ranked)}
+
+    # ------------------------------------------------------------------
     def current_universe(self) -> List[str]:
-        return list(self._default)
+        """Return the last computed ranking (refreshing if needed)."""
+
+        if not self._ranked:
+            self.refresh_universe()
+        return list(self._ranked)
+
+    # ------------------------------------------------------------------
+    def get_top(self, count: int, asset: str) -> List[str]:
+        """Return the ``count`` highest ranked symbols for ``asset``.
+
+        Only the ``"crypto"`` asset class is supported in this simplified
+        implementation, but the signature mirrors the project specification.
+        """
+
+        if not self._ranked:
+            self.refresh_universe()
+        return self._ranked[:count]
 
     # ------------------------------------------------------------------
     def tag_regimes(self, df: pd.DataFrame) -> Dict[str, str]:
