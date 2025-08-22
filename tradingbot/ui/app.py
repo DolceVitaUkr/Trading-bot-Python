@@ -5,11 +5,10 @@ from __future__ import annotations
 from fastapi import FastAPI, HTTPException
 
 from tradingbot.core.runtime_controller import RuntimeController
-from tradingbot.core.validation_manager import ValidationManager
-
+from .routes.validation import router as validation_router
+from .routes.diff import router as diff_router
 
 runtime = RuntimeController()
-validator = ValidationManager()
 
 
 def create_app() -> FastAPI:
@@ -37,12 +36,8 @@ def create_app() -> FastAPI:
         runtime.set_global_kill(onoff.lower() == "on")
         return {"kill_switch": runtime.get_state()["global"]["kill_switch"]}
 
-    @app.get("/validation/{strategy_id}")
-    def validation(strategy_id: str):
-        report = validator.latest_report(strategy_id)
-        if report is None:
-            raise HTTPException(status_code=404, detail="report not found")
-        return report
+    app.include_router(validation_router)
+    app.include_router(diff_router)
 
     return app
 
