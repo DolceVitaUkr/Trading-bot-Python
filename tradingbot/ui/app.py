@@ -6,10 +6,12 @@ from fastapi import FastAPI, HTTPException
 
 from tradingbot.core.runtime_controller import RuntimeController
 from tradingbot.core.validation_manager import ValidationManager
+from tradingbot.core.diff_manager import DiffManager
 
 
 runtime = RuntimeController()
 validator = ValidationManager()
+diff_manager = DiffManager()
 
 
 def create_app() -> FastAPI:
@@ -43,6 +45,18 @@ def create_app() -> FastAPI:
         if report is None:
             raise HTTPException(status_code=404, detail="report not found")
         return report
+
+    @app.get("/diff/{asset}")
+    def diff(asset: str):
+        """Preview proposed actions for ``asset`` without applying them."""
+
+        return {"asset": asset, "actions": diff_manager.proposed_actions(asset)}
+
+    @app.post("/diff/confirm/{asset}")
+    def diff_confirm(asset: str):
+        """Apply previously proposed actions for ``asset``."""
+
+        return {"asset": asset, "actions": diff_manager.confirm_actions(asset)}
 
     return app
 
