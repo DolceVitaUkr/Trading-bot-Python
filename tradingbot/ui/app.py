@@ -5,14 +5,20 @@ from __future__ import annotations
 from fastapi import FastAPI, HTTPException
 
 from tradingbot.core.runtime_controller import RuntimeController
+from tradingbot.core.validation_manager import ValidationManager
 from .routes.validation import router as validation_router
 from .routes.diff import router as diff_router
 
 runtime = RuntimeController()
+validator = ValidationManager()
 
 
 def create_app() -> FastAPI:
     app = FastAPI()
+    
+    # Include route modules
+    app.include_router(validation_router)
+    app.include_router(diff_router)
 
     @app.get("/status")
     def status():
@@ -66,23 +72,6 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=500, detail=f"Failed to set kill switch: {exc}") from exc
         return {"kill_switch": runtime.get_state()["global"]["kill_switch"]}
 
-    @app.get("/validation/{strategy_id}")
-    def validation(strategy_id: str):
-        # Input validation for strategy ID
-        if not strategy_id or not strategy_id.strip():
-            raise HTTPException(status_code=400, detail="Strategy ID cannot be empty")
-        if len(strategy_id) > 100:
-            raise HTTPException(status_code=400, detail="Strategy ID too long")
-        if not strategy_id.replace("_", "").replace("-", "").isalnum():
-            raise HTTPException(status_code=400, detail="Invalid strategy ID format")
-        
-        try:
-            report = validator.latest_report(strategy_id.strip())
-            if report is None:
-                raise HTTPException(status_code=404, detail="Report not found")
-            return report
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"Failed to retrieve validation report: {exc}") from exc
 
     return app
 

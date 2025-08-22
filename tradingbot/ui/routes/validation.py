@@ -1,3 +1,4 @@
+# file: tradingbot/ui/routes/validation.py
 """Validation report endpoints."""
 
 from __future__ import annotations
@@ -27,10 +28,20 @@ def get_latest_report(strategy_id: str) -> dict:
 @router.get("/validation/{strategy_id}")
 def validation(strategy_id: str) -> dict:
     """Serve the validation report for ``strategy_id``."""
+    # Input validation for strategy ID
+    if not strategy_id or not strategy_id.strip():
+        raise HTTPException(status_code=400, detail="Strategy ID cannot be empty")
+    if len(strategy_id) > 100:
+        raise HTTPException(status_code=400, detail="Strategy ID too long")
+    if not strategy_id.replace("_", "").replace("-", "").isalnum():
+        raise HTTPException(status_code=400, detail="Invalid strategy ID format")
+    
     try:
-        return get_latest_report(strategy_id)
+        return get_latest_report(strategy_id.strip())
     except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="report not found") from exc
+        raise HTTPException(status_code=404, detail="Report not found") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve validation report: {exc}") from exc
 
 
 __all__ = ["router", "get_latest_report"]
