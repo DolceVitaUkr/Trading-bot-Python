@@ -22,7 +22,7 @@ It always trains and validates strategies before trading live, with a paper-trad
 
 📂 File & Naming Guidelines
 
-All files lowercase with underscores: core/datamanager.py
+All files lowercase without underscores: core/datamanager.py
 
 First line of every source file:
 

@@ -1,3 +1,4 @@
+# file: tradingbot/core/schemas.py
 """
 Pydantic schemas for data validation and serialization.
 """

@@ -21,28 +21,69 @@ def create_app() -> FastAPI:
 
     @app.post("/live/{asset}/enable")
     def enable(asset: str):
+        # Input validation
+        if not asset or not asset.strip():
+            raise HTTPException(status_code=400, detail="Asset symbol cannot be empty")
+        if len(asset) > 20:
+            raise HTTPException(status_code=400, detail="Asset symbol too long")
+        if not asset.replace("/", "").replace("-", "").isalnum():
+            raise HTTPException(status_code=400, detail="Invalid asset symbol format")
+        
         try:
-            runtime.enable_live(asset)
+            runtime.enable_live(asset.upper().strip())
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return {"asset": asset, "live": True}
+        return {"asset": asset.upper().strip(), "live": True}
 
     @app.post("/live/{asset}/disable")
     def disable(asset: str):
-        runtime.disable_live(asset)
-        return {"asset": asset, "live": False}
+        # Input validation
+        if not asset or not asset.strip():
+            raise HTTPException(status_code=400, detail="Asset symbol cannot be empty")
+        if len(asset) > 20:
+            raise HTTPException(status_code=400, detail="Asset symbol too long")
+        if not asset.replace("/", "").replace("-", "").isalnum():
+            raise HTTPException(status_code=400, detail="Invalid asset symbol format")
+        
+        try:
+            runtime.disable_live(asset.upper().strip())
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"asset": asset.upper().strip(), "live": False}
 
     @app.post("/kill/global/{onoff}")
     def kill(onoff: str):
-        runtime.set_global_kill(onoff.lower() == "on")
+        # Input validation for kill switch
+        if not onoff or not onoff.strip():
+            raise HTTPException(status_code=400, detail="Kill switch value cannot be empty")
+        onoff_clean = onoff.strip().lower()
+        if onoff_clean not in ["on", "off", "true", "false", "1", "0"]:
+            raise HTTPException(status_code=400, detail="Kill switch must be 'on', 'off', 'true', 'false', '1', or '0'")
+        
+        kill_enabled = onoff_clean in ["on", "true", "1"]
+        try:
+            runtime.set_global_kill(kill_enabled)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Failed to set kill switch: {exc}") from exc
         return {"kill_switch": runtime.get_state()["global"]["kill_switch"]}
 
     @app.get("/validation/{strategy_id}")
     def validation(strategy_id: str):
-        report = validator.latest_report(strategy_id)
-        if report is None:
-            raise HTTPException(status_code=404, detail="report not found")
-        return report
+        # Input validation for strategy ID
+        if not strategy_id or not strategy_id.strip():
+            raise HTTPException(status_code=400, detail="Strategy ID cannot be empty")
+        if len(strategy_id) > 100:
+            raise HTTPException(status_code=400, detail="Strategy ID too long")
+        if not strategy_id.replace("_", "").replace("-", "").isalnum():
+            raise HTTPException(status_code=400, detail="Invalid strategy ID format")
+        
+        try:
+            report = validator.latest_report(strategy_id.strip())
+            if report is None:
+                raise HTTPException(status_code=404, detail="Report not found")
+            return report
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Failed to retrieve validation report: {exc}") from exc
 
     return app
 

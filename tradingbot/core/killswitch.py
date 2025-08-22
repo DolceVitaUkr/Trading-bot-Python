@@ -1,3 +1,4 @@
+# file: tradingbot/core/killswitch.py
 import logging
 from typing import Dict, Any, List
 from collections import defaultdict

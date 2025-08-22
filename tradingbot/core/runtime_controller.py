@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Callable, Dict, Any
 
-from .config_manager import ConfigManager, config_manager
+from .configmanager import ConfigManager, config_manager
 from .notifier import Notifier
 
 

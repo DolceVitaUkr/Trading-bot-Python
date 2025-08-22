@@ -28,9 +28,8 @@ LOG_FILE = os.getenv("LOG_FILE", "bot.log")
 # ───────────────────────────────────────────────
 # API Keys
 # ───────────────────────────────────────────────
-BYBIT_API_KEY = os.getenv("BYBIT_API_KEY", "TujcvO0Luboj8ET0tp")
-BYBIT_API_SECRET = os.getenv(
-    "BYBIT_API_SECRET", "0oT2ENYllETn3sKXx0m42LvWG8zWnEqhN72k")
+BYBIT_API_KEY = os.getenv("BYBIT_API_KEY")
+BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET")
 
 # Bybit V5 URL (Mainnet only)
 BYBIT_V5_URL = "https://api.bybit.com"
@@ -78,9 +77,8 @@ MD_SUBSCRIPTIONS = orjson.loads(_md_subscriptions_str)
 # ───────────────────────────────────────────────
 # Telegram
 # ───────────────────────────────────────────────
-TELEGRAM_BOT_TOKEN = os.getenv(
-    "TELEGRAM_BOT_TOKEN", "7611295732:AAHazYz46ynfueYthvQXvQRA9bYlxihEf1c")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "380533508")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 ASYNC_TELEGRAM = os.getenv(
     "ASYNC_TELEGRAM", "true").lower() in {"1", "true", "yes", "on"}
 TELEGRAM_PAPER_RECAP_MIN = int(os.getenv("TELEGRAM_PAPER_RECAP_MIN", "60"))

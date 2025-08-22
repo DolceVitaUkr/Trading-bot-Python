@@ -453,9 +453,12 @@ class ValidationManager(ValidationRunner):
 
         try:
             await self.notifier.send_message_async(message)
-        except Exception:
-            # Notifications must never disrupt execution; swallow errors
-            pass
+        except Exception as e:
+            # Notifications must never disrupt execution; log but continue
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to send notification: {e}")
+            # Don't re-raise, allow execution to continue
 
 
 # Public constants for gating (used in tests)
