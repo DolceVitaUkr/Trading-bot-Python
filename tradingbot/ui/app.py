@@ -5,11 +5,10 @@ from __future__ import annotations
 from fastapi import FastAPI, HTTPException
 
 from tradingbot.core.runtime_controller import RuntimeController
-from tradingbot.core.validation_manager import ValidationManager
-
+from .routes.validation import router as validation_router
+from .routes.diff import router as diff_router
 
 runtime = RuntimeController()
-validator = ValidationManager()
 
 
 def create_app() -> FastAPI:
