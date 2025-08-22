@@ -12,6 +12,8 @@ ib_insync==0.9.86
 pandas==2.2.2
 pandas-ta==0.3.14b0
 numpy==1.26.4
+scikit-learn==1.5.1
+xgboost==2.1.1
 torch==2.3.1
 deap==1.4.1
 
@@ -19,6 +21,8 @@ deap==1.4.1
 fastapi==0.111.0
 uvicorn==0.30.6
 pydantic==2.8.2
+jsonschema==4.23.0
+stable-baselines3==2.3.2
 python-dotenv==1.0.1
 python-telegram-bot==21.6
 structlog==25.4.0
