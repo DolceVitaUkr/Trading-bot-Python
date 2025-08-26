@@ -5,7 +5,13 @@
       "Bash(git rm:*)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Bash(pip install:*)"
+      "Bash(pip install:*)",
+      "Bash(mkdir:*)",
+      "Bash(timeout:*)",
+      "Bash(curl:*)",
+      "Bash(start:*)",
+      "WebFetch(domain:bybit-exchange.github.io)",
+      "Read(/D:\\/**)"
     ],
     "deny": [],
     "ask": []

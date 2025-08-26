@@ -6,8 +6,8 @@
   },
   "api_keys": {
     "bybit": {
-      "key": "_ENV_BYBIT_API_KEY_",
-      "secret": "_ENV_BYBIT_API_SECRET_"
+      "key": "v01FgpqoPho7Ii4WqC",
+      "secret": "z8QnFG4OoX4WejvyzEWOvU8SYmK6wNpqG5bu"
     },
     "ibkr": {
       "host": "127.0.0.1",
@@ -20,8 +20,8 @@
     "port": 8000
   },
   "telegram": {
-    "token": "_ENV_TELEGRAM_BOT_TOKEN_",
-    "chat_id": "_ENV_TELEGRAM_CHAT_ID_",
+    "token": "7611295732:AAHazYz46ynfueYthvQXvQRA9bYlxihEf1c",
+    "chat_id": "380533508",
     "paper_recap_minutes": 60,
     "live_alert_level": "normal",
     "heartbeat_minutes": 10
@@ -37,7 +37,7 @@
     "MAX_STOP_LOSS_PCT": 0.15,
     "KILL_SWITCH_ENABLED": true,
     "CONSECUTIVE_LOSS_KILL": 3,
-    "PAPER_EQUITY_START": 10000.0,
+    "PAPER_EQUITY_START": 1000.0,
     "PAPER_RESET_THRESHOLD": 0.5
   },
   "bot_settings": {

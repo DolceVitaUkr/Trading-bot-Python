@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi-Asset Trading Dashboard</title>
+    <link rel="stylesheet" href="/static/dashboard.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="dashboard">
+        <!-- Connection Status Bar -->
+        <div class="status-bar">
+            <div class="status-item">
+                <span class="status-label">Server:</span>
+                <span class="status-indicator" id="server-status">
+                    <div class="status-dot"></div>
+                    <span>Checking...</span>
+                </span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">Bybit:</span>
+                <span class="status-indicator offline" id="bybit-status">
+                    <div class="status-dot"></div>
+                    <span>Offline</span>
+                </span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">IBKR:</span>
+                <span class="status-indicator offline" id="ibkr-status">
+                    <div class="status-dot"></div>
+                    <span>Offline</span>
+                </span>
+            </div>
+            <div class="status-item error-display" id="error-display" style="display: none;">
+                <span class="error-icon">⚠️</span>
+                <span class="error-message" id="error-message"></span>
+                <button class="error-close" onclick="hideError()">×</button>
+            </div>
+        </div>
+
+        <!-- Header -->
+        <header class="header">
+            <div class="header-left">
+                <h1>Trading Dashboard</h1>
+                <div class="global-stats">
+                    <div class="stat">
+                        <span class="value" id="totalPnl">$0.00</span>
+                        <span class="label">Total P&L</span>
+                    </div>
+                    <div class="stat">
+                        <span class="value" id="activeAssets">0/4</span>
+                        <span class="label">Active</span>
+                    </div>
+                    <div class="stat">
+                        <span class="value" id="totalPositions">0</span>
+                        <span class="label">Positions</span>
+                    </div>
+                </div>
+            </div>
+            <div class="header-right">
+                <div class="system-status online" id="systemStatus">
+                    <div class="status-dot"></div>
+                    <span>System Online</span>
+                </div>
+                <button class="emergency-btn" id="emergencyStop">
+                    <i class="fas fa-stop"></i>
+                    Emergency Stop
+                </button>
+            </div>
+        </header>
+
+        <!-- Assets Container -->
+        <div class="assets-container">
+            <!-- Crypto Spot -->
+            <div class="asset-card" data-asset="crypto">
+                <div class="asset-header">
+                    <div class="asset-info">
+                        <div class="asset-icon crypto">
+                            <i class="fab fa-bitcoin"></i>
+                        </div>
+                        <div class="asset-details">
+                            <h3>Crypto Spot</h3>
+                            <span class="broker">Bybit</span>
+                        </div>
+                    </div>
+                    <div class="connection-status offline" id="crypto-connection-status">
+                        <div class="status-dot"></div>
+                        <span>Offline</span>
+                    </div>
+                </div>
+
+                <!-- Paper Trading Section -->
+                <div class="trading-section paper">
+                    <div class="section-header">
+                        <h4><i class="fas fa-file-alt"></i> Paper Trading</h4>
+                        <div class="status-controls">
+                            <div class="trading-status" id="crypto-paper-status">
+                                <span class="status-indicator idle"></span>
+                                <span class="status-text">Idle</span>
+                            </div>
+                            <div class="controls">
+                                <button class="btn btn-start" id="crypto-paper-start" onclick="toggleTrading('crypto', 'paper')">Start</button>
+                                <button class="btn btn-kill" onclick="killAsset('crypto')">Kill</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="trading-content">
+                        <div class="balance-section">
+                            <div class="balance-info">
+                                <div class="balance-value" id="crypto-paper-balance">$0.00</div>
+                                <div class="balance-change" id="crypto-paper-change">+$0.00 (0.00%)</div>
+                            </div>
+                            <div class="balance-chart">
+                                <canvas id="crypto-paper-chart" width="120" height="60"></canvas>
+                            </div>
+                        </div>
+                        <div class="metrics-grid">
+                            <div class="metric">
+                                <span class="metric-label">Positions</span>
+                                <span class="metric-value" id="crypto-paper-positions">0</span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-label">Strategies</span>
+                                <span class="metric-value" id="crypto-paper-strategies">0</span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-label">Win Rate</span>
+                                <span class="metric-value" id="crypto-paper-winrate">0%</span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-label">Daily P&L</span>
+                                <span class="metric-value" id="crypto-paper-dailypnl">$0.00</span>
+                            </div>
+                        </div>
+                        <div class="positions-section" id="crypto-paper-positions-section">
+                            <h5>Active Positions</h5>
+                            <div class="positions-list" id="crypto-paper-positions-list">
+                                <div class="no-positions">No active positions</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Live Trading Section -->
+                <div class="trading-section live">
+                    <div class="section-header">
+                        <h4><i class="fas fa-chart-line"></i> Live Trading</h4>
+                        <div class="status-controls">
+                            <div class="trading-status" id="crypto-live-status">
+                                <span class="status-indicator idle"></span>
+                                <span class="status-text">Idle</span>
+                            </div>
+                            <div class="controls">
+                                <button class="btn btn-start disabled" id="crypto-live-start" onclick="toggleTrading('crypto', 'live')" disabled>Start</button>
+                                <button class="btn btn-kill" onclick="killAsset('crypto')">Kill</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="trading-content">
+                        <div class="balance-section">
+                            <div class="balance-info">
+                                <div class="balance-value" id="crypto-live-balance">$0.00</div>
+                                <div class="balance-change" id="crypto-live-change">+$0.00 (0.00%)</div>
+                            </div>
+                            <div class="balance-chart">
+                                <canvas id="crypto-live-chart" width="120" height="60"></canvas>
+                            </div>
+                        </div>
+                        <div class="metrics-grid">
+                            <div class="metric">
+                                <span class="metric-label">Positions</span>
+                                <span class="metric-value" id="crypto-live-positions">0</span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-label">Strategies</span>
+                                <span class="metric-value" id="crypto-live-strategies">0</span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-label">Win Rate</span>
+                                <span class="metric-value">0%</span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-label">Daily P&L</span>
+                                <span class="metric-value">$0.00</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Crypto Futures -->
+            <div class="asset-card" data-asset="futures">
+                <div class="asset-header">
+                    <div class="asset-info">
+                        <div class="asset-icon futures">
+                            <i class="fas fa-chart-line"></i>
+                        </div>
+                        <div class="asset-details">
+                            <h3>Crypto Futures</h3>
+                            <span class="broker">Bybit</span>
+                        </div>
+                    </div>
+                    <div class="connection-status offline" id="futures-connection-status">
+                        <div class="status-dot"></div>
+                        <span>Offline</span>
+                    </div>
+                </div>
+
+                <!-- Paper Trading Section -->
+                <div class="trading-section paper">
+                    <div class="section-header">
+                        <h4><i class="fas fa-file-alt"></i> Paper Trading</h4>
+                        <div class="controls">
+                            <button class="btn btn-start" id="futures-paper-start" onclick="toggleTrading('futures', 'paper')">Start</button>
+                            <button class="btn btn-kill" onclick="killAsset('futures')">Kill</button>
+                        </div>
+                    </div>
+                    <div class="trading-content">
+                        <div class="balance-section">
+                            <div class="balance-info">
+                                <div class="balance-value" id="futures-paper-balance">$0.00</div>
+                                <div class="balance-change" id="futures-paper-change">+$0.00 (0.00%)</div>
+                            </div>
+                            <div class="balance-chart">
+                                <canvas id="futures-paper-chart" width="120" height="60"></canvas>
+                            </div>
+                        </div>
+                        <div class="metrics-grid">
+                            <div class="metric">
+                                <span class="metric-label">Positions</span>
+                                <span class="metric-value" id="futures-paper-positions">0</span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-label">Strategies</span>
+                                <span class="metric-value" id="futures-paper-strategies">0</span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-label">Win Rate</span>
+                                <span class="metric-value" id="futures-paper-winrate">0%</span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-label">Daily P&L</span>
+                                <span class="metric-value" id="futures-paper-dailypnl">$0.00</span>
+                            </div>
+                        </div>
+                        <div class="positions-section" id="futures-paper-positions-section">
+                            <h5>Active Positions</h5>
+                            <div class="positions-list" id="futures-paper-positions-list">
+                                <div class="no-positions">No active positions</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Live Trading Section -->
+                <div class="trading-section live">
+                    <div class="section-header">
+                        <h4><i class="fas fa-chart-line"></i> Live Trading</h4>
+                        <div class="controls">
+                            <button class="btn btn-start disabled" id="futures-live-start" onclick="toggleTrading('futures', 'live')" disabled>Start</button>
+                            <button class="btn btn-kill" onclick="killAsset('futures')">Kill</button>
+                        </div>
+                    </div>
+                    <div class="trading-content">
+                        <div class="balance-section">
+                            <div class="balance-info">
+                                <div class="balance-value" id="futures-live-balance">$0.00</div>
+                                <div class="balance-change" id="futures-live-change">+$0.00 (0.00%)</div>
+                            </div>
+                            <div class="balance-chart">
+                                <canvas id="futures-live-chart" width="120" height="60"></canvas>
+                            </div>
+                        </div>
+                        <div class="metrics-grid">
+                            <div class="metric">
+                                <span class="metric-label">Positions</span>
+                                <span class="metric-value" id="futures-live-positions">0</span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-label">Strategies</span>
+                                <span class="metric-value" id="futures-live-strategies">0</span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-label">Win Rate</span>
+                                <span class="metric-value">0%</span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-label">Daily P&L</span>
+                                <span class="metric-value">$0.00</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Forex Spot -->
+            <div class="asset-card" data-asset="forex">
+                <div class="asset-header">
+                    <div class="asset-info">
+                        <div class="asset-icon forex">
+                            <i class="fas fa-globe"></i>
+                        </div>
+                        <div class="asset-details">
+                            <h3>Forex Spot</h3>
+                            <span class="broker">IBKR</span>
+                        </div>
+                    </div>
+                    <div class="connection-status offline" id="forex-connection-status">
+                        <div class="status-dot"></div>
+                        <span>Offline</span>
+                    </div>
+                </div>
+
+                <!-- Paper Trading Section -->
+                <div class="trading-section paper">
+                    <div class="section-header">
+                        <h4><i class="fas fa-file-alt"></i> Paper Trading</h4>
+                        <div class="controls">
+                            <button class="btn btn-start" id="forex-paper-start" onclick="toggleTrading('forex', 'paper')">Start</button>
+                            <button class="btn btn-kill" onclick="killAsset('forex')">Kill</button>
+                        </div>
+                    </div>
+                    <div class="trading-content">
+                        <div class="balance-section">
+                            <div class="balance-info">
+                                <div class="balance-value" id="forex-paper-balance">$0.00</div>
+                                <div class="balance-change" id="forex-paper-change">+$0.00 (0.00%)</div>
+                            </div>
+                            <div class="balance-chart">
+                                <canvas id="forex-paper-chart" width="120" height="60"></canvas>
+                            </div>
+                        </div>
+                        <div class="metrics-grid">
+                            <div class="metric">
+                                <span class="metric-label">Positions</span>
+                                <span class="metric-value" id="forex-paper-positions">0</span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-label">Strategies</span>
+                                <span class="metric-value" id="forex-paper-strategies">0</span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-label">Win Rate</span>
+                                <span class="metric-value">0%</span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-label">Daily P&L</span>
+                                <span class="metric-value">$0.00</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Live Trading Section -->
+                <div class="trading-section live">
+                    <div class="section-header">
+                        <h4><i class="fas fa-chart-line"></i> Live Trading</h4>
+                        <div class="controls">
+                            <button class="btn btn-start disabled" id="forex-live-start" onclick="toggleTrading('forex', 'live')" disabled>Start</button>
+                            <button class="btn btn-kill" onclick="killAsset('forex')">Kill</button>
+                        </div>
+                    </div>
+                    <div class="trading-content">
+                        <div class="balance-section">
+                            <div class="balance-info">
+                                <div class="balance-value" id="forex-live-balance">$0.00</div>
+                                <div class="balance-change" id="forex-live-change">+$0.00 (0.00%)</div>
+                            </div>
+                            <div class="balance-chart">
+                                <canvas id="forex-live-chart" width="120" height="60"></canvas>
+                            </div>
+                        </div>
+                        <div class="metrics-grid">
+                            <div class="metric">
+                                <span class="metric-label">Positions</span>
+                                <span class="metric-value" id="forex-live-positions">0</span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-label">Strategies</span>
+                                <span class="metric-value" id="forex-live-strategies">0</span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-label">Win Rate</span>
+                                <span class="metric-value">0%</span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-label">Daily P&L</span>
+                                <span class="metric-value">$0.00</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Forex Options -->
+            <div class="asset-card" data-asset="forex_options">
+                <div class="asset-header">
+                    <div class="asset-info">
+                        <div class="asset-icon options">
+                            <i class="fas fa-coins"></i>
+                        </div>
+                        <div class="asset-details">
+                            <h3>Forex Options</h3>
+                            <span class="broker">IBKR</span>
+                        </div>
+                    </div>
+                    <div class="connection-status offline" id="forex_options-connection-status">
+                        <div class="status-dot"></div>
+                        <span>Offline</span>
+                    </div>
+                </div>
+
+                <!-- Paper Trading Section -->
+                <div class="trading-section paper">
+                    <div class="section-header">
+                        <h4><i class="fas fa-file-alt"></i> Paper Trading</h4>
+                        <div class="controls">
+                            <button class="btn btn-start" id="forex_options-paper-start" onclick="toggleTrading('forex_options', 'paper')">Start</button>
+                            <button class="btn btn-kill" onclick="killAsset('forex_options')">Kill</button>
+                        </div>
+                    </div>
+                    <div class="trading-content">
+                        <div class="balance-section">
+                            <div class="balance-info">
+                                <div class="balance-value" id="forex_options-paper-balance">$0.00</div>
+                                <div class="balance-change" id="forex_options-paper-change">+$0.00 (0.00%)</div>
+                            </div>
+                            <div class="balance-chart">
+                                <canvas id="forex_options-paper-chart" width="120" height="60"></canvas>
+                            </div>
+                        </div>
+                        <div class="metrics-grid">
+                            <div class="metric">
+                                <span class="metric-label">Positions</span>
+                                <span class="metric-value" id="forex_options-paper-positions">0</span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-label">Strategies</span>
+                                <span class="metric-value" id="forex_options-paper-strategies">0</span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-label">Win Rate</span>
+                                <span class="metric-value">0%</span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-label">Daily P&L</span>
+                                <span class="metric-value">$0.00</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Live Trading Section -->
+                <div class="trading-section live">
+                    <div class="section-header">
+                        <h4><i class="fas fa-chart-line"></i> Live Trading</h4>
+                        <div class="controls">
+                            <button class="btn btn-start disabled" id="forex_options-live-start" onclick="toggleTrading('forex_options', 'live')" disabled>Start</button>
+                            <button class="btn btn-kill" onclick="killAsset('forex_options')">Kill</button>
+                        </div>
+                    </div>
+                    <div class="trading-content">
+                        <div class="balance-section">
+                            <div class="balance-info">
+                                <div class="balance-value" id="forex_options-live-balance">$0.00</div>
+                                <div class="balance-change" id="forex_options-live-change">+$0.00 (0.00%)</div>
+                            </div>
+                            <div class="balance-chart">
+                                <canvas id="forex_options-live-chart" width="120" height="60"></canvas>
+                            </div>
+                        </div>
+                        <div class="metrics-grid">
+                            <div class="metric">
+                                <span class="metric-label">Positions</span>
+                                <span class="metric-value" id="forex_options-live-positions">0</span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-label">Strategies</span>
+                                <span class="metric-value" id="forex_options-live-strategies">0</span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-label">Win Rate</span>
+                                <span class="metric-value">0%</span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-label">Daily P&L</span>
+                                <span class="metric-value">$0.00</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Activity Footer -->
+        <footer class="activity-footer">
+            <div class="activity-header">
+                <h4>System Activity</h4>
+                <div class="activity-time" id="lastUpdate">Never</div>
+            </div>
+            <div class="activity-list" id="activityList">
+                <div class="activity-item">
+                    <span class="activity-time">00:00:00</span>
+                    <span class="activity-message">Dashboard initialized</span>
+                </div>
+            </div>
+        </footer>
+    </div>
+
+    <script src="/static/dashboard.js"></script>
+</body>
+</html>

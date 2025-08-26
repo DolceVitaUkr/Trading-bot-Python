@@ -30,7 +30,7 @@ class RuntimeController:
             with open(self.state_path, "r", encoding="utf-8") as fh:
                 self.state: Dict[str, Any] = json.load(fh)
         else:
-            self.state = {"assets": {}, "global": {"kill_switch": False}}
+            self.state = {"assets": {}, "global": {"kill_switch": False}, "trading": {}}
             self._save()
 
     # ------------------------------------------------------------------
@@ -83,8 +83,49 @@ class RuntimeController:
             asset_state["consecutive_losses"] = 0
         self._save()
 
+    def start_asset_trading(self, asset: str, mode: str) -> None:
+        """Start trading for specific asset and mode."""
+        trading_state = self.state.setdefault("trading", {})
+        trading_state[asset] = {"status": "running", "mode": mode}
+        self._save()
+        self.notifier.send(f"Started {asset} {mode} trading")
+        
+    def stop_asset_trading(self, asset: str, mode: str) -> None:
+        """Stop trading for specific asset and mode."""
+        trading_state = self.state.setdefault("trading", {})
+        if asset in trading_state:
+            trading_state[asset]["status"] = "stopped"
+        self._save()
+        self.notifier.send(f"Stopped {asset} {mode} trading")
+        
+    def kill_asset_trading(self, asset: str) -> None:
+        """Kill switch for specific asset."""
+        trading_state = self.state.setdefault("trading", {})
+        trading_state[asset] = {"status": "killed"}
+        self._save()
+        self.notifier.send(f"Kill switch activated for {asset}")
+        
+    def emergency_stop_all(self) -> None:
+        """Emergency stop all trading across all assets."""
+        self.set_global_kill(True)
+        trading_state = self.state.setdefault("trading", {})
+        for asset in trading_state:
+            trading_state[asset] = {"status": "killed"}
+        self._save()
+        self.notifier.send("EMERGENCY STOP: All trading halted")
+        
+    def get_portfolio_stats(self) -> Dict[str, Any]:
+        """Get portfolio statistics (mock implementation)."""
+        # In real implementation, this would query actual portfolio data
+        return {
+            "total_pnl": 0.0,
+            "active_trades": 0, 
+            "win_rate": 0.0,
+            "balance": self.config.get("safety", {}).get("PAPER_EQUITY_START", 10000.0)
+        }
+    
     def get_state(self) -> Dict[str, Any]:
-        return self.state
+        return self.state.copy()
 
 
 __all__ = ["RuntimeController"]

@@ -49,6 +49,22 @@ class ExchangeBybit:
         self.client.set_sandbox_mode(False)
         self.log.info(f"Bybit v5 adapter initialized for {product_name} in {mode} mode (connected to Mainnet).")
 
+    async def test_connection(self) -> bool:
+        """Test Bybit API connection and authentication."""
+        try:
+            self.log.info("Testing Bybit API connection...")
+            # Use server time to test connectivity without requiring specific account permissions
+            response = self.session.get_server_time()
+            if response.get("retCode") == 0:
+                self.log.info("Bybit API connection successful")
+                return True
+            else:
+                self.log.error(f"Bybit connection test failed: {response}")
+                return False
+        except Exception as e:
+            self.log.error(f"Bybit connection test exception: {e}")
+            return False
+
     @bybit_RateLimiter.limit
     async def get_wallet_balance(self, account_type: str = "UNIFIED") -> Optional[PortfolioState]:
         """
@@ -59,23 +75,58 @@ class ExchangeBybit:
         """
         try:
             self.log.info(f"Fetching wallet balance for account type: {account_type}")
+            
+            # First test connection
+            if not await self.test_connection():
+                self.log.error("Connection test failed, skipping wallet balance fetch")
+                return None
+            
             response = self.session.get_wallet_balance(accountType=account_type)
+            
             if response.get("retCode") == 0 and response.get("result"):
-                self.log.info("Successfully fetched wallet balance.")
-                data = response['result']['list'][0]
-                # Note: Bybit's response has many fields. We map the most relevant ones.
-                # 'totalEquity' is a good representation of the total balance.
-                # 'totalAvailableBalance' is the available margin.
+                result_list = response['result'].get('list', [])
+                if not result_list:
+                    self.log.warning("No wallet data found in response")
+                    return PortfolioState(
+                        total_balance_usd=0.0,
+                        available_balance_usd=0.0,
+                        margin_used=0.0,
+                        unrealized_pnl=0.0,
+                        realized_pnl=0.0,
+                        positions=[]
+                    )
+                
+                data = result_list[0]
+                self.log.info(f"Successfully fetched wallet balance: {data}")
+                
+                # Parse wallet data with better error handling
+                total_equity = float(data.get("totalEquity", "0") or "0")
+                total_available = float(data.get("totalAvailableBalance", "0") or "0") 
+                margin_used = float(data.get("totalInitialMargin", "0") or "0")
+                unrealized_pnl = float(data.get("totalUnrealisedPnl", "0") or "0")
+                
                 return PortfolioState(
-                    total_balance_usd=float(data.get("totalEquity", 0)),
-                    available_balance_usd=float(data.get("totalAvailableBalance", 0)),
-                    margin_used=float(data.get("totalInitialMargin", 0)),
-                    unrealized_pnl=float(data.get("totalUnrealisedPnl", 0)),
-                    realized_pnl=0, # This is not directly available in the balance endpoint
-                    positions=[] # Positions are fetched separately
+                    total_balance_usd=total_equity,
+                    available_balance_usd=total_available,
+                    margin_used=margin_used,
+                    unrealized_pnl=unrealized_pnl,
+                    realized_pnl=0.0,
+                    positions=[]
                 )
             else:
-                self.log.error(f"Error fetching wallet balance: {response}")
+                self.log.error(f"Error fetching wallet balance - retCode: {response.get('retCode')}, retMsg: {response.get('retMsg')}")
+                
+                # Handle specific error codes
+                ret_code = response.get("retCode")
+                if ret_code == 10006:
+                    self.log.error("Rate limit exceeded - too many API requests")
+                elif ret_code == 10001:
+                    self.log.error("Authentication failed - check API credentials")
+                elif ret_code == 10003:
+                    self.log.error("API key expired or invalid")
+                elif ret_code == 10004:
+                    self.log.error("Insufficient permissions for this API endpoint")
+                    
                 return None
         except Exception as e:
             self.log.error(f"An exception occurred while fetching wallet balance: {e}", exc_info=True)
