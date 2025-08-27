@@ -922,3 +922,1214 @@ body {
     padding: 20px;
     font-style: italic;
 }
+
+/* Analytics Section */
+.analytics-section {
+    margin-top: 16px;
+    border: 1px solid var(--border-primary);
+    border-radius: 12px;
+    background: var(--bg-card);
+    overflow: hidden;
+}
+
+.analytics-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    background: var(--bg-section);
+    border-bottom: 1px solid var(--border-primary);
+}
+
+.analytics-header h5 {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
+}
+
+.btn-analytics {
+    background: transparent;
+    border: 1px solid var(--border-primary);
+    color: var(--text-secondary);
+    padding: 4px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-analytics:hover {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    border-color: var(--border-secondary);
+}
+
+.btn-analytics i {
+    transition: transform 0.2s ease;
+}
+
+.btn-analytics.expanded i {
+    transform: rotate(180deg);
+}
+
+.analytics-content {
+    padding: 16px;
+}
+
+/* Analytics Tabs */
+.analytics-tabs {
+    display: flex;
+    gap: 1px;
+    margin-bottom: 16px;
+    background: var(--border-primary);
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.tab-btn {
+    flex: 1;
+    background: var(--bg-section);
+    color: var(--text-secondary);
+    border: none;
+    padding: 8px 12px;
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.tab-btn.active,
+.tab-btn:hover {
+    background: var(--accent-primary);
+    color: white;
+}
+
+/* Tab Content */
+.tab-content {
+    display: none;
+}
+
+.tab-content.active {
+    display: block;
+}
+
+/* Performance Metrics */
+.performance-metrics {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.metric-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr 1fr;
+    gap: 12px;
+}
+
+.metric-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px;
+    background: var(--bg-section);
+    border: 1px solid var(--border-primary);
+    border-radius: 6px;
+}
+
+.metric-item .metric-label {
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.metric-item .metric-value {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+/* Trade History */
+.trade-history-controls {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.btn-refresh {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--accent-primary);
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-refresh:hover {
+    background: #2563eb;
+    transform: translateY(-1px);
+}
+
+#crypto-paper-trade-filter,
+#crypto-live-trade-filter {
+    background: var(--bg-section);
+    color: var(--text-primary);
+    border: 1px solid var(--border-primary);
+    padding: 4px 8px;
+    border-radius: 6px;
+    font-size: 11px;
+}
+
+.trade-history-container {
+    max-height: 300px;
+    overflow-y: auto;
+    border: 1px solid var(--border-primary);
+    border-radius: 6px;
+    background: var(--bg-section);
+}
+
+.trade-history-list {
+    display: flex;
+    flex-direction: column;
+}
+
+.trade-item {
+    display: grid;
+    grid-template-columns: auto 1fr auto auto auto auto;
+    gap: 12px;
+    align-items: center;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-primary);
+    font-size: 11px;
+    transition: background-color 0.2s ease;
+}
+
+.trade-item:hover {
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.trade-item:last-child {
+    border-bottom: none;
+}
+
+.trade-result-indicator {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+}
+
+.trade-result-indicator.win {
+    background: var(--accent-success);
+}
+
+.trade-result-indicator.loss {
+    background: var(--accent-danger);
+}
+
+.trade-symbol {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.trade-side {
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.trade-side.buy {
+    background: rgba(16, 185, 129, 0.2);
+    color: var(--accent-success);
+}
+
+.trade-side.sell {
+    background: rgba(239, 68, 68, 0.2);
+    color: var(--accent-danger);
+}
+
+.trade-pnl {
+    font-weight: 600;
+}
+
+.trade-pnl.positive {
+    color: var(--accent-success);
+}
+
+.trade-pnl.negative {
+    color: var(--accent-danger);
+}
+
+.trade-percentage {
+    font-size: 10px;
+    font-weight: 500;
+}
+
+.trade-percentage.positive {
+    color: var(--accent-success);
+}
+
+.trade-percentage.negative {
+    color: var(--accent-danger);
+}
+
+.trade-date {
+    color: var(--text-muted);
+    font-size: 10px;
+}
+
+.no-trades,
+.no-data {
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 11px;
+    padding: 20px;
+    font-style: italic;
+}
+
+/* Symbol Performance */
+.symbol-performance-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.symbol-item {
+    display: grid;
+    grid-template-columns: auto 1fr auto auto auto;
+    gap: 12px;
+    align-items: center;
+    padding: 10px 12px;
+    background: var(--bg-section);
+    border: 1px solid var(--border-primary);
+    border-radius: 6px;
+    font-size: 11px;
+}
+
+.symbol-name {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.symbol-trades {
+    color: var(--text-secondary);
+}
+
+.symbol-winrate {
+    font-weight: 500;
+}
+
+.symbol-pnl {
+    font-weight: 600;
+}
+
+.symbol-pnl.positive {
+    color: var(--accent-success);
+}
+
+.symbol-pnl.negative {
+    color: var(--accent-danger);
+}
+
+/* Reward Display Modal */
+.reward-modal {
+    display: none;
+    position: fixed;
+    z-index: 10000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.75);
+    backdrop-filter: blur(8px);
+    animation: fadeIn 0.3s ease;
+}
+
+.reward-modal.show {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.reward-modal-content {
+    background: var(--bg-card);
+    border: 1px solid var(--border-primary);
+    border-radius: 12px;
+    width: 90%;
+    max-width: 500px;
+    max-height: 80vh;
+    overflow-y: auto;
+    box-shadow: var(--shadow-xl);
+    animation: slideUp 0.3s ease;
+}
+
+.reward-modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--border-primary);
+    background: var(--gradient-primary);
+    border-radius: 12px 12px 0 0;
+}
+
+.reward-modal-header h3 {
+    margin: 0;
+    color: white;
+    font-size: 18px;
+    font-weight: 600;
+}
+
+.reward-modal-close {
+    background: none;
+    border: none;
+    color: white;
+    font-size: 24px;
+    cursor: pointer;
+    padding: 0;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    transition: background-color 0.2s ease;
+}
+
+.reward-modal-close:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.reward-modal-body {
+    padding: 24px;
+}
+
+.reward-summary {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px;
+    background: var(--bg-secondary);
+    border-radius: 8px;
+    margin-bottom: 20px;
+    border-left: 4px solid var(--accent-primary);
+}
+
+.reward-total {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+}
+
+.reward-label {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+}
+
+.reward-value {
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--accent-success);
+}
+
+.reward-value.negative {
+    color: var(--accent-danger);
+}
+
+.trade-info {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    font-size: 14px;
+}
+
+.trade-symbol {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.trade-side {
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.trade-profit {
+    font-weight: 600;
+    margin-top: 4px;
+}
+
+.trade-profit.positive {
+    color: var(--accent-success);
+}
+
+.trade-profit.negative {
+    color: var(--accent-danger);
+}
+
+.reward-breakdown {
+    display: grid;
+    gap: 16px;
+}
+
+.breakdown-section h4 {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0 0 12px 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.positive-rewards h4::before {
+    content: "📈";
+    font-size: 16px;
+}
+
+.penalties h4::before {
+    content: "📉";
+    font-size: 16px;
+}
+
+.reward-components {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    background: var(--bg-secondary);
+    border-radius: 6px;
+    padding: 12px;
+    min-height: 60px;
+}
+
+.reward-component {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border-primary);
+}
+
+.reward-component:last-child {
+    border-bottom: none;
+}
+
+.component-label {
+    font-size: 12px;
+    color: var(--text-secondary);
+    text-transform: capitalize;
+}
+
+.component-value {
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.component-value.positive {
+    color: var(--accent-success);
+}
+
+.component-value.negative {
+    color: var(--accent-danger);
+}
+
+.reward-warnings {
+    margin-top: 16px;
+    padding: 12px;
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid var(--accent-danger);
+    border-radius: 6px;
+}
+
+.warning-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--accent-danger);
+    font-size: 13px;
+}
+
+/* Reward History Sidebar */
+.reward-history-sidebar {
+    position: fixed;
+    right: -320px;
+    top: 0;
+    width: 320px;
+    height: 100vh;
+    background: var(--bg-card);
+    border-left: 1px solid var(--border-primary);
+    z-index: 1000;
+    transition: right 0.3s ease;
+    display: flex;
+    flex-direction: column;
+}
+
+.reward-history-sidebar.open {
+    right: 0;
+}
+
+.reward-history-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px;
+    border-bottom: 1px solid var(--border-primary);
+    background: var(--bg-secondary);
+}
+
+.reward-history-header h3 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.sidebar-toggle {
+    background: var(--accent-primary);
+    border: none;
+    color: white;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+}
+
+.sidebar-toggle:hover {
+    background: var(--accent-secondary);
+    transform: scale(1.05);
+}
+
+.reward-history-sidebar.open .sidebar-toggle i {
+    transform: rotate(180deg);
+}
+
+.reward-history-content {
+    flex: 1;
+    padding: 16px;
+    overflow-y: auto;
+}
+
+.reward-history-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.reward-history-item {
+    padding: 12px;
+    background: var(--bg-secondary);
+    border-radius: 6px;
+    border-left: 3px solid var(--accent-primary);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.reward-history-item:hover {
+    background: var(--bg-section);
+    transform: translateX(-2px);
+}
+
+.reward-history-item.positive {
+    border-left-color: var(--accent-success);
+}
+
+.reward-history-item.negative {
+    border-left-color: var(--accent-danger);
+}
+
+.reward-item-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 4px;
+}
+
+.reward-item-symbol {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.reward-item-value {
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.reward-item-value.positive {
+    color: var(--accent-success);
+}
+
+.reward-item-value.negative {
+    color: var(--accent-danger);
+}
+
+.reward-item-details {
+    font-size: 10px;
+    color: var(--text-secondary);
+    display: flex;
+    justify-content: space-between;
+}
+
+.reward-history-stats {
+    padding: 16px;
+    border-top: 1px solid var(--border-primary);
+    background: var(--bg-secondary);
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+}
+
+.stat-item {
+    text-align: center;
+}
+
+.stat-label {
+    display: block;
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+}
+
+.stat-value {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--accent-primary);
+}
+
+.no-rewards {
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: 12px;
+    padding: 24px;
+}
+
+/* Animations */
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes slideUp {
+    from { 
+        transform: translateY(30px);
+        opacity: 0;
+    }
+    to { 
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .reward-modal-content {
+        width: 95%;
+        max-height: 90vh;
+        margin: 20px;
+    }
+    
+    .reward-history-sidebar {
+        width: 100%;
+        right: -100%;
+    }
+    
+    .reward-summary {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 12px;
+    }
+    
+    .trade-info {
+        align-items: flex-start;
+    }
+}
+
+/* Reward Metrics Section */
+.reward-metrics {
+    margin-top: 16px;
+    padding: 16px;
+    background: var(--bg-secondary);
+    border-radius: 8px;
+    border-left: 4px solid var(--accent-primary);
+}
+
+.metrics-section-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0 0 12px 0;
+}
+
+.metrics-section-title i {
+    color: var(--accent-primary);
+}
+
+.reward-positive {
+    color: var(--accent-success) !important;
+}
+
+.reward-negative {
+    color: var(--accent-danger) !important;
+}
+
+/* Reward Toggle Button */
+.reward-toggle-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+    background: var(--accent-primary);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    margin-right: 12px;
+}
+
+.reward-toggle-btn:hover {
+    background: var(--accent-secondary);
+    transform: translateY(-1px);
+}
+
+.reward-toggle-btn i {
+    font-size: 14px;
+}
+
+/* Enhanced Trade History Styles */
+.trading-stats-header {
+    background: var(--bg-section);
+    border: 1px solid var(--border-primary);
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-bottom: 16px;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+}
+
+.overall-stats-line {
+    color: var(--accent-primary);
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+    overflow-x: auto;
+}
+
+.detailed-trade-item {
+    background: var(--bg-card);
+    border: 1px solid var(--border-primary);
+    border-radius: 6px;
+    margin-bottom: 8px;
+    padding: 10px 14px;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-size: 12px;
+    transition: all 0.2s ease;
+}
+
+.detailed-trade-item:hover {
+    border-color: var(--accent-primary);
+    background: rgba(59, 130, 246, 0.05);
+}
+
+.trade-summary-line {
+    color: var(--text-secondary);
+    line-height: 1.4;
+    word-break: break-all;
+}
+
+.trade-symbol-detailed {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.trade-direction.buy {
+    color: var(--accent-success);
+    font-weight: 600;
+}
+
+.trade-direction.sell {
+    color: var(--accent-danger);
+    font-weight: 600;
+}
+
+.pnl-detailed.positive {
+    color: var(--accent-success);
+    font-weight: 600;
+}
+
+.pnl-detailed.negative {
+    color: var(--accent-danger);
+    font-weight: 600;
+}
+
+.pnl-usd.positive {
+    color: var(--accent-success);
+    font-weight: 600;
+}
+
+.pnl-usd.negative {
+    color: var(--accent-danger);
+    font-weight: 600;
+}
+
+.trade-duration {
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+.trade-timestamp {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 400;
+}
+
+.running-balance {
+    color: var(--accent-primary);
+    font-weight: 600;
+}
+
+/* Trade History Container Improvements */
+.trade-history-container {
+    max-height: 600px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-secondary) var(--bg-card);
+}
+
+.trade-history-container::-webkit-scrollbar {
+    width: 6px;
+}
+
+.trade-history-container::-webkit-scrollbar-track {
+    background: var(--bg-card);
+}
+
+.trade-history-container::-webkit-scrollbar-thumb {
+    background: var(--border-secondary);
+    border-radius: 3px;
+}
+
+.trade-history-container::-webkit-scrollbar-thumb:hover {
+    background: var(--accent-primary);
+}
+
+/* Responsive Enhancements */
+@media (max-width: 1200px) {
+    .detailed-trade-item {
+        font-size: 11px;
+        padding: 8px 12px;
+    }
+    
+    .overall-stats-line {
+        font-size: 12px;
+    }
+}
+
+@media (max-width: 768px) {
+    .detailed-trade-item {
+        font-size: 10px;
+        padding: 6px 10px;
+    }
+    
+    .trade-summary-line {
+        white-space: nowrap;
+        overflow-x: auto;
+    }
+    
+    .overall-stats-line {
+        font-size: 11px;
+    }
+}
+
+/* Table Styles for Trade History and Positions */
+.table-container {
+    max-height: 400px; /* ~20 rows at 20px each */
+    overflow-y: auto;
+    overflow-x: auto;
+    border: 1px solid var(--border-primary);
+    border-radius: 8px;
+    background: var(--bg-secondary);
+}
+
+.trade-history-table,
+.positions-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+    font-family: 'JetBrains Mono', 'Consolas', monospace;
+    background: transparent;
+}
+
+.trade-history-table thead,
+.positions-table thead {
+    background: var(--bg-card);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+.trade-history-table th,
+.positions-table th,
+.trade-history-table td,
+.positions-table td {
+    padding: 8px 12px;
+    text-align: left;
+    border-bottom: 1px solid var(--border-primary);
+    white-space: nowrap;
+}
+
+.trade-history-table th,
+.positions-table th {
+    font-weight: 600;
+    color: var(--text-secondary);
+    background: var(--bg-card);
+    cursor: pointer;
+    user-select: none;
+    position: relative;
+}
+
+.trade-history-table th.sortable:hover,
+.positions-table th.sortable:hover {
+    background: rgba(64, 76, 97, 0.8);
+    color: var(--text-primary);
+}
+
+.trade-history-table th i,
+.positions-table th i {
+    margin-left: 4px;
+    opacity: 0.5;
+    font-size: 10px;
+}
+
+.trade-history-table th.sorted-asc i,
+.positions-table th.sorted-asc i {
+    opacity: 1;
+    color: var(--accent-primary);
+}
+
+.trade-history-table th.sorted-desc i,
+.positions-table th.sorted-desc i {
+    opacity: 1;
+    color: var(--accent-primary);
+    transform: rotate(180deg);
+}
+
+.trade-history-table tbody tr:hover,
+.positions-table tbody tr:hover {
+    background: rgba(64, 76, 97, 0.3);
+}
+
+/* Color coding for trade data */
+.trade-history-table .positive,
+.positions-table .positive {
+    color: var(--accent-success);
+    font-weight: 600;
+}
+
+.trade-history-table .negative,
+.positions-table .negative {
+    color: var(--accent-danger);
+    font-weight: 600;
+}
+
+.trade-history-table .long {
+    color: var(--accent-success);
+}
+
+.trade-history-table .short {
+    color: var(--accent-danger);
+}
+
+/* No data states */
+.trade-history-table .no-trades td,
+.positions-table .no-positions td {
+    text-align: center;
+    color: var(--text-secondary);
+    font-style: italic;
+    padding: 20px;
+}
+
+/* Trade History Controls Enhancement */
+.trade-history-controls {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+    gap: 12px;
+}
+
+.trade-history-controls input[type="text"] {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-primary);
+    border-radius: 4px;
+    padding: 6px 10px;
+    color: var(--text-primary);
+    font-size: 12px;
+    min-width: 150px;
+}
+
+.trade-history-controls input[type="text"]:focus {
+    outline: none;
+    border-color: var(--accent-primary);
+    background: var(--bg-card);
+}
+
+.trade-history-controls select {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-primary);
+    border-radius: 4px;
+    padding: 6px 10px;
+    color: var(--text-primary);
+    font-size: 12px;
+    min-width: 120px;
+}
+
+.trade-history-controls select:focus {
+    outline: none;
+    border-color: var(--accent-primary);
+    background: var(--bg-card);
+}
+
+/* Mobile responsiveness for tables */
+@media (max-width: 768px) {
+    .table-container {
+        max-height: 300px;
+    }
+    
+    .trade-history-table,
+    .positions-table {
+        font-size: 10px;
+    }
+    
+    .trade-history-table th,
+    .positions-table th,
+    .trade-history-table td,
+    .positions-table td {
+        padding: 6px 8px;
+    }
+    
+    .trade-history-controls {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+    }
+}
+
+/* System Messages for Auto-Reconnect */
+.system-message {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 10000;
+    min-width: 300px;
+    max-width: 600px;
+    background: var(--bg-card);
+    border: 2px solid var(--border-primary);
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    display: none;
+    animation: slideDown 0.3s ease-out;
+}
+
+.system-message.success {
+    border-color: var(--accent-success);
+    background: rgba(16, 185, 129, 0.1);
+}
+
+.system-message.warning {
+    border-color: #f59e0b;
+    background: rgba(245, 158, 11, 0.1);
+}
+
+.system-message.error {
+    border-color: var(--accent-danger);
+    background: rgba(239, 68, 68, 0.1);
+}
+
+.system-message.info {
+    border-color: var(--accent-primary);
+    background: rgba(59, 130, 246, 0.1);
+}
+
+.message-content {
+    display: flex;
+    align-items: center;
+    padding: 16px 20px;
+    gap: 12px;
+}
+
+.message-content i {
+    font-size: 18px;
+    flex-shrink: 0;
+}
+
+.system-message.success .message-content i {
+    color: var(--accent-success);
+}
+
+.system-message.warning .message-content i {
+    color: #f59e0b;
+}
+
+.system-message.error .message-content i {
+    color: var(--accent-danger);
+}
+
+.system-message.info .message-content i {
+    color: var(--accent-primary);
+}
+
+.message-content span {
+    flex-grow: 1;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.message-close {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+}
+
+.message-close:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text-primary);
+}
+
+@keyframes slideDown {
+    from {
+        opacity: 0;
+        transform: translateX(-50%) translateY(-20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
+    }
+}

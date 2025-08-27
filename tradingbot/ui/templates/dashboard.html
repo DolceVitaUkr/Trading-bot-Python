@@ -65,6 +65,10 @@
                     <div class="status-dot"></div>
                     <span>System Online</span>
                 </div>
+                <button class="reward-toggle-btn" onclick="toggleRewardSidebar()" title="Show Reward History">
+                    <i class="fas fa-trophy"></i>
+                    Rewards
+                </button>
                 <button class="emergency-btn" id="emergencyStop">
                     <i class="fas fa-stop"></i>
                     Emergency Stop
@@ -95,7 +99,7 @@
                 <!-- Paper Trading Section -->
                 <div class="trading-section paper">
                     <div class="section-header">
-                        <h4><i class="fas fa-file-alt"></i> Paper Trading</h4>
+                        <h4><i class="fas fa-flask"></i> Strategy Development</h4>
                         <div class="status-controls">
                             <div class="trading-status" id="crypto-paper-status">
                                 <span class="status-indicator idle"></span>
@@ -123,7 +127,7 @@
                                 <span class="metric-value" id="crypto-paper-positions">0</span>
                             </div>
                             <div class="metric">
-                                <span class="metric-label">Strategies</span>
+                                <span class="metric-label">Developing</span>
                                 <span class="metric-value" id="crypto-paper-strategies">0</span>
                             </div>
                             <div class="metric">
@@ -137,8 +141,154 @@
                         </div>
                         <div class="positions-section" id="crypto-paper-positions-section">
                             <h5>Active Positions</h5>
-                            <div class="positions-list" id="crypto-paper-positions-list">
-                                <div class="no-positions">No active positions</div>
+                            <div class="table-container">
+                                <table class="positions-table" id="crypto-paper-positions-list">
+                                    <thead>
+                                        <tr>
+                                            <th class="sortable" data-column="symbol">Symbol <i class="fas fa-sort"></i></th>
+                                            <th class="sortable" data-column="side">Side <i class="fas fa-sort"></i></th>
+                                            <th class="sortable" data-column="size">Size <i class="fas fa-sort"></i></th>
+                                            <th class="sortable" data-column="entry_price">Entry <i class="fas fa-sort"></i></th>
+                                            <th class="sortable" data-column="current_price">Current <i class="fas fa-sort"></i></th>
+                                            <th class="sortable" data-column="pnl">PnL <i class="fas fa-sort"></i></th>
+                                            <th class="sortable" data-column="take_profit">TP <i class="fas fa-sort"></i></th>
+                                            <th class="sortable" data-column="stop_loss">SL <i class="fas fa-sort"></i></th>
+                                            <th class="sortable" data-column="duration">Duration <i class="fas fa-sort"></i></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr class="no-positions"><td colspan="9">No active positions</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                        
+                        <!-- Analytics Section -->
+                        <div class="analytics-section" id="crypto-paper-analytics">
+                            <div class="analytics-header">
+                                <h5><i class="fas fa-chart-bar"></i> Analytics & Trade History</h5>
+                                <button class="btn btn-analytics" onclick="toggleAnalytics('crypto', 'paper')">
+                                    <i class="fas fa-chevron-down"></i>
+                                </button>
+                            </div>
+                            <div class="analytics-content" id="crypto-paper-analytics-content" style="display: none;">
+                                <div class="analytics-tabs">
+                                    <button class="tab-btn active" onclick="switchTab('crypto-paper', 'overview')">Overview</button>
+                                    <button class="tab-btn" onclick="switchTab('crypto-paper', 'trades')">Trade History</button>
+                                    <button class="tab-btn" onclick="switchTab('crypto-paper', 'symbols')">By Symbol</button>
+                                </div>
+                                
+                                <!-- Overview Tab -->
+                                <div class="tab-content active" id="crypto-paper-overview-tab">
+                                    <div class="performance-metrics">
+                                        <div class="metric-row">
+                                            <div class="metric-item">
+                                                <span class="metric-label">Total Trades</span>
+                                                <span class="metric-value" id="crypto-paper-total-trades">0</span>
+                                            </div>
+                                            <div class="metric-item">
+                                                <span class="metric-label">Win Rate</span>
+                                                <span class="metric-value" id="crypto-paper-win-rate">0%</span>
+                                            </div>
+                                            <div class="metric-item">
+                                                <span class="metric-label">Profit Factor</span>
+                                                <span class="metric-value" id="crypto-paper-profit-factor">0.00</span>
+                                            </div>
+                                            <div class="metric-item">
+                                                <span class="metric-label">ROI</span>
+                                                <span class="metric-value" id="crypto-paper-roi">0%</span>
+                                            </div>
+                                        </div>
+                                        <div class="metric-row">
+                                            <div class="metric-item">
+                                                <span class="metric-label">Avg Win</span>
+                                                <span class="metric-value" id="crypto-paper-avg-win">$0.00</span>
+                                            </div>
+                                            <div class="metric-item">
+                                                <span class="metric-label">Avg Loss</span>
+                                                <span class="metric-value" id="crypto-paper-avg-loss">$0.00</span>
+                                            </div>
+                                            <div class="metric-item">
+                                                <span class="metric-label">Max Win</span>
+                                                <span class="metric-value" id="crypto-paper-max-win">$0.00</span>
+                                            </div>
+                                            <div class="metric-item">
+                                                <span class="metric-label">Max Loss</span>
+                                                <span class="metric-value" id="crypto-paper-max-loss">$0.00</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Reward System Metrics -->
+                                    <div id="crypto-paper-reward-section" class="reward-metrics">
+                                        <h6 class="metrics-section-title">
+                                            <i class="fas fa-trophy"></i> Reward System Metrics
+                                        </h6>
+                                        <div class="metric-row">
+                                            <div class="metric-item">
+                                                <span class="metric-label">Total Reward Points</span>
+                                                <span class="metric-value reward-positive" id="crypto-paper-reward-points">0.0</span>
+                                            </div>
+                                            <div class="metric-item">
+                                                <span class="metric-label">Avg Reward/Trade</span>
+                                                <span class="metric-value" id="crypto-paper-avg-reward">0.00</span>
+                                            </div>
+                                            <div class="metric-item">
+                                                <span class="metric-label">Consecutive SL Hits</span>
+                                                <span class="metric-value" id="crypto-paper-consecutive-sl">0</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <!-- Trade History Tab -->
+                                <div class="tab-content" id="crypto-paper-trades-tab">
+                                    <div class="trade-history-controls">
+                                        <div style="display: flex; gap: 8px; align-items: center;">
+                                            <input type="text" id="crypto-paper-search" placeholder="Search symbol..." style="width: 120px;">
+                                            <select id="crypto-paper-trade-filter">
+                                                <option value="all">All Trades</option>
+                                                <option value="wins">Winning Trades</option>
+                                                <option value="losses">Losing Trades</option>
+                                            </select>
+                                        </div>
+                                        <button class="btn btn-refresh" onclick="refreshTradeHistory('crypto', 'paper')">
+                                            <i class="fas fa-refresh"></i> Refresh
+                                        </button>
+                                    </div>
+                                    <div class="trade-history-container">
+                                        <div class="table-container">
+                                            <table class="trade-history-table" id="crypto-paper-trade-history">
+                                                <thead>
+                                                    <tr>
+                                                        <th class="sortable" data-column="symbol">Symbol <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="side">Side <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="size">Size <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="entry">Entry <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="entry_time">Open Time <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="exit">Exit <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="timestamp">Close Time <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="duration">Duration <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="pnl_pct">PnL % <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="pnl_usd">PnL USD <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="rewards">Rewards <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="balance">Balance <i class="fas fa-sort"></i></th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    <tr class="no-trades"><td colspan="12">No completed trades yet</td></tr>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <!-- Symbol Performance Tab -->
+                                <div class="tab-content" id="crypto-paper-symbols-tab">
+                                    <div class="symbol-performance-list" id="crypto-paper-symbol-performance">
+                                        <div class="no-data">No symbol data available</div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -147,7 +297,7 @@
                 <!-- Live Trading Section -->
                 <div class="trading-section live">
                     <div class="section-header">
-                        <h4><i class="fas fa-chart-line"></i> Live Trading</h4>
+                        <h4><i class="fas fa-rocket"></i> Live Trading</h4>
                         <div class="status-controls">
                             <div class="trading-status" id="crypto-live-status">
                                 <span class="status-indicator idle"></span>
@@ -175,7 +325,7 @@
                                 <span class="metric-value" id="crypto-live-positions">0</span>
                             </div>
                             <div class="metric">
-                                <span class="metric-label">Strategies</span>
+                                <span class="metric-label">Approved</span>
                                 <span class="metric-value" id="crypto-live-strategies">0</span>
                             </div>
                             <div class="metric">
@@ -185,6 +335,114 @@
                             <div class="metric">
                                 <span class="metric-label">Daily P&L</span>
                                 <span class="metric-value">$0.00</span>
+                            </div>
+                        </div>
+                        
+                        <!-- Analytics Section for Live Trading -->
+                        <div class="analytics-section" id="crypto-live-analytics">
+                            <div class="analytics-header">
+                                <h5><i class="fas fa-chart-bar"></i> Analytics & Trade History</h5>
+                                <button class="btn btn-analytics" onclick="toggleAnalytics('crypto', 'live')">
+                                    <i class="fas fa-chevron-down"></i>
+                                </button>
+                            </div>
+                            <div class="analytics-content" id="crypto-live-analytics-content" style="display: none;">
+                                <div class="analytics-tabs">
+                                    <button class="tab-btn active" onclick="switchTab('crypto-live', 'overview')">Overview</button>
+                                    <button class="tab-btn" onclick="switchTab('crypto-live', 'trades')">Trade History</button>
+                                    <button class="tab-btn" onclick="switchTab('crypto-live', 'symbols')">By Symbol</button>
+                                </div>
+                                
+                                <!-- Overview Tab -->
+                                <div class="tab-content active" id="crypto-live-overview-tab">
+                                    <div class="performance-metrics">
+                                        <div class="metric-row">
+                                            <div class="metric-item">
+                                                <span class="metric-label">Total Trades</span>
+                                                <span class="metric-value" id="crypto-live-total-trades">0</span>
+                                            </div>
+                                            <div class="metric-item">
+                                                <span class="metric-label">Win Rate</span>
+                                                <span class="metric-value" id="crypto-live-win-rate">0%</span>
+                                            </div>
+                                            <div class="metric-item">
+                                                <span class="metric-label">Profit Factor</span>
+                                                <span class="metric-value" id="crypto-live-profit-factor">0.00</span>
+                                            </div>
+                                            <div class="metric-item">
+                                                <span class="metric-label">ROI</span>
+                                                <span class="metric-value" id="crypto-live-roi">0%</span>
+                                            </div>
+                                        </div>
+                                        <div class="metric-row">
+                                            <div class="metric-item">
+                                                <span class="metric-label">Avg Win</span>
+                                                <span class="metric-value" id="crypto-live-avg-win">$0.00</span>
+                                            </div>
+                                            <div class="metric-item">
+                                                <span class="metric-label">Avg Loss</span>
+                                                <span class="metric-value" id="crypto-live-avg-loss">$0.00</span>
+                                            </div>
+                                            <div class="metric-item">
+                                                <span class="metric-label">Max Win</span>
+                                                <span class="metric-value" id="crypto-live-max-win">$0.00</span>
+                                            </div>
+                                            <div class="metric-item">
+                                                <span class="metric-label">Max Loss</span>
+                                                <span class="metric-value" id="crypto-live-max-loss">$0.00</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <!-- Trade History Tab -->
+                                <div class="tab-content" id="crypto-live-trades-tab">
+                                    <div class="trade-history-controls">
+                                        <div style="display: flex; gap: 8px; align-items: center;">
+                                            <input type="text" id="crypto-live-search" placeholder="Search symbol..." style="width: 120px;">
+                                            <select id="crypto-live-trade-filter">
+                                                <option value="all">All Trades</option>
+                                                <option value="wins">Winning Trades</option>
+                                                <option value="losses">Losing Trades</option>
+                                            </select>
+                                        </div>
+                                        <button class="btn btn-refresh" onclick="refreshTradeHistory('crypto', 'live')">
+                                            <i class="fas fa-refresh"></i> Refresh
+                                        </button>
+                                    </div>
+                                    <div class="trade-history-container">
+                                        <div class="table-container">
+                                            <table class="trade-history-table" id="crypto-live-trade-history">
+                                                <thead>
+                                                    <tr>
+                                                        <th class="sortable" data-column="symbol">Symbol <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="side">Side <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="size">Size <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="entry">Entry <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="entry_time">Open Time <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="exit">Exit <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="timestamp">Close Time <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="duration">Duration <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="pnl_pct">PnL % <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="pnl_usd">PnL USD <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="rewards">Rewards <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="balance">Balance <i class="fas fa-sort"></i></th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    <tr class="no-trades"><td colspan="12">No completed trades yet</td></tr>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <!-- Symbol Performance Tab -->
+                                <div class="tab-content" id="crypto-live-symbols-tab">
+                                    <div class="symbol-performance-list" id="crypto-live-symbol-performance">
+                                        <div class="no-data">No symbol data available</div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -212,7 +470,7 @@
                 <!-- Paper Trading Section -->
                 <div class="trading-section paper">
                     <div class="section-header">
-                        <h4><i class="fas fa-file-alt"></i> Paper Trading</h4>
+                        <h4><i class="fas fa-flask"></i> Strategy Development</h4>
                         <div class="controls">
                             <button class="btn btn-start" id="futures-paper-start" onclick="toggleTrading('futures', 'paper')">Start</button>
                             <button class="btn btn-kill" onclick="killAsset('futures')">Kill</button>
@@ -248,8 +506,25 @@
                         </div>
                         <div class="positions-section" id="futures-paper-positions-section">
                             <h5>Active Positions</h5>
-                            <div class="positions-list" id="futures-paper-positions-list">
-                                <div class="no-positions">No active positions</div>
+                            <div class="table-container">
+                                <table class="positions-table" id="futures-paper-positions-list">
+                                    <thead>
+                                        <tr>
+                                            <th class="sortable" data-column="symbol">Symbol <i class="fas fa-sort"></i></th>
+                                            <th class="sortable" data-column="side">Side <i class="fas fa-sort"></i></th>
+                                            <th class="sortable" data-column="size">Size <i class="fas fa-sort"></i></th>
+                                            <th class="sortable" data-column="entry_price">Entry <i class="fas fa-sort"></i></th>
+                                            <th class="sortable" data-column="current_price">Current <i class="fas fa-sort"></i></th>
+                                            <th class="sortable" data-column="pnl">PnL <i class="fas fa-sort"></i></th>
+                                            <th class="sortable" data-column="take_profit">TP <i class="fas fa-sort"></i></th>
+                                            <th class="sortable" data-column="stop_loss">SL <i class="fas fa-sort"></i></th>
+                                            <th class="sortable" data-column="duration">Duration <i class="fas fa-sort"></i></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr class="no-positions"><td colspan="9">No active positions</td></tr>
+                                    </tbody>
+                                </table>
                             </div>
                         </div>
                     </div>
@@ -258,7 +533,7 @@
                 <!-- Live Trading Section -->
                 <div class="trading-section live">
                     <div class="section-header">
-                        <h4><i class="fas fa-chart-line"></i> Live Trading</h4>
+                        <h4><i class="fas fa-rocket"></i> Live Trading</h4>
                         <div class="controls">
                             <button class="btn btn-start disabled" id="futures-live-start" onclick="toggleTrading('futures', 'live')" disabled>Start</button>
                             <button class="btn btn-kill" onclick="killAsset('futures')">Kill</button>
@@ -317,7 +592,7 @@
                 <!-- Paper Trading Section -->
                 <div class="trading-section paper">
                     <div class="section-header">
-                        <h4><i class="fas fa-file-alt"></i> Paper Trading</h4>
+                        <h4><i class="fas fa-flask"></i> Strategy Development</h4>
                         <div class="controls">
                             <button class="btn btn-start" id="forex-paper-start" onclick="toggleTrading('forex', 'paper')">Start</button>
                             <button class="btn btn-kill" onclick="killAsset('forex')">Kill</button>
@@ -357,7 +632,7 @@
                 <!-- Live Trading Section -->
                 <div class="trading-section live">
                     <div class="section-header">
-                        <h4><i class="fas fa-chart-line"></i> Live Trading</h4>
+                        <h4><i class="fas fa-rocket"></i> Live Trading</h4>
                         <div class="controls">
                             <button class="btn btn-start disabled" id="forex-live-start" onclick="toggleTrading('forex', 'live')" disabled>Start</button>
                             <button class="btn btn-kill" onclick="killAsset('forex')">Kill</button>
@@ -416,7 +691,7 @@
                 <!-- Paper Trading Section -->
                 <div class="trading-section paper">
                     <div class="section-header">
-                        <h4><i class="fas fa-file-alt"></i> Paper Trading</h4>
+                        <h4><i class="fas fa-flask"></i> Strategy Development</h4>
                         <div class="controls">
                             <button class="btn btn-start" id="forex_options-paper-start" onclick="toggleTrading('forex_options', 'paper')">Start</button>
                             <button class="btn btn-kill" onclick="killAsset('forex_options')">Kill</button>
@@ -456,7 +731,7 @@
                 <!-- Live Trading Section -->
                 <div class="trading-section live">
                     <div class="section-header">
-                        <h4><i class="fas fa-chart-line"></i> Live Trading</h4>
+                        <h4><i class="fas fa-rocket"></i> Live Trading</h4>
                         <div class="controls">
                             <button class="btn btn-start disabled" id="forex_options-live-start" onclick="toggleTrading('forex_options', 'live')" disabled>Start</button>
                             <button class="btn btn-kill" onclick="killAsset('forex_options')">Kill</button>
@@ -510,6 +785,75 @@
         </footer>
     </div>
 
-    <script src="/static/dashboard.js"></script>
+    <!-- Reward Display Modal -->
+    <div class="reward-modal" id="rewardModal">
+        <div class="reward-modal-content">
+            <div class="reward-modal-header">
+                <h3>Trade Reward Analysis</h3>
+                <button class="reward-modal-close" onclick="closeRewardModal()">&times;</button>
+            </div>
+            <div class="reward-modal-body">
+                <div class="reward-summary">
+                    <div class="reward-total">
+                        <span class="reward-label">Total Reward</span>
+                        <span class="reward-value" id="rewardTotalValue">+0.00</span>
+                    </div>
+                    <div class="trade-info">
+                        <span class="trade-symbol" id="rewardTradeSymbol">-</span>
+                        <span class="trade-side" id="rewardTradeSide">-</span>
+                        <span class="trade-profit" id="rewardTradeProfit">0.00%</span>
+                    </div>
+                </div>
+                
+                <div class="reward-breakdown">
+                    <div class="breakdown-section positive-rewards">
+                        <h4>Positive Rewards</h4>
+                        <div class="reward-components" id="positiveComponents">
+                        </div>
+                    </div>
+                    
+                    <div class="breakdown-section penalties">
+                        <h4>Penalties</h4>
+                        <div class="reward-components" id="penaltyComponents">
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="reward-warnings" id="rewardWarnings" style="display: none;">
+                    <div class="warning-item">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <span class="warning-text" id="warningText"></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Reward History Sidebar -->
+    <div class="reward-history-sidebar" id="rewardSidebar">
+        <div class="reward-history-header">
+            <h3>Recent Rewards</h3>
+            <button class="sidebar-toggle" onclick="toggleRewardSidebar()">
+                <i class="fas fa-chevron-right"></i>
+            </button>
+        </div>
+        <div class="reward-history-content">
+            <div class="reward-history-list" id="rewardHistoryList">
+                <div class="no-rewards">No recent rewards</div>
+            </div>
+        </div>
+        <div class="reward-history-stats">
+            <div class="stat-item">
+                <span class="stat-label">Avg Reward</span>
+                <span class="stat-value" id="avgReward">0.00</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">Total Points</span>
+                <span class="stat-value" id="totalPoints">0</span>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/dashboard.js?v=2025082704"></script>
 </body>
 </html>

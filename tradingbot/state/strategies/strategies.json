@@ -1,0 +1,102 @@
+{
+  "strict_paper_strategy_crypto": {
+    "strategy_id": "strict_paper_strategy_crypto",
+    "asset_type": "crypto",
+    "status": "developing",
+    "metrics": {
+      "total_trades": 77,
+      "winning_trades": 0,
+      "losing_trades": 0,
+      "win_rate": 10.39,
+      "total_pnl": 0.0,
+      "max_drawdown": 0.0,
+      "sharpe_ratio": 0.0,
+      "profit_factor": 0.0,
+      "avg_win": 0.0,
+      "avg_loss": 0.0,
+      "development_days": 0,
+      "created_at": "2025-08-28T01:50:00.637818",
+      "last_updated": "2025-08-28T01:50:00.637818"
+    },
+    "validation_results": null,
+    "validation_reasons": null,
+    "paper_trading_start": "2025-08-28T01:50:00.637818",
+    "validation_date": null,
+    "live_deployment_date": null
+  },
+  "strict_paper_strategy_forex_options": {
+    "strategy_id": "strict_paper_strategy_forex_options",
+    "asset_type": "forex_options",
+    "status": "developing",
+    "metrics": {
+      "total_trades": 32,
+      "winning_trades": 0,
+      "losing_trades": 0,
+      "win_rate": 0.0,
+      "total_pnl": 0.0,
+      "max_drawdown": 0.0,
+      "sharpe_ratio": 0.0,
+      "profit_factor": 0.0,
+      "avg_win": 0.0,
+      "avg_loss": 0.0,
+      "development_days": 0,
+      "created_at": "2025-08-28T01:35:05.116091",
+      "last_updated": "2025-08-28T01:35:05.116091"
+    },
+    "validation_results": null,
+    "validation_reasons": null,
+    "paper_trading_start": "2025-08-28T01:35:05.116091",
+    "validation_date": null,
+    "live_deployment_date": null
+  },
+  "strict_paper_strategy_futures": {
+    "strategy_id": "strict_paper_strategy_futures",
+    "asset_type": "futures",
+    "status": "developing",
+    "metrics": {
+      "total_trades": 45,
+      "winning_trades": 0,
+      "losing_trades": 0,
+      "win_rate": 0.0,
+      "total_pnl": 0.0,
+      "max_drawdown": 0.0,
+      "sharpe_ratio": 0.0,
+      "profit_factor": 0.0,
+      "avg_win": 0.0,
+      "avg_loss": 0.0,
+      "development_days": 0,
+      "created_at": "2025-08-28T01:35:05.220266",
+      "last_updated": "2025-08-28T01:35:05.220266"
+    },
+    "validation_results": null,
+    "validation_reasons": null,
+    "paper_trading_start": "2025-08-28T01:35:05.220266",
+    "validation_date": null,
+    "live_deployment_date": null
+  },
+  "strict_paper_strategy_forex": {
+    "strategy_id": "strict_paper_strategy_forex",
+    "asset_type": "forex",
+    "status": "developing",
+    "metrics": {
+      "total_trades": 34,
+      "winning_trades": 0,
+      "losing_trades": 0,
+      "win_rate": 0.0,
+      "total_pnl": 0.0,
+      "max_drawdown": 0.0,
+      "sharpe_ratio": 0.0,
+      "profit_factor": 0.0,
+      "avg_win": 0.0,
+      "avg_loss": 0.0,
+      "development_days": 0,
+      "created_at": "2025-08-28T01:35:05.408369",
+      "last_updated": "2025-08-28T01:35:05.408369"
+    },
+    "validation_results": null,
+    "validation_reasons": null,
+    "paper_trading_start": "2025-08-28T01:35:05.408369",
+    "validation_date": null,
+    "live_deployment_date": null
+  }
+}

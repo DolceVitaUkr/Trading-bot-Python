@@ -11,9 +11,16 @@
       "Bash(curl:*)",
       "Bash(start:*)",
       "WebFetch(domain:bybit-exchange.github.io)",
-      "Read(/D:\\/**)"
+      "Read(/D:\\/**)",
+      "Bash(uvicorn:*)",
+      "Bash(grep:*)",
+      "Bash(killall:*)",
+      "Bash(node:*)"
     ],
     "deny": [],
-    "ask": []
+    "ask": [],
+    "additionalDirectories": [
+      "D:\\d\\githubtradebot"
+    ]
   }
 }

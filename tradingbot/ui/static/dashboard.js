@@ -5,6 +5,14 @@ class MultiAssetDashboard {
         this.updateTimer = null;
         this.assets = ['crypto', 'futures', 'forex', 'forex_options'];
         this.charts = {};
+        
+        // Auto-reconnect system
+        this.reconnectAttempts = 0;
+        this.maxReconnectAttempts = 15;
+        this.isConnected = true;
+        this.reconnectDelay = 5000; // 5 seconds between reconnect attempts
+        this.lastSuccessfulUpdate = Date.now();
+        
         this.init();
     }
 
@@ -201,8 +209,19 @@ class MultiAssetDashboard {
                     this.updateGlobalStats(),
                     this.updateAllAssets()
                 ]);
+                
+                // Reset reconnect attempts on successful update
+                if (!this.isConnected) {
+                    this.isConnected = true;
+                    this.reconnectAttempts = 0;
+                    this.logActivity('System', 'Connection restored', 'success');
+                    this.showSystemMessage('Connection restored', 'success');
+                }
+                this.lastSuccessfulUpdate = Date.now();
+                
             } catch (error) {
                 console.error('Periodic update failed:', error);
+                this.handleConnectionError(error);
             }
         }, this.updateInterval);
     }
@@ -327,7 +346,7 @@ class MultiAssetDashboard {
 
     updateWallet(asset, type, walletData) {
         if (!walletData) {
-            this.updateElement(`${asset}-${type}-balance-value`, '$0.00');
+            this.updateElement(`${asset}-${type}-balance`, 'Total: $0.00 | Available: $0.00 | Used: $0.00');
             this.updateElement(`${asset}-${type}-change`, 'No data');
             return;
         }
@@ -335,8 +354,15 @@ class MultiAssetDashboard {
         const balance = walletData.balance || 0;
         const pnl = walletData.pnl || 0;
         const pnlPercent = walletData.pnl_percent || 0;
+        
+        // Calculate used amount from open positions (if available)
+        const usedInPositions = walletData.used_in_positions || 0;
+        const availableBalance = walletData.available_balance || (balance - usedInPositions);
 
-        this.updateElement(`${asset}-${type}-balance-value`, this.formatCurrency(balance));
+        // Create enhanced balance display
+        const balanceDisplay = `Total: ${this.formatCurrency(balance)} | Available: ${this.formatCurrency(availableBalance)} | Used: ${this.formatCurrency(usedInPositions)}`;
+        
+        this.updateElement(`${asset}-${type}-balance`, balanceDisplay);
         
         const changeElement = document.getElementById(`${asset}-${type}-change`);
         if (changeElement) {
@@ -344,9 +370,6 @@ class MultiAssetDashboard {
             changeElement.textContent = changeText;
             changeElement.className = `balance-change ${pnl >= 0 ? 'positive' : 'negative'}`;
         }
-        
-        // Also update the simple balance elements for compatibility
-        this.updateElement(`${asset}-${type}-balance`, this.formatCurrency(balance));
     }
 
     updateChart(asset, type, walletData) {
@@ -396,107 +419,201 @@ class MultiAssetDashboard {
     }
 
     updatePositions(asset, positionsData) {
-        // Update position count in metrics for both paper and live
-        const modes = ['paper', 'live'];
+        // Handle the nested position data structure
+        const paperData = positionsData.paper || {};
+        const liveData = positionsData.live || {};
         
-        modes.forEach(mode => {
-            const positionElement = document.getElementById(`${asset}-${mode}-positions`);
-            const strategiesElement = document.getElementById(`${asset}-${mode}-strategies`);
-            const winRateElement = document.getElementById(`${asset}-${mode}-winrate`);
-            const dailyPnlElement = document.getElementById(`${asset}-${mode}-dailypnl`);
-            const positionsListElement = document.getElementById(`${asset}-${mode}-positions-list`);
-            
-            const positions = positionsData.positions || [];
-            
-            // Update metrics
-            if (positionElement) positionElement.textContent = positions.length;
-            if (strategiesElement) strategiesElement.textContent = positionsData.active_strategies || 0;
-            if (winRateElement) winRateElement.textContent = `${(positionsData.win_rate || 0).toFixed(1)}%`;
-            
-            if (dailyPnlElement) {
-                const dailyPnl = positionsData.daily_pnl || 0;
-                dailyPnlElement.textContent = this.formatCurrency(dailyPnl);
-                dailyPnlElement.className = `metric-value ${dailyPnl >= 0 ? 'positive' : 'negative'}`;
-            }
-            
-            // Update positions list
-            if (positionsListElement) {
-                this.updatePositionsList(positionsListElement, positions);
-            }
-        });
+        const paperPositions = paperData.positions || [];
+        const livePositions = liveData.positions || [];
+        
+        // Update paper trading metrics
+        const paperPositionElement = document.getElementById(`${asset}-paper-positions`);
+        const paperDailyPnlElement = document.getElementById(`${asset}-paper-dailypnl`);
+        const paperPositionsListElement = document.getElementById(`${asset}-paper-positions-list`);
+        
+        if (paperPositionElement) paperPositionElement.textContent = paperPositions.length;
+        if (paperDailyPnlElement) {
+            const dailyPnl = paperData.daily_pnl || 0;
+            paperDailyPnlElement.textContent = this.formatCurrency(dailyPnl);
+            paperDailyPnlElement.className = `metric-value ${dailyPnl >= 0 ? 'positive' : 'negative'}`;
+        }
+        if (paperPositionsListElement) {
+            this.updatePositionsList(paperPositionsListElement, paperPositions);
+        }
+        
+        // Update live trading metrics
+        const livePositionElement = document.getElementById(`${asset}-live-positions`);
+        const liveDailyPnlElement = document.getElementById(`${asset}-live-dailypnl`);
+        const livePositionsListElement = document.getElementById(`${asset}-live-positions-list`);
+        
+        if (livePositionElement) livePositionElement.textContent = livePositions.length;
+        if (liveDailyPnlElement) {
+            const dailyPnl = liveData.daily_pnl || 0;
+            liveDailyPnlElement.textContent = this.formatCurrency(dailyPnl);
+            liveDailyPnlElement.className = `metric-value ${dailyPnl >= 0 ? 'positive' : 'negative'}`;
+        }
+        if (livePositionsListElement) {
+            this.updatePositionsList(livePositionsListElement, livePositions);
+        }
     }
     
     updatePositionsList(container, positions) {
+        // Check if container is a table
+        const isTable = container.tagName === 'TABLE';
+        const tbody = isTable ? container.querySelector('tbody') : null;
+        
         if (!positions || positions.length === 0) {
-            container.innerHTML = '<div class="no-positions">No active positions</div>';
+            if (isTable && tbody) {
+                tbody.innerHTML = '<tr class="no-positions"><td colspan="7">No active positions</td></tr>';
+            } else {
+                container.innerHTML = '<div class="no-positions">No active positions</div>';
+            }
             return;
         }
         
-        const positionsHtml = positions.map(position => {
-            const pnlClass = position.pnl >= 0 ? 'positive' : 'negative';
-            const pnlPercent = position.entry_price ? ((position.current_price - position.entry_price) / position.entry_price * 100) : 0;
+        if (isTable && tbody) {
+            // Render as table rows
+            tbody.innerHTML = '';
             
-            return `
-                <div class="position-item">
-                    <div class="position-header">
-                        <span class="position-symbol">${position.symbol}</span>
-                        <span class="position-side ${position.side}">${position.side.toUpperCase()}</span>
+            positions.forEach(position => {
+                const pnl = position.pnl || 0;
+                const pnlPct = position.pnl_pct || 0;
+                const pnlClass = pnl >= 0 ? 'positive' : 'negative';
+                const sideClass = position.side ? position.side.toLowerCase() : '';
+                
+                // Calculate position value in USD
+                const size = position.size || 0;
+                const entryPrice = position.entry_price || 0;
+                const positionValue = size * entryPrice;
+                
+                // Calculate duration using timestamp
+                const duration = position.duration || this.calculateDurationFromNow(position.timestamp);
+                
+                // TP/SL values
+                const takeProfit = position.take_profit || 0;
+                const stopLoss = position.stop_loss || 0;
+                
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td class="position-symbol">${position.symbol || 'N/A'}</td>
+                    <td class="position-side ${sideClass}">${(position.side || 'N/A').toUpperCase()}</td>
+                    <td class="position-size">${this.formatCurrency(positionValue)}</td>
+                    <td class="entry-price">${this.formatPrice(position.entry_price || 0)}</td>
+                    <td class="current-price">${this.formatPrice(position.current_price || 0)}</td>
+                    <td class="position-pnl ${pnlClass}">${pnl >= 0 ? '+' : ''}${this.formatCurrency(pnl)} (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%)</td>
+                    <td class="take-profit">${this.formatPrice(takeProfit)}</td>
+                    <td class="stop-loss">${this.formatPrice(stopLoss)}</td>
+                    <td class="position-duration">${duration}</td>
+                `;
+                
+                // Store position data for sorting
+                row.positionData = {
+                    symbol: position.symbol || '',
+                    side: position.side || '',
+                    size: positionValue,
+                    entry_price: parseFloat(position.entry_price) || 0,
+                    current_price: parseFloat(position.current_price) || 0,
+                    pnl: pnl,
+                    take_profit: parseFloat(takeProfit) || 0,
+                    stop_loss: parseFloat(stopLoss) || 0,
+                    duration: duration
+                };
+                
+                tbody.appendChild(row);
+            });
+            
+            // Setup sorting for positions table
+            this.setupPositionsTableSorting(container);
+            
+        } else {
+            // Fallback to original card-based layout
+            const positionsHtml = positions.map(position => {
+                const pnl = position.pnl || 0;
+                const pnlPct = position.pnl_pct || 0;
+                const pnlClass = pnl >= 0 ? 'positive' : 'negative';
+                
+                return `
+                    <div class="position-item">
+                        <div class="position-header">
+                            <span class="position-symbol">${position.symbol}</span>
+                            <span class="position-side ${position.side}">${position.side.toUpperCase()}</span>
+                        </div>
+                        <div class="position-details">
+                            <div class="position-detail">
+                                <span class="position-label">Entry Price</span>
+                                <span class="position-value">${this.formatCurrency(position.entry_price || 0)}</span>
+                            </div>
+                            <div class="position-detail">
+                                <span class="position-label">Current Price</span>
+                                <span class="position-value">${this.formatCurrency(position.current_price || 0)}</span>
+                            </div>
+                            <div class="position-detail">
+                                <span class="position-label">P&L USD</span>
+                                <span class="position-value position-pnl ${pnlClass}">
+                                    ${pnl >= 0 ? '+' : ''}${this.formatCurrency(pnl)}
+                                </span>
+                            </div>
+                            <div class="position-detail">
+                                <span class="position-label">P&L %</span>
+                                <span class="position-value position-pnl ${pnlClass}">
+                                    ${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%
+                                </span>
+                            </div>
+                        </div>
                     </div>
-                    <div class="position-details">
-                        <div class="position-detail">
-                            <span class="position-label">Entry Price</span>
-                            <span class="position-value">${this.formatCurrency(position.entry_price || 0)}</span>
-                        </div>
-                        <div class="position-detail">
-                            <span class="position-label">Current Price</span>
-                            <span class="position-value">${this.formatCurrency(position.current_price || 0)}</span>
-                        </div>
-                        <div class="position-detail">
-                            <span class="position-label">P&L USD</span>
-                            <span class="position-value position-pnl ${pnlClass}">
-                                ${position.pnl >= 0 ? '+' : ''}${this.formatCurrency(position.pnl || 0)}
-                            </span>
-                        </div>
-                        <div class="position-detail">
-                            <span class="position-label">P&L %</span>
-                            <span class="position-value position-pnl ${pnlClass}">
-                                ${pnlPercent >= 0 ? '+' : ''}${pnlPercent.toFixed(2)}%
-                            </span>
-                        </div>
-                    </div>
-                </div>
-            `;
-        }).join('');
-        
-        container.innerHTML = positionsHtml;
+                `;
+            }).join('');
+            
+            container.innerHTML = positionsHtml;
+        }
     }
 
     updateStrategyStatus(asset, strategyData) {
         const statusElement = document.getElementById(`${asset}-strategy-status`);
         if (!statusElement) return;
 
-        if (!strategyData.strategies || strategyData.strategies.length === 0) {
-            statusElement.textContent = 'No strategies active';
-            return;
-        }
-
-        const activeStrategies = strategyData.strategies.filter(s => s.active).length;
-        const testingStrategies = strategyData.strategies.filter(s => s.status === 'testing').length;
-        const approvedStrategies = strategyData.strategies.filter(s => s.status === 'approved').length;
+        // Use new strategy development data structure
+        const summary = strategyData.summary || {};
+        
+        const developing = summary.developing || 0;
+        const pendingValidation = summary.pending_validation || 0;
+        const validated = summary.validated || 0;
+        const live = summary.live || 0;
+        const total = summary.total || 0;
 
         let statusText = '';
-        if (testingStrategies > 0) {
-            statusText += `Testing ${testingStrategies} strategies`;
-        }
-        if (approvedStrategies > 0) {
-            if (statusText) statusText += ', ';
-            statusText += `${approvedStrategies} approved for live`;
-        }
-        if (!statusText) {
-            statusText = `${activeStrategies} strategies active`;
+        if (total === 0) {
+            statusText = 'No strategies yet';
+        } else {
+            const parts = [];
+            if (developing > 0) {
+                parts.push(`${developing} developing`);
+            }
+            if (pendingValidation > 0) {
+                parts.push(`${pendingValidation} pending validation`);
+            }
+            if (validated > 0) {
+                parts.push(`${validated} validated`);
+            }
+            if (live > 0) {
+                parts.push(`${live} live approved`);
+            }
+            statusText = parts.join(', ') || `${total} strategies`;
         }
 
         statusElement.textContent = statusText;
+
+        // Update paper trading specific metrics (strategy development section)
+        const paperStrategiesElement = document.getElementById(`${asset}-paper-strategies`);
+        if (paperStrategiesElement) {
+            paperStrategiesElement.textContent = developing + pendingValidation;
+        }
+
+        // Update live trading specific metrics (approved strategies section)
+        const liveStrategiesElement = document.getElementById(`${asset}-live-strategies`);
+        if (liveStrategiesElement) {
+            liveStrategiesElement.textContent = live;
+        }
     }
 
     updateAssetControls(asset, status) {
@@ -894,6 +1011,747 @@ class MultiAssetDashboard {
             if (chart) chart.destroy();
         });
     }
+
+    // Analytics Methods
+    async loadAnalyticsData(asset, mode) {
+        try {
+            console.log(`Loading analytics data for ${asset} ${mode}`);
+            
+            const response = await fetch(`${this.baseUrl}/analytics/${asset}/${mode}/reward-summary`);
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            
+            const data = await response.json();
+            console.log(`Analytics data received:`, data);
+            
+            // Update overview metrics
+            this.updateElement(`${asset}-${mode}-total-trades`, data.trading_metrics?.total_trades || 0);
+            this.updateElement(`${asset}-${mode}-win-rate`, `${data.trading_metrics?.win_rate || 0}%`);
+            this.updateElement(`${asset}-${mode}-profit-factor`, data.trading_metrics?.profit_factor || '0.00');
+            this.updateElement(`${asset}-${mode}-roi`, `${data.overall_performance?.roi_pct || 0}%`);
+            this.updateElement(`${asset}-${mode}-avg-win`, this.formatCurrency(data.trading_metrics?.avg_win || 0));
+            this.updateElement(`${asset}-${mode}-avg-loss`, this.formatCurrency(data.trading_metrics?.avg_loss || 0));
+            this.updateElement(`${asset}-${mode}-max-win`, this.formatCurrency(data.trading_metrics?.max_win || 0));
+            this.updateElement(`${asset}-${mode}-max-loss`, this.formatCurrency(data.trading_metrics?.max_loss || 0));
+            
+            // Update reward system metrics if available
+            if (data.reward_system_metrics) {
+                const rewards = data.reward_system_metrics;
+                
+                // Update reward points with color coding
+                const totalRewardPoints = rewards.total_reward_points || 0;
+                const avgRewardPerTrade = rewards.avg_reward_per_trade || 0;
+                
+                const rewardPointsElement = document.getElementById(`${asset}-${mode}-reward-points`);
+                if (rewardPointsElement) {
+                    rewardPointsElement.textContent = totalRewardPoints.toFixed(1);
+                    rewardPointsElement.className = `metric-value ${totalRewardPoints >= 0 ? 'reward-positive' : 'reward-negative'}`;
+                }
+                
+                const avgRewardElement = document.getElementById(`${asset}-${mode}-avg-reward`);
+                if (avgRewardElement) {
+                    avgRewardElement.textContent = avgRewardPerTrade.toFixed(2);
+                    avgRewardElement.className = `metric-value ${avgRewardPerTrade >= 0 ? 'reward-positive' : 'reward-negative'}`;
+                }
+                
+                this.updateElement(`${asset}-${mode}-consecutive-sl`, rewards.consecutive_sl_hits || 0);
+                
+                // Show/hide reward section based on availability
+                const rewardSection = document.getElementById(`${asset}-${mode}-reward-section`);
+                if (rewardSection) {
+                    rewardSection.style.display = 'block';
+                }
+            }
+            
+        } catch (error) {
+            console.error(`Failed to load analytics data for ${asset} ${mode}:`, error);
+            this.logActivity(asset.toUpperCase(), `Failed to load analytics data: ${error.message}`, 'error');
+        }
+    }
+
+    async loadTradeHistory(asset, mode, forceRefresh = false) {
+        try {
+            console.log(`Loading trade history for ${asset} ${mode}`);
+            
+            const response = await fetch(`${this.baseUrl}/analytics/${asset}/${mode}/detailed-trades`);
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            
+            const data = await response.json();
+            console.log(`Trade history data received:`, data);
+            
+            const tradeHistoryTable = document.getElementById(`${asset}-${mode}-trade-history`);
+            if (!tradeHistoryTable) return;
+            
+            const tbody = tradeHistoryTable.querySelector('tbody');
+            if (!tbody) return;
+            
+            // Clear existing content
+            tbody.innerHTML = '';
+            
+            if (!data.trades || data.trades.length === 0) {
+                tbody.innerHTML = '<tr class="no-trades"><td colspan="10">No completed trades yet</td></tr>';
+                return;
+            }
+            
+            // Store original data for sorting and filtering
+            this.tradeData = this.tradeData || {};
+            this.tradeData[`${asset}-${mode}`] = data.trades;
+            
+            // Render table rows
+            this.renderTradeHistoryTable(asset, mode, data.trades);
+            
+            // Setup table sorting and filtering
+            this.setupTradeHistoryControls(asset, mode);
+            
+            if (forceRefresh) {
+                this.logActivity(asset.toUpperCase(), `Trade history refreshed (${data.trades.length} trades)`, 'info');
+            }
+            
+        } catch (error) {
+            console.error(`Failed to load trade history for ${asset} ${mode}:`, error);
+            this.logActivity(asset.toUpperCase(), `Failed to load trade history: ${error.message}`, 'error');
+            
+            const tradeHistoryList = document.getElementById(`${asset}-${mode}-trade-history`);
+            if (tradeHistoryList) {
+                tradeHistoryList.innerHTML = '<div class="no-trades">Error loading trade history</div>';
+            }
+        }
+    }
+
+    async addTradingStatisticsHeader(container, asset, mode) {
+        try {
+            // Get comprehensive analytics data for the header
+            const response = await fetch(`${this.baseUrl}/analytics/${asset}/${mode}/reward-summary`);
+            if (!response.ok) return;
+            
+            const data = await response.json();
+            const metrics = data.trading_metrics || {};
+            const performance = data.overall_performance || {};
+            
+            const headerDiv = document.createElement('div');
+            headerDiv.className = 'trading-stats-header';
+            
+            // Calculate average position size and total volume
+            const symbolBreakdown = data.symbol_breakdown || {};
+            let totalVolume = 0;
+            let totalTrades = metrics.total_trades || 0;
+            
+            Object.values(symbolBreakdown).forEach(symbol => {
+                totalVolume += symbol.total_volume || 0;
+            });
+            
+            const avgPositionSize = totalTrades > 0 ? (totalVolume / totalTrades) : 0;
+            
+            headerDiv.innerHTML = `
+                <div class="overall-stats-line">
+                    [Trades: ${totalTrades} | 
+                    Win%: ${(metrics.win_rate || 0).toFixed(1)} | 
+                    PnL: ${performance.roi_pct >= 0 ? '+' : ''}${(performance.roi_pct || 0).toFixed(1)}% | 
+                    Sharpe: ${(performance.sharpe_ratio || 0).toFixed(2)} | 
+                    Avg Size: ${this.formatCurrency(avgPositionSize)} | 
+                    Total Vol: ${this.formatCurrency(totalVolume)} | 
+                    Avg Win: +${(Math.abs(metrics.avg_win) || 0).toFixed(2)}% | 
+                    Max DD: ${(metrics.max_loss || 0).toFixed(1)}%]
+                </div>
+            `;
+            
+            container.appendChild(headerDiv);
+        } catch (error) {
+            console.warn('Could not load trading statistics header:', error);
+        }
+    }
+
+    formatPrice(price) {
+        const numPrice = parseFloat(price) || 0;
+        if (numPrice >= 1000) {
+            return numPrice.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+        } else if (numPrice >= 1) {
+            return numPrice.toFixed(2);
+        } else {
+            return numPrice.toFixed(4);
+        }
+    }
+
+    estimateStopLoss(entryPrice, side) {
+        const price = parseFloat(entryPrice) || 0;
+        const slPercent = 0.03; // 3% stop loss
+        
+        if (side === 'BUY') {
+            return price * (1 - slPercent);
+        } else {
+            return price * (1 + slPercent);
+        }
+    }
+
+    estimateTakeProfit(entryPrice, side) {
+        const price = parseFloat(entryPrice) || 0;
+        const tpPercent = 0.05; // 5% take profit
+        
+        if (side === 'BUY') {
+            return price * (1 + tpPercent);
+        } else {
+            return price * (1 - tpPercent);
+        }
+    }
+
+    calculateDuration(entryTime, exitTime) {
+        try {
+            const entry = new Date(entryTime);
+            const exit = new Date(exitTime);
+            const diffMs = exit - entry;
+            
+            const hours = Math.floor(diffMs / (1000 * 60 * 60));
+            const minutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+            
+            if (hours > 0) {
+                return `${hours}h${minutes.toString().padStart(2, '0')}m`;
+            } else {
+                return `${minutes}m`;
+            }
+        } catch (error) {
+            return 'N/A';
+        }
+    }
+
+    calculateDurationFromNow(entryTime) {
+        try {
+            if (!entryTime) {
+                return 'N/A';
+            }
+            
+            const entry = new Date(entryTime);
+            const now = new Date();
+            const diffMs = now - entry;
+            
+            if (diffMs < 0) {
+                return 'N/A'; // Entry time in future
+            }
+            
+            const hours = Math.floor(diffMs / (1000 * 60 * 60));
+            const minutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+            const seconds = Math.floor((diffMs % (1000 * 60)) / 1000);
+            
+            if (hours > 0) {
+                return `${hours}h${minutes.toString().padStart(2, '0')}m`;
+            } else if (minutes > 0) {
+                return `${minutes}m${seconds.toString().padStart(2, '0')}s`;
+            } else {
+                return `${seconds}s`;
+            }
+        } catch (error) {
+            return 'N/A';
+        }
+    }
+
+    formatTradeTimestamp(timestamp) {
+        try {
+            const date = new Date(timestamp);
+            const now = new Date();
+            const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+            const tradeDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+            
+            const timeStr = date.toLocaleTimeString('en-US', { 
+                hour: '2-digit', 
+                minute: '2-digit', 
+                second: '2-digit',
+                hour12: false 
+            });
+            
+            if (tradeDate.getTime() === today.getTime()) {
+                return `${timeStr}`;
+            } else {
+                const dateStr = date.toLocaleDateString('en-US', { 
+                    month: '2-digit', 
+                    day: '2-digit' 
+                });
+                return `${dateStr} ${timeStr}`;
+            }
+        } catch (error) {
+            return 'N/A';
+        }
+    }
+
+    async loadSymbolPerformance(asset, mode) {
+        try {
+            console.log(`Loading symbol performance for ${asset} ${mode}`);
+            
+            const response = await fetch(`${this.baseUrl}/analytics/${asset}/${mode}/symbol-performance`);
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            
+            const data = await response.json();
+            console.log(`Symbol performance data received:`, data);
+            
+            const symbolPerformanceList = document.getElementById(`${asset}-${mode}-symbol-performance`);
+            if (!symbolPerformanceList) return;
+            
+            // Clear existing content
+            symbolPerformanceList.innerHTML = '';
+            
+            if (!data.symbols || Object.keys(data.symbols).length === 0) {
+                symbolPerformanceList.innerHTML = '<div class="no-data">No symbol data available</div>';
+                return;
+            }
+            
+            // Create symbol items
+            Object.entries(data.symbols).forEach(([symbol, performance]) => {
+                const symbolItem = document.createElement('div');
+                symbolItem.className = 'symbol-item';
+                
+                const pnlClass = performance.total_pnl >= 0 ? 'positive' : 'negative';
+                
+                symbolItem.innerHTML = `
+                    <div class="symbol-name">${symbol}</div>
+                    <div class="symbol-trades">${performance.total_trades} trades</div>
+                    <div class="symbol-winrate">${performance.win_rate}%</div>
+                    <div class="symbol-pnl ${pnlClass}">${this.formatCurrency(performance.total_pnl)}</div>
+                `;
+                
+                symbolPerformanceList.appendChild(symbolItem);
+            });
+            
+        } catch (error) {
+            console.error(`Failed to load symbol performance for ${asset} ${mode}:`, error);
+            this.logActivity(asset.toUpperCase(), `Failed to load symbol performance: ${error.message}`, 'error');
+            
+            const symbolPerformanceList = document.getElementById(`${asset}-${mode}-symbol-performance`);
+            if (symbolPerformanceList) {
+                symbolPerformanceList.innerHTML = '<div class="no-data">Error loading symbol performance</div>';
+            }
+        }
+    }
+
+    renderTradeHistoryTable(asset, mode, trades) {
+        const tradeHistoryTable = document.getElementById(`${asset}-${mode}-trade-history`);
+        const tbody = tradeHistoryTable.querySelector('tbody');
+        
+        // Clear existing rows
+        tbody.innerHTML = '';
+        
+        if (!trades || trades.length === 0) {
+            tbody.innerHTML = '<tr class="no-trades"><td colspan="11">No completed trades yet</td></tr>';
+            return;
+        }
+        
+        trades.forEach((trade, index) => {
+            const pnlUsd = trade.pnl_usd || trade.pnl || 0;
+            const pnlPct = trade.pnl_pct || trade.pnl_percentage || 0;
+            const pnlClass = pnlUsd >= 0 ? 'positive' : 'negative';
+            const sideClass = trade.side === 'BUY' ? 'long' : 'short';
+            
+            // Format prices with proper precision
+            const entryPrice = this.formatPrice(trade.entry_price);
+            const exitPrice = this.formatPrice(trade.exit_price);
+            
+            // Calculate position size and trade amount
+            const positionSize = trade.size || 0;
+            const tradeAmount = trade.trade_amount_usd || (positionSize * parseFloat(trade.entry_price)) || 0;
+            
+            // Format timestamps
+            const exitTime = this.formatTradeTimestamp(trade.exit_time);
+            const entryTime = this.formatTradeTimestamp(trade.entry_time);
+            
+            // Calculate running balance (if available from trade data)
+            const runningBalance = trade.balance || trade.portfolio_balance || trade.balance_after || 0;
+            
+            // Calculate rewards (if available from trade data or reward system)
+            const rewards = trade.reward_points || trade.reward || trade.rewards || this.calculateTradeRewards(trade);
+            const rewardClass = rewards >= 0 ? 'positive' : 'negative';
+            
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td class="trade-symbol">${trade.symbol}</td>
+                <td class="trade-side ${sideClass}">${trade.side === 'BUY' ? 'Long' : 'Short'}</td>
+                <td class="trade-size">${this.formatCurrency(tradeAmount)}</td>
+                <td class="entry-price">${entryPrice}</td>
+                <td class="entry-time">${entryTime}</td>
+                <td class="exit-price">${exitPrice}</td>
+                <td class="trade-timestamp">${exitTime}</td>
+                <td class="trade-duration">${trade.duration || this.calculateDuration(trade.entry_time, trade.exit_time)}</td>
+                <td class="pnl-pct ${pnlClass}">${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%</td>
+                <td class="pnl-usd ${pnlClass}">${pnlUsd >= 0 ? '+' : ''}${this.formatCurrency(pnlUsd)}</td>
+                <td class="trade-rewards ${rewardClass}">${rewards >= 0 ? '+' : ''}${rewards.toFixed(1)}</td>
+                <td class="running-balance">${runningBalance > 0 ? this.formatCurrency(runningBalance) : 'N/A'}</td>
+            `;
+            
+            // Store trade data on row for sorting
+            row.tradeData = trade;
+            row.tradeData.timestamp = Date.parse(trade.exit_time) || 0;
+            row.tradeData.symbol = trade.symbol;
+            row.tradeData.side = trade.side;
+            row.tradeData.size = tradeAmount;
+            row.tradeData.entry = parseFloat(trade.entry_price) || 0;
+            row.tradeData.entry_time = Date.parse(trade.entry_time) || 0;
+            row.tradeData.exit = parseFloat(trade.exit_price) || 0;
+            row.tradeData.pnl_pct = pnlPct;
+            row.tradeData.pnl_usd = pnlUsd;
+            row.tradeData.rewards = rewards;
+            row.tradeData.balance = runningBalance;
+            row.tradeData.duration = trade.duration || this.calculateDuration(trade.entry_time, trade.exit_time);
+            
+            tbody.appendChild(row);
+        });
+    }
+    
+    setupTradeHistoryControls(asset, mode) {
+        const tableId = `${asset}-${mode}-trade-history`;
+        const searchId = `${asset}-${mode}-search`;
+        const filterId = `${asset}-${mode}-trade-filter`;
+        
+        // Setup column sorting
+        this.setupTableSorting(tableId);
+        
+        // Setup search filter
+        const searchInput = document.getElementById(searchId);
+        if (searchInput) {
+            searchInput.addEventListener('input', (e) => {
+                this.filterTradeHistory(asset, mode, e.target.value.toLowerCase());
+            });
+        }
+        
+        // Setup win/loss filter
+        const filterSelect = document.getElementById(filterId);
+        if (filterSelect) {
+            filterSelect.addEventListener('change', (e) => {
+                this.filterTradeHistoryByType(asset, mode, e.target.value);
+            });
+        }
+    }
+
+    setupTableSorting(tableId) {
+        const table = document.getElementById(tableId);
+        if (!table) return;
+        
+        const headers = table.querySelectorAll('th.sortable');
+        headers.forEach(header => {
+            header.addEventListener('click', () => {
+                const column = header.dataset.column;
+                const currentDirection = header.classList.contains('sorted-asc') ? 'asc' : 
+                                      header.classList.contains('sorted-desc') ? 'desc' : 'none';
+                
+                // Clear all other sort indicators
+                headers.forEach(h => h.classList.remove('sorted-asc', 'sorted-desc'));
+                
+                // Determine new direction
+                let newDirection;
+                if (currentDirection === 'none' || currentDirection === 'desc') {
+                    newDirection = 'asc';
+                    header.classList.add('sorted-asc');
+                } else {
+                    newDirection = 'desc';
+                    header.classList.add('sorted-desc');
+                }
+                
+                // Sort table
+                this.sortTable(table, column, newDirection);
+            });
+        });
+    }
+    
+    sortTable(table, column, direction) {
+        const tbody = table.querySelector('tbody');
+        const rows = Array.from(tbody.querySelectorAll('tr'));
+        
+        // Filter out no-data rows
+        const dataRows = rows.filter(row => row.tradeData);
+        
+        if (dataRows.length === 0) return;
+        
+        dataRows.sort((a, b) => {
+            let valueA = a.tradeData[column];
+            let valueB = b.tradeData[column];
+            
+            // Handle different data types
+            if (typeof valueA === 'string' && typeof valueB === 'string') {
+                valueA = valueA.toLowerCase();
+                valueB = valueB.toLowerCase();
+            }
+            
+            if (valueA < valueB) return direction === 'asc' ? -1 : 1;
+            if (valueA > valueB) return direction === 'asc' ? 1 : -1;
+            return 0;
+        });
+        
+        // Re-append sorted rows
+        tbody.innerHTML = '';
+        dataRows.forEach(row => tbody.appendChild(row));
+        
+        // Add no-data row if needed
+        if (dataRows.length === 0) {
+            tbody.innerHTML = '<tr class="no-trades"><td colspan="12">No completed trades yet</td></tr>';
+        }
+    }
+    
+    setupPositionsTableSorting(table) {
+        if (!table) return;
+        
+        const headers = table.querySelectorAll('th.sortable');
+        headers.forEach(header => {
+            header.addEventListener('click', () => {
+                const column = header.dataset.column;
+                const currentDirection = header.classList.contains('sorted-asc') ? 'asc' : 
+                                      header.classList.contains('sorted-desc') ? 'desc' : 'none';
+                
+                // Clear all other sort indicators
+                headers.forEach(h => h.classList.remove('sorted-asc', 'sorted-desc'));
+                
+                // Determine new direction
+                let newDirection;
+                if (currentDirection === 'none' || currentDirection === 'desc') {
+                    newDirection = 'asc';
+                    header.classList.add('sorted-asc');
+                } else {
+                    newDirection = 'desc';
+                    header.classList.add('sorted-desc');
+                }
+                
+                // Sort positions table
+                this.sortPositionsTable(table, column, newDirection);
+            });
+        });
+    }
+    
+    sortPositionsTable(table, column, direction) {
+        const tbody = table.querySelector('tbody');
+        const rows = Array.from(tbody.querySelectorAll('tr'));
+        
+        // Filter out no-data rows
+        const dataRows = rows.filter(row => row.positionData);
+        
+        if (dataRows.length === 0) return;
+        
+        dataRows.sort((a, b) => {
+            let valueA = a.positionData[column];
+            let valueB = b.positionData[column];
+            
+            // Handle different data types
+            if (typeof valueA === 'string' && typeof valueB === 'string') {
+                valueA = valueA.toLowerCase();
+                valueB = valueB.toLowerCase();
+            }
+            
+            if (valueA < valueB) return direction === 'asc' ? -1 : 1;
+            if (valueA > valueB) return direction === 'asc' ? 1 : -1;
+            return 0;
+        });
+        
+        // Re-append sorted rows
+        tbody.innerHTML = '';
+        dataRows.forEach(row => tbody.appendChild(row));
+        
+        // Add no-data row if needed
+        if (dataRows.length === 0) {
+            tbody.innerHTML = '<tr class="no-positions"><td colspan="9">No active positions</td></tr>';
+        }
+    }
+    
+    calculateTradeRewards(trade) {
+        // Simple reward calculation based on P&L and other factors
+        // This integrates with the existing reward system if available
+        const pnlPct = trade.pnl_pct || trade.pnl_percentage || 0;
+        const pnlUsd = trade.pnl_usd || trade.pnl || 0;
+        
+        // Base reward from P&L percentage 
+        let reward = pnlPct * 10; // 1% profit = 10 points
+        
+        // Bonus for larger absolute profits
+        if (Math.abs(pnlUsd) > 100) {
+            reward += Math.sign(pnlUsd) * 5;
+        }
+        
+        // Penalty for losses
+        if (pnlUsd < 0) {
+            reward -= Math.abs(pnlPct) * 2; // Extra penalty for losses
+        }
+        
+        return reward;
+    }
+    
+    handleConnectionError(error) {
+        this.isConnected = false;
+        this.reconnectAttempts++;
+        
+        console.error(`Connection error (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts}):`, error);
+        
+        if (this.reconnectAttempts <= this.maxReconnectAttempts) {
+            const remainingAttempts = this.maxReconnectAttempts - this.reconnectAttempts + 1;
+            this.logActivity('System', `Server not reachable, attempt to reconnect #${this.reconnectAttempts}`, 'warning');
+            this.showSystemMessage(`Server not reachable, attempting to reconnect... (${remainingAttempts} attempts remaining)`, 'warning');
+            
+            // If too many attempts, switch to longer retry interval
+            if (this.reconnectAttempts > 5) {
+                this.updateInterval = Math.min(this.updateInterval * 1.5, 15000); // Max 15 seconds
+            }
+        } else {
+            // Max attempts reached
+            this.logActivity('System', `Max reconnection attempts reached. Please check your connection.`, 'error');
+            this.showSystemMessage(`Connection failed after ${this.maxReconnectAttempts} attempts. Please check your connection.`, 'error');
+            this.stopPeriodicUpdates();
+        }
+    }
+    
+    showSystemMessage(message, type = 'info') {
+        // Create or update system message display
+        let messageDiv = document.getElementById('system-message');
+        if (!messageDiv) {
+            messageDiv = document.createElement('div');
+            messageDiv.id = 'system-message';
+            messageDiv.className = 'system-message';
+            document.body.appendChild(messageDiv);
+        }
+        
+        messageDiv.className = `system-message ${type}`;
+        messageDiv.innerHTML = `
+            <div class="message-content">
+                <i class="fas ${this.getMessageIcon(type)}"></i>
+                <span>${message}</span>
+                <button class="message-close" onclick="this.parentElement.parentElement.style.display='none'">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+        `;
+        
+        messageDiv.style.display = 'block';
+        
+        // Auto-hide success messages after 5 seconds
+        if (type === 'success') {
+            setTimeout(() => {
+                messageDiv.style.display = 'none';
+            }, 5000);
+        }
+    }
+    
+    getMessageIcon(type) {
+        switch (type) {
+            case 'success': return 'fa-check-circle';
+            case 'warning': return 'fa-exclamation-triangle';
+            case 'error': return 'fa-exclamation-circle';
+            default: return 'fa-info-circle';
+        }
+    }
+    
+    filterTradeHistory(asset, mode, searchTerm) {
+        const tableId = `${asset}-${mode}-trade-history`;
+        const table = document.getElementById(tableId);
+        if (!table) return;
+        
+        const rows = table.querySelectorAll('tbody tr');
+        
+        rows.forEach(row => {
+            if (!row.tradeData) {
+                row.style.display = searchTerm === '' ? '' : 'none';
+                return;
+            }
+            
+            const symbol = row.tradeData.symbol.toLowerCase();
+            const side = row.tradeData.side.toLowerCase();
+            
+            const matches = symbol.includes(searchTerm) || side.includes(searchTerm);
+            row.style.display = matches ? '' : 'none';
+        });
+    }
+    
+    filterTradeHistoryByType(asset, mode, filterType) {
+        const tableId = `${asset}-${mode}-trade-history`;
+        const table = document.getElementById(tableId);
+        if (!table) return;
+        
+        const rows = table.querySelectorAll('tbody tr');
+        
+        rows.forEach(row => {
+            if (!row.tradeData) {
+                row.style.display = filterType === 'all' ? '' : 'none';
+                return;
+            }
+            
+            const pnl = row.tradeData.pnl_usd;
+            let show = true;
+            
+            switch (filterType) {
+                case 'wins':
+                    show = pnl >= 0;
+                    break;
+                case 'losses':
+                    show = pnl < 0;
+                    break;
+                case 'all':
+                default:
+                    show = true;
+                    break;
+            }
+            
+            row.style.display = show ? '' : 'none';
+        });
+    }
+}
+
+// Analytics functions
+function toggleAnalytics(asset, mode) {
+    console.log(`Toggle analytics called: ${asset} ${mode}`);
+    const content = document.getElementById(`${asset}-${mode}-analytics-content`);
+    const button = document.querySelector(`#${asset}-${mode}-analytics .btn-analytics`);
+    
+    if (content && button) {
+        const isVisible = content.style.display !== 'none';
+        content.style.display = isVisible ? 'none' : 'block';
+        button.classList.toggle('expanded', !isVisible);
+        
+        // Load analytics data when opening
+        if (!isVisible && dashboard) {
+            dashboard.loadAnalyticsData(asset, mode);
+        }
+    }
+}
+
+function switchTab(prefix, tabType) {
+    console.log(`Switch tab called: ${prefix} ${tabType}`);
+    
+    // Hide all tab contents for this prefix
+    const tabContents = document.querySelectorAll(`[id^="${prefix}-"][id$="-tab"]`);
+    tabContents.forEach(tab => {
+        tab.classList.remove('active');
+    });
+    
+    // Remove active class from all tab buttons for this prefix
+    const tabButtons = document.querySelectorAll(`#${prefix}-analytics-content .tab-btn`);
+    tabButtons.forEach(btn => {
+        btn.classList.remove('active');
+    });
+    
+    // Show selected tab content
+    const selectedTab = document.getElementById(`${prefix}-${tabType}-tab`);
+    if (selectedTab) {
+        selectedTab.classList.add('active');
+    }
+    
+    // Activate selected tab button
+    const selectedButton = document.querySelector(`#${prefix}-analytics-content .tab-btn:nth-child(${tabType === 'overview' ? 1 : tabType === 'trades' ? 2 : 3})`);
+    if (selectedButton) {
+        selectedButton.classList.add('active');
+    }
+    
+    // Load specific data based on tab type
+    if (dashboard) {
+        const [asset, mode] = prefix.split('-');
+        if (tabType === 'trades') {
+            dashboard.loadTradeHistory(asset, mode);
+        } else if (tabType === 'symbols') {
+            dashboard.loadSymbolPerformance(asset, mode);
+        } else if (tabType === 'overview') {
+            dashboard.loadAnalyticsData(asset, mode);
+        }
+    }
+}
+
+function refreshTradeHistory(asset, mode) {
+    console.log(`Refresh trade history called: ${asset} ${mode}`);
+    if (dashboard) {
+        dashboard.loadTradeHistory(asset, mode, true);
+    }
 }
 
 // Global functions for HTML onclick handlers
@@ -996,4 +1854,377 @@ window.addEventListener('beforeunload', () => {
     if (dashboard) {
         dashboard.destroy();
     }
+});
+
+// Reward Display System
+class RewardDisplayManager {
+    constructor() {
+        this.rewardHistory = [];
+        this.maxHistorySize = 50;
+        this.sidebarOpen = false;
+        this.init();
+    }
+
+    init() {
+        // Initialize sidebar toggle
+        this.setupEventListeners();
+        // Load existing reward history from localStorage
+        this.loadRewardHistory();
+        this.updateHistoryDisplay();
+    }
+
+    setupEventListeners() {
+        // Click outside modal to close
+        document.addEventListener('click', (e) => {
+            const modal = document.getElementById('rewardModal');
+            if (e.target === modal) {
+                this.closeRewardModal();
+            }
+        });
+
+        // Escape key to close modal
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                this.closeRewardModal();
+            }
+        });
+    }
+
+    showRewardModal(tradeData) {
+        const modal = document.getElementById('rewardModal');
+        if (!modal) return;
+
+        // Populate modal with trade data
+        this.populateRewardModal(tradeData);
+        
+        // Show modal with animation
+        modal.classList.add('show');
+        
+        // Auto-close after 8 seconds unless user interacts
+        this.autoCloseTimer = setTimeout(() => {
+            this.closeRewardModal();
+        }, 8000);
+    }
+
+    populateRewardModal(tradeData) {
+        const {
+            symbol, side, realizedProfitPct, reward, components,
+            entryPrice, exitPrice, qty, leverage
+        } = tradeData;
+
+        // Update summary section
+        document.getElementById('rewardTotalValue').textContent = 
+            reward >= 0 ? `+${reward.toFixed(2)}` : reward.toFixed(2);
+        document.getElementById('rewardTotalValue').className = 
+            `reward-value ${reward >= 0 ? '' : 'negative'}`;
+
+        document.getElementById('rewardTradeSymbol').textContent = symbol;
+        document.getElementById('rewardTradeSide').textContent = side?.toUpperCase() || '-';
+        
+        const profitElement = document.getElementById('rewardTradeProfit');
+        profitElement.textContent = `${(realizedProfitPct * 100).toFixed(2)}%`;
+        profitElement.className = `trade-profit ${realizedProfitPct >= 0 ? 'positive' : 'negative'}`;
+
+        // Populate reward components
+        this.populateRewardComponents(components);
+
+        // Show warnings if any
+        this.showRewardWarnings(components);
+    }
+
+    populateRewardComponents(components) {
+        const positiveContainer = document.getElementById('positiveComponents');
+        const penaltyContainer = document.getElementById('penaltyComponents');
+        
+        positiveContainer.innerHTML = '';
+        penaltyContainer.innerHTML = '';
+
+        const positiveComponents = [];
+        const penaltyComponents = [];
+
+        // Categorize components
+        Object.entries(components).forEach(([key, value]) => {
+            if (key === 'killswitch' || key === 'killreason' || key === 'error') return;
+            
+            if (typeof value === 'number' && value !== 0) {
+                const component = {
+                    key: this.formatComponentLabel(key),
+                    value: value,
+                    isPositive: value > 0
+                };
+                
+                if (value > 0) {
+                    positiveComponents.push(component);
+                } else {
+                    penaltyComponents.push(component);
+                }
+            }
+        });
+
+        // Populate positive rewards
+        if (positiveComponents.length > 0) {
+            positiveComponents.forEach(comp => {
+                const element = this.createComponentElement(comp.key, comp.value, 'positive');
+                positiveContainer.appendChild(element);
+            });
+        } else {
+            positiveContainer.innerHTML = '<div class="no-components">No positive rewards</div>';
+        }
+
+        // Populate penalties
+        if (penaltyComponents.length > 0) {
+            penaltyComponents.forEach(comp => {
+                const element = this.createComponentElement(comp.key, Math.abs(comp.value), 'negative');
+                penaltyContainer.appendChild(element);
+            });
+        } else {
+            penaltyContainer.innerHTML = '<div class="no-components">No penalties</div>';
+        }
+    }
+
+    createComponentElement(label, value, type) {
+        const element = document.createElement('div');
+        element.className = 'reward-component';
+        
+        element.innerHTML = `
+            <span class="component-label">${label}</span>
+            <span class="component-value ${type}">${type === 'positive' ? '+' : '-'}${value.toFixed(2)}</span>
+        `;
+        
+        return element;
+    }
+
+    formatComponentLabel(key) {
+        const labelMap = {
+            'pnlpoints': 'Profit Points',
+            'losspoints': 'Loss Points',
+            'bandbonus': 'Band Bonus',
+            'feespenalty': 'Fees & Slippage',
+            'slviolation': 'Stop Loss Violation',
+            'exposurepenalty': 'Excess Exposure',
+            'leveragepenalty': 'Excess Leverage',
+            'holdingdecay': 'Holding Time',
+            'sharpebonus': 'Sharpe Bonus',
+            'ddsoftpenalty': 'Drawdown Penalty',
+            'consecutiveslpenalty': 'Consecutive SL'
+        };
+        
+        return labelMap[key] || key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
+    }
+
+    showRewardWarnings(components) {
+        const warningsContainer = document.getElementById('rewardWarnings');
+        const warningText = document.getElementById('warningText');
+        
+        let warnings = [];
+        
+        if (components.killswitch) {
+            warnings.push(`🛑 KILL SWITCH: ${components.killreason || 'Risk limit exceeded'}`);
+        }
+        
+        if (components.error) {
+            warnings.push(`⚠️ Calculation Error: ${components.error}`);
+        }
+        
+        if (components.slviolation < 0) {
+            warnings.push('🔻 Stop loss limit exceeded');
+        }
+        
+        if (components.exposurepenalty > 0) {
+            warnings.push('📊 Position size exceeds exposure limit');
+        }
+        
+        if (warnings.length > 0) {
+            warningText.textContent = warnings.join(' | ');
+            warningsContainer.style.display = 'block';
+        } else {
+            warningsContainer.style.display = 'none';
+        }
+    }
+
+    closeRewardModal() {
+        const modal = document.getElementById('rewardModal');
+        if (modal) {
+            modal.classList.remove('show');
+        }
+        
+        if (this.autoCloseTimer) {
+            clearTimeout(this.autoCloseTimer);
+            this.autoCloseTimer = null;
+        }
+    }
+
+    addToRewardHistory(tradeData) {
+        const historyItem = {
+            ...tradeData,
+            timestamp: new Date().toISOString(),
+            displayTime: new Date().toLocaleTimeString()
+        };
+        
+        this.rewardHistory.unshift(historyItem);
+        
+        // Keep only the most recent items
+        if (this.rewardHistory.length > this.maxHistorySize) {
+            this.rewardHistory = this.rewardHistory.slice(0, this.maxHistorySize);
+        }
+        
+        this.saveRewardHistory();
+        this.updateHistoryDisplay();
+        this.updateHistoryStats();
+    }
+
+    updateHistoryDisplay() {
+        const historyList = document.getElementById('rewardHistoryList');
+        if (!historyList) return;
+        
+        if (this.rewardHistory.length === 0) {
+            historyList.innerHTML = '<div class="no-rewards">No recent rewards</div>';
+            return;
+        }
+        
+        historyList.innerHTML = '';
+        
+        this.rewardHistory.slice(0, 20).forEach(item => {
+            const historyElement = this.createHistoryElement(item);
+            historyList.appendChild(historyElement);
+        });
+    }
+
+    createHistoryElement(item) {
+        const element = document.createElement('div');
+        element.className = `reward-history-item ${item.reward >= 0 ? 'positive' : 'negative'}`;
+        
+        element.innerHTML = `
+            <div class="reward-item-header">
+                <span class="reward-item-symbol">${item.symbol}</span>
+                <span class="reward-item-value ${item.reward >= 0 ? 'positive' : 'negative'}">
+                    ${item.reward >= 0 ? '+' : ''}${item.reward.toFixed(2)}
+                </span>
+            </div>
+            <div class="reward-item-details">
+                <span>${item.displayTime}</span>
+                <span>${(item.realizedProfitPct * 100).toFixed(1)}%</span>
+            </div>
+        `;
+        
+        // Click to show details
+        element.addEventListener('click', () => {
+            this.showRewardModal(item);
+        });
+        
+        return element;
+    }
+
+    updateHistoryStats() {
+        if (this.rewardHistory.length === 0) return;
+        
+        const avgReward = this.rewardHistory.reduce((sum, item) => sum + item.reward, 0) / this.rewardHistory.length;
+        const totalPoints = this.rewardHistory.reduce((sum, item) => sum + item.reward, 0);
+        
+        const avgElement = document.getElementById('avgReward');
+        const totalElement = document.getElementById('totalPoints');
+        
+        if (avgElement) avgElement.textContent = avgReward.toFixed(2);
+        if (totalElement) totalElement.textContent = totalPoints.toFixed(0);
+    }
+
+    toggleRewardSidebar() {
+        const sidebar = document.getElementById('rewardSidebar');
+        if (!sidebar) return;
+        
+        this.sidebarOpen = !this.sidebarOpen;
+        sidebar.classList.toggle('open', this.sidebarOpen);
+    }
+
+    saveRewardHistory() {
+        try {
+            localStorage.setItem('rewardHistory', JSON.stringify(this.rewardHistory));
+        } catch (error) {
+            console.warn('Failed to save reward history:', error);
+        }
+    }
+
+    loadRewardHistory() {
+        try {
+            const saved = localStorage.getItem('rewardHistory');
+            if (saved) {
+                this.rewardHistory = JSON.parse(saved);
+                // Ensure we don't exceed max size
+                if (this.rewardHistory.length > this.maxHistorySize) {
+                    this.rewardHistory = this.rewardHistory.slice(0, this.maxHistorySize);
+                }
+            }
+        } catch (error) {
+            console.warn('Failed to load reward history:', error);
+            this.rewardHistory = [];
+        }
+    }
+
+    // Public method to be called when a trade closes
+    onTradeComplete(tradeData) {
+        // Add to history
+        this.addToRewardHistory(tradeData);
+        
+        // Show modal for significant rewards or penalties
+        if (Math.abs(tradeData.reward) >= 5 || tradeData.components.killswitch) {
+            this.showRewardModal(tradeData);
+        }
+        
+        // Flash the sidebar toggle to indicate new reward
+        this.flashSidebarToggle();
+    }
+
+    flashSidebarToggle() {
+        const toggle = document.querySelector('.sidebar-toggle');
+        if (toggle) {
+            toggle.style.animation = 'pulse 0.6s ease-in-out';
+            setTimeout(() => {
+                toggle.style.animation = '';
+            }, 600);
+        }
+    }
+}
+
+// Global functions for HTML onclick handlers
+function closeRewardModal() {
+    if (window.rewardManager) {
+        window.rewardManager.closeRewardModal();
+    }
+}
+
+function toggleRewardSidebar() {
+    if (window.rewardManager) {
+        window.rewardManager.toggleRewardSidebar();
+    }
+}
+
+// Initialize reward manager when DOM is loaded
+document.addEventListener('DOMContentLoaded', () => {
+    window.rewardManager = new RewardDisplayManager();
+    
+    // Example usage - remove in production
+    // Simulate a trade completion after 5 seconds for testing
+    setTimeout(() => {
+        if (window.rewardManager && window.location.hostname === 'localhost') {
+            const exampleTrade = {
+                symbol: 'BTCUSDT',
+                side: 'long',
+                realizedProfitPct: 0.15,
+                reward: 12.5,
+                entryPrice: 50000,
+                exitPrice: 57500,
+                qty: 0.1,
+                leverage: 2,
+                components: {
+                    pnlpoints: 5.0,
+                    bandbonus: 3.0,
+                    feespenalty: 2.5,
+                    sharpebonus: 2.0,
+                    killswitch: false
+                }
+            };
+            // Uncomment next line for testing:
+            // window.rewardManager.onTradeComplete(exampleTrade);
+        }
+    }, 5000);
 });

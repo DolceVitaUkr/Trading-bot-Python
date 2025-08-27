@@ -1,0 +1,281 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://tradingbot.ai/schemas/reward-metrics",
+  "title": "Trading Bot Reward Metrics Schema",
+  "description": "JSON schema for persisted reward events and metrics in the trading bot RL system",
+  "type": "object",
+  "oneOf": [
+    {
+      "$ref": "#/definitions/StepEvent"
+    },
+    {
+      "$ref": "#/definitions/EpisodeEvent"
+    }
+  ],
+  "definitions": {
+    "StepEvent": {
+      "type": "object",
+      "description": "Reward event for a single trading step",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "step"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of the event"
+        },
+        "unix_timestamp": {
+          "type": "number",
+          "description": "Unix timestamp of the event"
+        },
+        "symbol": {
+          "type": "string",
+          "description": "Trading symbol (e.g., BTCUSDT)"
+        },
+        "side": {
+          "type": ["string", "null"],
+          "enum": ["long", "short", null],
+          "description": "Trade direction"
+        },
+        "trade_closed": {
+          "type": "boolean",
+          "description": "Whether this step closed a trade"
+        },
+        "realized_profit_pct": {
+          "type": ["number", "null"],
+          "description": "Realized profit percentage if trade closed"
+        },
+        "equity_usd": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Current equity in USD"
+        },
+        "drawdown_frac": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Current drawdown as fraction of peak equity"
+        },
+        "reward": {
+          "type": "number",
+          "description": "Calculated step reward"
+        },
+        "components": {
+          "$ref": "#/definitions/StepRewardComponents"
+        }
+      },
+      "required": ["type", "timestamp", "unix_timestamp", "symbol", "trade_closed", "equity_usd", "drawdown_frac", "reward", "components"],
+      "additionalProperties": false
+    },
+    "EpisodeEvent": {
+      "type": "object",
+      "description": "Reward event for a completed trading episode",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "episode"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of the event"
+        },
+        "unix_timestamp": {
+          "type": "number",
+          "description": "Unix timestamp of the event"
+        },
+        "episode_id": {
+          "type": "string",
+          "description": "Unique identifier for the episode"
+        },
+        "total_trades": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total number of trades in episode"
+        },
+        "wins": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of winning trades"
+        },
+        "losses": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of losing trades"
+        },
+        "gross_return_frac": {
+          "type": "number",
+          "description": "Gross return as fraction"
+        },
+        "max_drawdown_frac": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Maximum drawdown as fraction"
+        },
+        "sharpe_estimate": {
+          "type": ["number", "null"],
+          "description": "Estimated Sharpe ratio for the episode"
+        },
+        "reward": {
+          "type": "number",
+          "description": "Calculated episode reward"
+        },
+        "components": {
+          "$ref": "#/definitions/EpisodeRewardComponents"
+        }
+      },
+      "required": ["type", "timestamp", "unix_timestamp", "episode_id", "total_trades", "wins", "losses", "gross_return_frac", "max_drawdown_frac", "reward", "components"],
+      "additionalProperties": false
+    },
+    "StepRewardComponents": {
+      "type": "object",
+      "description": "Detailed breakdown of step reward components",
+      "properties": {
+        "pnlpoints": {
+          "type": "number",
+          "description": "Points from profit bands"
+        },
+        "losspoints": {
+          "type": "number",
+          "description": "Points from losses (typically negative)"
+        },
+        "bandbonus": {
+          "type": "number",
+          "description": "Bonus points for profitable trades"
+        },
+        "feespenalty": {
+          "type": "number",
+          "description": "Penalty for fees and slippage"
+        },
+        "slviolation": {
+          "type": "number",
+          "description": "Penalty for stop loss violations"
+        },
+        "exposurepenalty": {
+          "type": "number",
+          "description": "Penalty for excessive exposure"
+        },
+        "leveragepenalty": {
+          "type": "number",
+          "description": "Penalty for excessive leverage"
+        },
+        "holdingdecay": {
+          "type": "number",
+          "description": "Penalty for holding time"
+        },
+        "sharpebonus": {
+          "type": "number",
+          "description": "Bonus for high Sharpe ratio"
+        },
+        "ddsoftpenalty": {
+          "type": "number",
+          "description": "Penalty for soft drawdown limit violation"
+        },
+        "consecutiveslpenalty": {
+          "type": "number",
+          "description": "Penalty for consecutive stop losses"
+        },
+        "killswitch": {
+          "type": "boolean",
+          "description": "Whether kill switch was triggered"
+        },
+        "killreason": {
+          "type": ["string", "null"],
+          "description": "Reason for kill switch activation"
+        },
+        "error": {
+          "type": ["string", "null"],
+          "description": "Error message if calculation failed"
+        }
+      },
+      "required": ["pnlpoints", "losspoints", "bandbonus", "feespenalty", "slviolation", "exposurepenalty", "leveragepenalty", "holdingdecay", "sharpebonus", "ddsoftpenalty", "consecutiveslpenalty", "killswitch"],
+      "additionalProperties": false
+    },
+    "EpisodeRewardComponents": {
+      "type": "object",
+      "description": "Detailed breakdown of episode reward components",
+      "properties": {
+        "bandedpoints": {
+          "type": "number",
+          "description": "Total points from profit/loss bands"
+        },
+        "winratebonus": {
+          "type": "number",
+          "description": "Bonus for achieving target win rate"
+        },
+        "sharpebonus": {
+          "type": "number",
+          "description": "Bonus for achieving target Sharpe ratio"
+        },
+        "avgprofitbonus": {
+          "type": "number",
+          "description": "Bonus for achieving target average profit"
+        },
+        "ddpenalty": {
+          "type": "number",
+          "description": "Penalty for drawdown violations"
+        },
+        "error": {
+          "type": ["string", "null"],
+          "description": "Error message if calculation failed"
+        }
+      },
+      "required": ["bandedpoints", "winratebonus", "sharpebonus", "avgprofitbonus", "ddpenalty"],
+      "additionalProperties": false
+    }
+  },
+  "examples": [
+    {
+      "type": "step",
+      "timestamp": "2023-12-01T10:30:00.000Z",
+      "unix_timestamp": 1701425400,
+      "symbol": "BTCUSDT",
+      "side": "long",
+      "trade_closed": true,
+      "realized_profit_pct": 0.15,
+      "equity_usd": 10500.0,
+      "drawdown_frac": 0.02,
+      "reward": 8.5,
+      "components": {
+        "pnlpoints": 5.0,
+        "losspoints": 0.0,
+        "bandbonus": 3.0,
+        "feespenalty": 2.5,
+        "slviolation": 0.0,
+        "exposurepenalty": 0.0,
+        "leveragepenalty": 0.0,
+        "holdingdecay": 1.0,
+        "sharpebonus": 2.0,
+        "ddsoftpenalty": 0.0,
+        "consecutiveslpenalty": 0.0,
+        "killswitch": false,
+        "killreason": null,
+        "error": null
+      }
+    },
+    {
+      "type": "episode",
+      "timestamp": "2023-12-01T18:00:00.000Z",
+      "unix_timestamp": 1701454800,
+      "episode_id": "ep_1701454800",
+      "total_trades": 25,
+      "wins": 19,
+      "losses": 6,
+      "gross_return_frac": 0.35,
+      "max_drawdown_frac": 0.08,
+      "sharpe_estimate": 2.3,
+      "reward": 125.5,
+      "components": {
+        "bandedpoints": 95.0,
+        "winratebonus": 15.0,
+        "sharpebonus": 30.0,
+        "avgprofitbonus": 10.5,
+        "ddpenalty": 0.0,
+        "error": null
+      }
+    }
+  ]
+}

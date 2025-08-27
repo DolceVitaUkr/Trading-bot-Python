@@ -17,6 +17,11 @@ except ImportError:
     # Fallback if pair_manager not available
     PairManager = None
 try:
+    from tradingbot.core.strategy_development_manager import StrategyDevelopmentManager
+    strategy_manager = StrategyDevelopmentManager()
+except ImportError:
+    strategy_manager = None
+try:
     print("[INFO] Importing ExchangeBybit...")
     from tradingbot.brokers.exchangebybit import ExchangeBybit
     print("[SUCCESS] ExchangeBybit imported successfully")
@@ -522,6 +527,17 @@ def create_app() -> FastAPI:
                     paper_trader.starting_balance = paper_balance
                     paper_trader.pnl_history = [{"timestamp": datetime.now().isoformat(), "balance": paper_balance}]
                 paper_wallet_data = paper_trader.get_paper_wallet_data()
+                
+                # Calculate used in positions for paper trading
+                used_in_positions = 0
+                if hasattr(paper_trader, 'positions'):
+                    for pos in paper_trader.positions:
+                        if pos.get("status") == "open":
+                            entry_price = pos.get("entry_price", 0)
+                            size = pos.get("size", 0)
+                            used_in_positions += entry_price * size
+                
+                paper_wallet_data["used_in_positions"] = used_in_positions
             else:
                 # Fallback to config
                 paper_wallet_data = {
@@ -559,6 +575,8 @@ def create_app() -> FastAPI:
                         connection_status = "connected"
                         live_wallet_data = {
                             "balance": portfolio_state.total_balance_usd,
+                            "available_balance": portfolio_state.available_balance_usd,
+                            "used_in_positions": portfolio_state.margin_used,
                             "pnl": portfolio_state.unrealized_pnl,
                             "pnl_percent": (portfolio_state.unrealized_pnl / portfolio_state.total_balance_usd * 100) if portfolio_state.total_balance_usd > 0 else 0.0,
                             "history": [{"balance": portfolio_state.total_balance_usd}]
@@ -594,6 +612,8 @@ def create_app() -> FastAPI:
                         connection_status = "connected"
                         live_wallet_data = {
                             "balance": portfolio_state.total_balance_usd,
+                            "available_balance": portfolio_state.available_balance_usd,
+                            "used_in_positions": portfolio_state.margin_used,
                             "pnl": portfolio_state.unrealized_pnl,
                             "pnl_percent": (portfolio_state.unrealized_pnl / portfolio_state.total_balance_usd * 100) if portfolio_state.total_balance_usd > 0 else 0.0,
                             "history": [{"balance": portfolio_state.total_balance_usd}]
@@ -628,54 +648,121 @@ def create_app() -> FastAPI:
 
     @app.get("/asset/{asset}/positions")
     def get_asset_positions(asset: str):
-        """Get current positions for a specific asset."""
+        """Get current positions for a specific asset (separated by paper/live)."""
         valid_assets = ['crypto', 'futures', 'forex', 'forex_options']
         if asset not in valid_assets:
             raise HTTPException(status_code=400, detail=f"Invalid asset. Must be one of: {valid_assets}")
         
         try:
-            positions = []
-            daily_pnl = 0.0
-            win_rate = 0.0
-            active_strategies = 0
+            # Paper trading positions
+            paper_positions = []
+            paper_daily_pnl = 0.0
             
-            # Get positions from paper trader if available
             if get_paper_trader:
                 paper_trader = get_paper_trader(asset)
-                positions = paper_trader.get_positions()
-                stats = paper_trader.get_trading_stats()
-                daily_pnl = sum(p.get('pnl', 0) for p in positions)
-                win_rate = stats.get('win_rate', 0.0)
-                active_strategies = len(positions)  # Mock: each position represents a strategy
+                paper_positions = paper_trader.get_positions()
+                paper_daily_pnl = sum(p.get('pnl', 0) for p in paper_positions)
+            
+            # Live trading positions (placeholder - implement when live trading is ready)
+            live_positions = []
+            live_daily_pnl = 0.0
             
             return {
-                "positions": positions,
-                "daily_pnl": daily_pnl,
-                "win_rate": win_rate,
-                "active_strategies": active_strategies
+                "paper": {
+                    "positions": paper_positions,
+                    "daily_pnl": paper_daily_pnl,
+                    "position_count": len(paper_positions)
+                },
+                "live": {
+                    "positions": live_positions,
+                    "daily_pnl": live_daily_pnl,
+                    "position_count": len(live_positions)
+                }
             }
         except Exception as exc:
             return {
-                "positions": [],
-                "daily_pnl": 0.0,
-                "win_rate": 0.0,
-                "active_strategies": 0
+                "paper": {
+                    "positions": [],
+                    "daily_pnl": 0.0,
+                    "position_count": 0
+                },
+                "live": {
+                    "positions": [],
+                    "daily_pnl": 0.0,
+                    "position_count": 0
+                }
             }
 
     @app.get("/asset/{asset}/strategies")
-    def get_asset_strategies(asset: str):
-        """Get strategy status for a specific asset."""
+    def get_asset_strategies_summary(asset: str):
+        """Get strategy development status for a specific asset."""
         valid_assets = ['crypto', 'futures', 'forex', 'forex_options']
         if asset not in valid_assets:
             raise HTTPException(status_code=400, detail=f"Invalid asset. Must be one of: {valid_assets}")
         
         try:
-            # In real implementation, get from strategy manager
-            return {
-                "strategies": []  # No strategies by default
-            }
+            # Get strategy development information
+            if strategy_manager:
+                strategy_data = strategy_manager.get_strategies_by_asset(asset)
+                summary = strategy_data['summary']
+                
+                return {
+                    "paper_trading": {
+                        "developing_strategies": summary['developing'],
+                        "pending_validation": summary['pending_validation'], 
+                        "total_developed": summary['total']
+                    },
+                    "live_trading": {
+                        "approved_strategies": summary['live'],
+                        "validated_ready": summary['validated'],
+                        "rejected": summary['rejected']
+                    },
+                    "development_pipeline": {
+                        "developing": summary['developing'],
+                        "validation_pending": summary['pending_validation'],
+                        "validation_ready": summary['validated'],
+                        "live_approved": summary['live']
+                    }
+                }
+            else:
+                # Fallback without strategy manager
+                return {
+                    "paper_trading": {
+                        "developing_strategies": 0,
+                        "pending_validation": 0,
+                        "total_developed": 0
+                    },
+                    "live_trading": {
+                        "approved_strategies": 0,
+                        "validated_ready": 0,
+                        "rejected": 0
+                    },
+                    "development_pipeline": {
+                        "developing": 0,
+                        "validation_pending": 0,
+                        "validation_ready": 0,
+                        "live_approved": 0
+                    }
+                }
         except Exception as exc:
-            return {"strategies": []}
+            return {
+                "paper_trading": {
+                    "developing_strategies": 0,
+                    "pending_validation": 0,
+                    "total_developed": 0
+                },
+                "live_trading": {
+                    "approved_strategies": 0,
+                    "validated_ready": 0,
+                    "rejected": 0
+                },
+                "development_pipeline": {
+                    "developing": 0,
+                    "validation_pending": 0,
+                    "validation_ready": 0,
+                    "live_approved": 0
+                }
+            }
 
     @app.post("/asset/{asset}/start/{mode}")
     def start_asset_trading_endpoint(asset: str, mode: str):
@@ -897,6 +984,365 @@ def create_app() -> FastAPI:
                 "error": f"Debug failed: {str(exc)}",
                 "suggestion": "Check server logs for more details"
             }
+    
+    # ===== COMPREHENSIVE TRADING ANALYTICS ENDPOINTS =====
+    
+    @app.get("/analytics/{asset}/{mode}/reward-summary")
+    def get_reward_summary(asset: str, mode: str):
+        """Get comprehensive reward and performance summary."""
+        valid_assets = ['crypto', 'futures', 'forex', 'forex_options']
+        valid_modes = ['paper', 'live']
+        
+        if asset not in valid_assets:
+            raise HTTPException(status_code=400, detail=f"Invalid asset. Must be one of: {valid_assets}")
+        if mode not in valid_modes:
+            raise HTTPException(status_code=400, detail=f"Invalid mode. Must be one of: {valid_modes}")
+            
+        try:
+            if mode == "paper" and get_paper_trader:
+                paper_trader = get_paper_trader(asset)
+                stats = paper_trader.get_trading_stats()
+                wallet_data = paper_trader.get_paper_wallet_data()
+                
+                # Calculate reward system metrics
+                closed_trades = [t for t in paper_trader.trades if t.get('status') == 'closed']
+                total_reward_points = sum(t.get('reward_points', 0) for t in closed_trades)
+                avg_reward_per_trade = total_reward_points / len(closed_trades) if closed_trades else 0
+                
+                # Calculate consecutive stop loss hits
+                consecutive_sl_count = 0
+                for trade in reversed(closed_trades[-10:]):  # Check last 10 trades
+                    if trade.get('exit_reason') == 'Stop Loss Hit':
+                        consecutive_sl_count += 1
+                    else:
+                        break
+                
+                # Create reward summary from available data
+                return {
+                    "mode": "PAPER",
+                    "asset_type": asset.upper(),
+                    "overall_performance": {
+                        "total_return_pct": stats.get('total_return', 0),
+                        "net_pnl": stats.get('net_pnl', 0),
+                        "current_balance": wallet_data.get('balance', 0),
+                        "starting_balance": stats.get('starting_balance', 0)
+                    },
+                    "trading_metrics": {
+                        "total_trades": stats.get('total_trades', 0),
+                        "win_rate": stats.get('win_rate', 0),
+                        "profit_factor": stats.get('profit_factor', 0),
+                        "avg_win": stats.get('avg_win', 0),
+                        "avg_loss": stats.get('avg_loss', 0),
+                        "max_win": stats.get('max_win', 0),
+                        "max_loss": stats.get('max_loss', 0)
+                    },
+                    "fees_and_costs": {
+                        "total_penalties": stats.get('total_penalties', 0),
+                        "violation_count": stats.get('violation_count', 0)
+                    },
+                    "reward_system_metrics": {
+                        "total_reward_points": total_reward_points,
+                        "avg_reward_per_trade": avg_reward_per_trade,
+                        "consecutive_sl_hits": consecutive_sl_count
+                    },
+                    "recent_performance": wallet_data.get('history', [])[-10:]
+                }
+            elif mode == "live":
+                # TODO: Implement live trading analytics
+                return {
+                    "mode": "LIVE",
+                    "asset_type": asset.upper(),
+                    "message": "Live trading analytics not yet implemented",
+                    "overall_performance": {},
+                    "trading_metrics": {},
+                    "fees_and_costs": {},
+                    "symbol_breakdown": {},
+                    "recent_trades": []
+                }
+            else:
+                raise HTTPException(status_code=404, detail="Paper trader not available")
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Failed to get reward summary: {exc}")
+    
+    @app.get("/analytics/{asset}/{mode}/detailed-trades")
+    def get_detailed_trades(asset: str, mode: str, limit: int = 50):
+        """Get detailed trade history with all information."""
+        valid_assets = ['crypto', 'futures', 'forex', 'forex_options']
+        valid_modes = ['paper', 'live']
+        
+        if asset not in valid_assets:
+            raise HTTPException(status_code=400, detail=f"Invalid asset. Must be one of: {valid_assets}")
+        if mode not in valid_modes:
+            raise HTTPException(status_code=400, detail=f"Invalid mode. Must be one of: {valid_modes}")
+        if limit > 500:  # Prevent excessive data requests
+            limit = 500
+            
+        try:
+            if mode == "paper" and get_paper_trader:
+                paper_trader = get_paper_trader(asset)
+                trades = paper_trader.get_detailed_trades(limit)
+                return {
+                    "trades": trades,
+                    "total_count": len(paper_trader.trades),
+                    "displayed_count": len(trades),
+                    "asset": asset.upper(),
+                    "mode": mode.upper()
+                }
+            elif mode == "live":
+                # TODO: Implement live trading detailed trades
+                return {
+                    "trades": [],
+                    "total_count": 0,
+                    "displayed_count": 0,
+                    "asset": asset.upper(),
+                    "mode": mode.upper(),
+                    "message": "Live trading trade history not yet implemented"
+                }
+            else:
+                raise HTTPException(status_code=404, detail="Paper trader not available")
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Failed to get detailed trades: {exc}")
+    
+    @app.get("/analytics/{asset}/{mode}/symbol-performance")
+    def get_symbol_performance(asset: str, mode: str):
+        """Get performance breakdown by cryptocurrency symbols."""
+        valid_assets = ['crypto', 'futures', 'forex', 'forex_options']
+        valid_modes = ['paper', 'live']
+        
+        if asset not in valid_assets:
+            raise HTTPException(status_code=400, detail=f"Invalid asset. Must be one of: {valid_assets}")
+        if mode not in valid_modes:
+            raise HTTPException(status_code=400, detail=f"Invalid mode. Must be one of: {valid_modes}")
+            
+        try:
+            if mode == "paper" and get_paper_trader:
+                paper_trader = get_paper_trader(asset)
+                symbol_stats = paper_trader.get_performance_by_symbol()
+                return {
+                    "symbol_performance": symbol_stats,
+                    "asset": asset.upper(),
+                    "mode": mode.upper(),
+                    "total_symbols": len(symbol_stats)
+                }
+            elif mode == "live":
+                # TODO: Implement live trading symbol performance
+                return {
+                    "symbol_performance": {},
+                    "asset": asset.upper(),
+                    "mode": mode.upper(),
+                    "total_symbols": 0,
+                    "message": "Live trading symbol performance not yet implemented"
+                }
+            else:
+                raise HTTPException(status_code=404, detail="Paper trader not available")
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Failed to get symbol performance: {exc}")
+    
+    @app.get("/analytics/{asset}/{mode}/trading-stats")
+    def get_enhanced_trading_stats(asset: str, mode: str):
+        """Get comprehensive trading statistics."""
+        valid_assets = ['crypto', 'futures', 'forex', 'forex_options']
+        valid_modes = ['paper', 'live']
+        
+        if asset not in valid_assets:
+            raise HTTPException(status_code=400, detail=f"Invalid asset. Must be one of: {valid_assets}")
+        if mode not in valid_modes:
+            raise HTTPException(status_code=400, detail=f"Invalid mode. Must be one of: {valid_modes}")
+            
+        try:
+            if mode == "paper" and get_paper_trader:
+                paper_trader = get_paper_trader(asset)
+                stats = paper_trader.get_trading_stats()
+                return {
+                    "statistics": stats,
+                    "asset": asset.upper(),
+                    "mode": mode.upper(),
+                    "last_updated": datetime.now().isoformat()
+                }
+            elif mode == "live":
+                # TODO: Implement live trading statistics
+                return {
+                    "statistics": {},
+                    "asset": asset.upper(),
+                    "mode": mode.upper(),
+                    "message": "Live trading statistics not yet implemented"
+                }
+            else:
+                raise HTTPException(status_code=404, detail="Paper trader not available")
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Failed to get trading stats: {exc}")
+    
+    @app.get("/analytics/overview")
+    def get_analytics_overview():
+        """Get overview of analytics across all assets and modes."""
+        try:
+            overview = {
+                "paper_trading": {},
+                "live_trading": {},
+                "total_performance": {
+                    "total_paper_pnl": 0,
+                    "total_live_pnl": 0,
+                    "total_trades": 0,
+                    "best_performing_asset": "",
+                    "worst_performing_asset": ""
+                }
+            }
+            
+            assets = ['crypto', 'futures', 'forex', 'forex_options']
+            best_performance = -float('inf')
+            worst_performance = float('inf')
+            
+            # Collect paper trading data
+            for asset in assets:
+                if get_paper_trader:
+                    try:
+                        paper_trader = get_paper_trader(asset)
+                        stats = paper_trader.get_trading_stats()
+                        
+                        overview["paper_trading"][asset] = {
+                            "balance": stats.get('current_balance', 0),
+                            "total_return_pct": stats.get('total_return', 0),
+                            "total_trades": stats.get('total_trades', 0),
+                            "win_rate": stats.get('win_rate', 0),
+                            "total_pnl": stats.get('total_pnl', 0)
+                        }
+                        
+                        # Track best/worst performing
+                        total_return = stats.get('total_return', 0)
+                        if total_return > best_performance:
+                            best_performance = total_return
+                            overview["total_performance"]["best_performing_asset"] = f"{asset} (paper)"
+                        if total_return < worst_performance:
+                            worst_performance = total_return
+                            overview["total_performance"]["worst_performing_asset"] = f"{asset} (paper)"
+                        
+                        # Add to totals
+                        overview["total_performance"]["total_paper_pnl"] += stats.get('total_pnl', 0)
+                        overview["total_performance"]["total_trades"] += stats.get('total_trades', 0)
+                        
+                    except Exception as e:
+                        overview["paper_trading"][asset] = {"error": str(e)}
+            
+            # TODO: Add live trading data collection when implemented
+            for asset in assets:
+                overview["live_trading"][asset] = {
+                    "status": "not_implemented",
+                    "message": "Live trading analytics coming soon"
+                }
+            
+            return overview
+            
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Failed to get analytics overview: {exc}")
+    
+    @app.get("/rewards/{asset}/recent")
+    def get_recent_rewards(asset: str):
+        """Get recent reward notifications for an asset."""
+        valid_assets = ['crypto', 'futures', 'forex', 'forex_options']
+        
+        if asset not in valid_assets:
+            raise HTTPException(status_code=400, detail=f"Invalid asset. Must be one of: {valid_assets}")
+        
+        try:
+            if get_paper_trader:
+                paper_trader = get_paper_trader(asset)
+                recent_rewards = paper_trader.get_recent_rewards()
+                return {
+                    "asset": asset,
+                    "recent_rewards": recent_rewards,
+                    "count": len(recent_rewards),
+                    "last_updated": datetime.now().isoformat()
+                }
+            else:
+                return {
+                    "asset": asset,
+                    "recent_rewards": [],
+                    "count": 0,
+                    "message": "Paper trader not available"
+                }
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Failed to get recent rewards: {exc}")
+    
+    # ===== STRATEGY DEVELOPMENT ENDPOINTS =====
+    
+    @app.get("/strategies/summary")
+    def get_strategy_summary():
+        """Get overall strategy development summary."""
+        if not strategy_manager:
+            return {
+                "error": "Strategy development manager not available",
+                "total_strategies": 0,
+                "by_status": {},
+                "by_asset": {}
+            }
+        
+        try:
+            return strategy_manager.get_strategy_summary()
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Failed to get strategy summary: {exc}")
+    
+    @app.get("/strategies/{asset}")
+    def get_asset_strategies(asset: str):
+        """Get strategies for a specific asset."""
+        valid_assets = ['crypto', 'futures', 'forex', 'forex_options']
+        if asset not in valid_assets:
+            raise HTTPException(status_code=400, detail=f"Invalid asset. Must be one of: {valid_assets}")
+        
+        if not strategy_manager:
+            return {
+                "asset_type": asset,
+                "strategies": {},
+                "summary": {
+                    "total": 0,
+                    "developing": 0,
+                    "pending_validation": 0,
+                    "validated": 0,
+                    "live": 0,
+                    "rejected": 0
+                }
+            }
+        
+        try:
+            return strategy_manager.get_strategies_by_asset(asset)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Failed to get strategies for {asset}: {exc}")
+    
+    @app.post("/strategies/{strategy_id}/validate")
+    async def validate_strategy(strategy_id: str):
+        """Trigger validation for a strategy."""
+        if not strategy_manager:
+            raise HTTPException(status_code=503, detail="Strategy development manager not available")
+        
+        try:
+            passed, reasons = await strategy_manager.validate_strategy(strategy_id)
+            return {
+                "strategy_id": strategy_id,
+                "validation_passed": passed,
+                "reasons": reasons,
+                "timestamp": datetime.now().isoformat()
+            }
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Failed to validate strategy {strategy_id}: {exc}")
+    
+    @app.post("/strategies/{strategy_id}/approve-live")
+    def approve_strategy_for_live(strategy_id: str):
+        """Approve a validated strategy for live testing."""
+        if not strategy_manager:
+            raise HTTPException(status_code=503, detail="Strategy development manager not available")
+        
+        try:
+            success = strategy_manager.approve_for_live_testing(strategy_id)
+            if success:
+                return {
+                    "strategy_id": strategy_id,
+                    "approved": True,
+                    "message": "Strategy approved for live testing",
+                    "timestamp": datetime.now().isoformat()
+                }
+            else:
+                raise HTTPException(status_code=400, detail="Strategy not eligible for live approval")
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Failed to approve strategy {strategy_id}: {exc}")
 
     return app
 
