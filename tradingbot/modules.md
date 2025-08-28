@@ -1,341 +1,554 @@
-Modules Specification – Self-Learning Multi-Asset Trading Bot
+MODULES.md — Responsibility Map & Extension Rules
+🔎 TL;DR (Quick Recap)
 
-This document defines all modules, their responsibilities, and interfaces.
-Every file must begin with:
+Single Source of Truth (SSOT)
 
-# file: <path>/<filename>.py
+Data → core/data_manager.py (feeds, caching, resampling); core/symbol_universe.py (what to watch).
 
+Capital → core/budget_manager.py (per-asset allocations on Bybit UTA & IBKR).
 
-All filenames must be lowercase_with_underscores.py.
+Risk → core/risk_manager.py (per-trade checks) + core/exposure_manager.py (portfolio/correlation).
 
-📂 Core Modules
-core/config_manager.py
+Orders → core/order_router.py (the only placer/canceller) + core/sl_tp_manager.py (server-side TP/SL attach).
 
-Purpose: Centralized configuration loader/validator.
+P&L → core/pnl_reconciler.py (broker-truth final numbers).
 
-Functions:
+Lifecycle → core/app_runtime.py (modes, orchestration).
 
-load_config(section: str) -> dict
+Paper sessions → core/session_manager.py (start/reset/resume) + core/bankroll_manager.py (auto top-ups).
 
-validate_schema(config: dict, schema: dict)
+Exploration & Scheduling → core/exploration_manager.py, core/strategy_registry.py, core/strategy_scheduler.py.
 
-save_config(section: str, config: dict)
+Validation → validation/* only.
 
-Notes: JSON configs only. Strict schema validation.
+Learning → learning/* only.
 
-core/runtime_controller.py
+UI / API → ui/* only.
 
-Purpose: Orchestrates runtime state, live/paper toggles, and kill switch.
+Broker I/O → brokers/* only.
 
-Functions:
+Who can place orders?
 
-set_mode(asset: str, mode: str) – toggle live/paper/off.
+Only order_router.py. Everyone else requests via its API.
 
-trigger_kill_switch(asset: str) – graceful shutdown of live trading.
+Where do we attach SL/TP?
 
-resume_asset(asset: str) – resume trading after kill.
+Only sl_tp_manager.py (server-side when possible). It is called by order_router.py.
 
-hourly_recap() – schedule recap to Telegram & UI.
+Where are per-asset budgets enforced?
 
-Notes: Persists runtime state in state/runtime.json.
+Only budget_manager.py. order_router must ask it before any order.
 
-core/datamanager.py
+Where are risk/exposure checks done?
 
-Purpose: Unified data pipeline.
+Only risk_manager.py + exposure_manager.py. order_router must get a green light first.
 
-Functions:
+Where is the universe decided (20–40 crypto pairs)?
 
-fetch_historical(symbol, interval, start, end)
+Only symbol_universe.py.
 
-stream_live(symbol, interval)
+Where is paper bankroll top-up logic?
 
-clean_and_store(dataframe, symbol, interval)
+Only bankroll_manager.py.
 
-resample_multi_tf(data, intervals)
+Where are strategy states & flags?
 
-Notes: Uses Parquet. Ensures data completeness and gap checks.
+Only strategy_registry.py (states/flags) + exploration_manager.py (rotation) + strategy_scheduler.py (who gets next opportunity).
 
-core/feature_store.py
+When adding new logic
 
-Purpose: Versioned feature sets.
+Add within one owner module (listed below).
 
-Functions:
+Others call that owner via its public API.
 
-save_features(symbol, features, version)
+If you can’t place it in a single existing owner → create a new owner module, then register its API & call rules here.
 
-load_features(symbol, version)
+1) Core Orchestration
+1.1 core/app_runtime.py — Lifecycle Orchestrator
 
-validate_features(features, schema)
+Owns: global lifecycle (boot, paper/live toggle), engine startup/stop, reconciliation cycles, graceful shutdowns.
+Public API (examples):
 
-Notes: Online/offline parity.
+start_all(), stop_all()
 
-core/indicators.py
+enable_live(asset), disable_live(asset)
 
-Purpose: Compute technical indicators.
+tick() (main loop; schedules exploration, polling, reconciliations)
+Calls: config_manager, data_manager, symbol_universe, exploration_manager, strategy_scheduler, order_router, pnl_reconciler, session_manager, budget_manager, risk_manager, ui/api_server.
+Never does: strategy math, order placement, SL/TP.
 
-Supported: SMA, EMA, RSI, ATR, Bollinger, MACD, OBV, VWAP, SuperTrend, Donchian, Keltner, Ichimoku.
+Deep-dive:
 
-Functions:
+Coordinates paper/live engines per asset.
 
-add_indicators(df) – returns enriched DataFrame.
+Ensures continuous exploration (keeps active candidate count per asset).
 
-core/pair_manager.py
+Ensures online reconciliation with brokers after reconnect/restart.
 
-Purpose: Dynamic asset selection.
+Triggers validation transitions when a candidate hits thresholds.
 
-Logic:
+1.2 core/config_manager.py — Config SSOT
 
-Volatility/momentum/liquidity scans.
+Owns: loading, Pydantic validation, hot-reload of JSON/YAML configs.
+Public API: get(section), typed getters (get_assets(), get_risk(asset), etc.).
+Calls: filesystem only.
+Never does: business logic, math, I/O with brokers.
 
-Regime tagging (trending, ranging, volatile).
+Deep-dive:
 
-Functions:
+Normalizes and version-tags configs.
 
-rank_pairs(market_data) -> list
+Rejects invalid configs early (types, ranges).
 
-tag_regime(symbol, data) -> str
+2) Data & Universe
+2.1 core/data_manager.py — Live Feeds, Cache, Resample
 
-core/risk_manager.py
+Owns: market data ingestion (WebSocket/REST), normalized ticks/candles, local cache, resampling, rate-limit safety.
+Public API:
 
-Purpose: Position sizing & portfolio protection.
+subscribe(symbols, streams)
 
-Logic:
+get_last_quote(symbol), get_ohlc(symbol, timeframe, lookback)
 
-$10 per trade until balance ≥ $1000.
+on_tick(callback) (event bus)
+Calls: brokers/* market data endpoints only.
+Never does: strategy signals, order placement.
 
-Tiered % risk sizing with drawdown penalties.
+Deep-dive:
 
-Hard SL ≤ 15%.
+WebSockets preferred; fallback to polling with throttling.
 
-Correlation caps & max exposure.
+Consistent timestamps, timezone normalization.
 
-Functions:
+Provides identical features to training & live (via feature_store).
 
-calculate_size(account_equity, signal_strength, sl_distance, price)
+2.2 core/symbol_universe.py — What to Watch (20–40)
 
-apply_portfolio_limits(positions)
+Owns: crypto universe selection & refresh rules (rank by 24h turnover, filters).
+Public API:
 
-core/trade_executor.py
+get_symbols(asset)
 
-Purpose: Order placement & reconciliation.
+refresh_crypto_universe()
+Calls: brokers/bybit_client for tickers/instruments.
+Never does: trading, risk.
 
-Logic:
+Deep-dive:
 
-Spread + slippage models.
+Keeps a stable core + rotating tail.
 
-Supports market, limit, post-only, TIF.
+Spike detector outputs candidates to strategy_scheduler.
 
-Fees, funding, borrow costs.
+3) Capital & Risk
+3.1 core/budget_manager.py — Allocations (Bybit UTA + IBKR)
 
-Reconcile positions on restart.
+Owns: per-asset virtual sub-wallets, dynamic reallocation (+$100 steps), available equity queries.
+Public API:
 
-Functions:
+get_alloc(asset) -> usd
 
-submit_order(symbol, side, size, price, order_type)
+can_afford(asset, order_spec) -> bool, reason
+
+apply_pnl(asset, realized_pnl) (paper)
+Calls: none (pulls balances via pnl_reconciler updates).
+Never does: order placement.
+
+Deep-dive:
+
+Software-enforces futures vs spot separation.
+
+Rejects orders exceeding allocation.
+
+Handles paper equity initialization & updates (with bankroll_manager).
+
+3.2 core/risk_manager.py — Per-Trade Risk Checks
+
+Owns: sizing constraints, SL distance validation, daily loss caps, per-strategy caps, leverage caps.
+Public API:
+
+pretrade_check(order_context) -> pass|fail, reason
+
+compute_size(order_context) -> qty
+Calls: exposure_manager (for portfolio checks).
+Never does: price fetching, order placement.
+
+Deep-dive:
+
+Implements the equity-at-risk / SL-distance formula.
+
+Drawdown throttling of risk_fraction.
+
+Asset-specific bands (spot > futures > options are tightest).
+
+3.3 core/exposure_manager.py — Portfolio/Correlation
+
+Owns: aggregate exposure, symbol clusters, correlation caps, concurrency limits.
+Public API:
+
+can_open(symbol, side, size) -> pass|fail, reason
+
+current_exposure() -> dict
+Calls: pnl_reconciler for live positions.
+Never does: size math, order placement.
+
+Deep-dive:
+
+Cluster definitions (e.g., BTC/L1s; USD majors).
+
+Caps like “max 2 concurrent in cluster” or “max 30% alloc in cluster”.
+
+4) Orders, SL/TP & Reconciliation
+4.1 core/order_router.py — The Only Order Placer
+
+Owns: idempotent order submission, modify/cancel, route to broker adapters, attach SL/TP via sl_tp_manager.
+Public API:
+
+place_order(order_context) -> order_id
 
 cancel_order(order_id)
 
-reconcile_positions()
+amend_order(order_id, fields)
+Calls: budget_manager, risk_manager, exposure_manager, sl_tp_manager, brokers/*.
+Never does: strategy logic, sizing rules.
 
-core/portfolio_manager.py
+Deep-dive (call sequence):
 
-Purpose: Track balances, P&L, exposure.
+risk_manager.pretrade_check → fail fast.
 
-Functions:
+budget_manager.can_afford
 
-update_portfolio(trade)
+exposure_manager.can_open
 
-get_equity(asset_class)
+Route to brokers/bybit_client or brokers/ibkr_client.
 
-calculate_metrics() – Sharpe, MaxDD, PF, CVaR.
+On fill → sl_tp_manager.attach() (server-side).
 
-core/validation_manager.py
+Persist intents & results; emit events.
 
-Purpose: Industrial-grade validation of strategies.
+4.2 core/sl_tp_manager.py — Server-Side Protections
 
-Logic:
+Owns: TP/SL creation/attachment on broker, correctness per asset (e.g., mark price triggers on futures).
+Public API:
 
-Event-driven backtest with realistic fills.
+attach(broker_order, sl_tp_spec)
 
-Purged+embargo walk-forward.
+sync(position_state) (re-attach/recover after reconnect)
+Calls: brokers/*.
+Never does: order entry.
 
-Stress tests (Monte Carlo, perturbations, shocks).
+Deep-dive:
 
-RL off-policy evaluation.
+Bybit: trading-stop API for linear/inverse; spot semantics respected.
 
-Functions:
+IBKR: bracket orders; mirrors OCO lifecycle.
 
-run_backtest(strategy, data)
+4.3 core/pnl_reconciler.py — Broker-Truth P&L
 
-walk_forward(strategy, data, folds)
+Owns: P&L/fee reconciliation, position truth, divergence detection (broker_desync flag).
+Public API:
 
-stress_test(strategy, scenarios)
+pull_positions()
 
-generate_report(strategy_id)
+pull_fills()
 
-Outputs: JSON/HTML reports → UI + Telegram.
+reconcile() → emits authoritative balances & PnL deltas
+Calls: brokers/*.
+Never does: strategy logic, order entry.
 
-core/notifier.py
+Deep-dive:
 
-Purpose: Telegram & log notifications.
+If divergence > tolerance → raise registry flag; halt new entries for that asset.
 
-Functions:
+5) Sessions, Bankroll & Diff
+5.1 core/session_manager.py — Paper Session Control
 
-send_message(event_type, payload)
+Owns: paper start ($1,000), reward reset (0), resume open paper trades after restarts.
+Public API:
 
-send_recap()
+start_session()
 
-Events: Start/Stop, hourly paper recap, live trade open/close, validation pass/fail, kill switch.
+resume_session()
+Calls: bankroll_manager, pnl_reconciler.
+Never does: scheduling, order placement.
 
-core/drift_monitor.py
+5.2 core/bankroll_manager.py — Auto Top-Ups
 
-Purpose: Detect feature/label drift.
+Owns: paper equity top-ups (+$1000 when ≤$10), epoch logging.
+Public API:
 
-Functions:
+ensure_min_equity()
 
-check_drift(features, baseline)
+record_epoch()
+Calls: session_manager.
+Never does: trading.
 
-alert_if_drift()
+5.3 core/diff_engine.py — Dry-Run Diff
 
-📂 Learning Modules
-learning/state_featurizer.py
+Owns: compute “what live would have done vs paper” for audits.
+Public API:
 
-Purpose: Convert market data into model inputs.
+compare(asset, since_ts) → diff report
+Calls: data_manager, order_router (simulation mode), pnl_reconciler.
+Never does: live order placement.
 
-Functions:
+6) Exploration, Registry & Scheduling
+6.1 core/strategy_registry.py — States, Flags, Counters
 
-build_state(df) – include indicators, regimes, embeddings.
+Owns: the registry of strategies (id, asset, params hash, state, flags, counters, reasons).
+Public API:
 
-Supports: Normalization, sequence stacking, embeddings.
+create(strategy_descriptor)
 
-learning/train_ml_model.py
+set_state(id, state)
 
-Purpose: ML strategy training.
+add_flag(id, flag), remove_flag(id, flag)
 
-Logic:
+inc_counter(id, name)
 
-Triple-Barrier + Meta-Labeling.
+get_for(asset, state|flags)
+Calls: storage only (SQLite/JSON).
+Never does: trading or validation logic.
 
-Lag stacks, PCA, SHAP pruning.
+6.2 core/exploration_manager.py — Candidate Rotation
 
-Functions:
+Owns: per-asset active candidate count, fairness, quotas, continuous backfill of new candidates.
+Public API:
 
-train_classifier(features, labels)
+ensure_active_candidates(asset)
 
-validate_model(model, data)
+promote_candidate(id) (to validating)
 
-learning/train_rl_model.py
+retire_candidate(id, reason)
+Calls: strategy_registry, strategy_generator (via learning/ml/...).
+Never does: order placement.
 
-Purpose: RL training.
+Deep-dive:
 
-Algorithms:
+Implements round_robin_with_boost rotation; max_trades_per_hour_per_candidate; cooldown after trade.
 
-DQN (Double+Dueling, PER, n-step).
+Keeps exploration perpetual.
 
-PPO (GAE, entropy bonus).
+6.3 core/strategy_scheduler.py — Who Gets the Next Trade?
 
-SAC/TD3 for continuous sizing.
+Owns: mapping of opportunities → candidate strategies, respecting flags, counters, cooling, and fairness.
+Public API:
 
-Functions:
+next_candidate(opportunity) -> strategy_id | None
+Calls: strategy_registry, exploration_manager.
+Never does: signal generation or order placement.
 
-train(env, algo)
+Deep-dive:
 
-save_checkpoint()
+An “opportunity” = (asset, symbol, timestamp, features, signal_strength).
 
-load_checkpoint()
+Rejects candidates with any blocking flag.
 
-📂 Broker Adapters
-brokers/exchange_bybit.py
+7) Learning (ML & RL)
 
-Purpose: Bybit Spot/Futures API integration.
+Only learning modules generate/fit strategies. They do not place orders.
 
-Functions:
+7.1 learning/features/indicator_pipeline.py
 
-fetch_klines(symbol, interval)
+Owns: compute RSI/MFI/EMA/SMA/ATR/BB/Fib, derive features; same code for train & serve.
+API: build_features(df) -> feature_df
 
-place_order()
+7.2 learning/features/feature_store.py
 
-get_positions()
+Owns: schema/versioning; retrieval by symbol/timeframe; consistency between train & live.
+API: save(symbol, tf, df), load(symbol, tf, span)
 
-get_balances()
+7.3 learning/ml/strategy_generator.py
 
-brokers/exchange_ibkr.py
+Owns: emit parameterized strategy specs (simple→complex); param ranges from config/ml_search.json.
+API: generate(asset) -> strategy_descriptor
 
-Purpose: IBKR Forex & Options integration.
+7.4 learning/ml/train_ml_model.py
 
-Functions:
+Owns: fit models (sklearn, xgb, lgbm, torch) using triple-barrier labels; export artifacts.
+API: train(spec) -> model_artifact_id
 
-fetch_quotes(symbol)
+7.5 learning/ml/predict_ml_model.py
 
-place_order()
+Owns: inference; returns signal_strength, side, optional confidence.
+API: predict(model_id, features) -> decision
 
-get_positions()
+7.6 learning/ml/hyperopt_ml.py
 
-get_balances()
+Owns: optuna/DEAP searches over spec param space; produces top-K candidate specs.
+API: search(asset) -> [strategy_descriptor]
 
-Notes: Includes options chain support.
+7.7 learning/rl/env_*.py (spot/futures/forex/options)
 
-📂 UI Modules
-ui/app.py
+Owns: per-asset RL environment dynamics (fees, latency, leverage, SL/TP presets).
+API: Gym-like.
 
-Purpose: FastAPI server for dashboard + API.
+7.8 learning/rl/train_rl_agent.py
 
-Routes:
+Owns: train PPO/SAC/DQN per asset; checkpoints; replay.
+API: train(policy_spec) -> policy_id
 
-/status – bot status, balances.
+7.9 learning/rl/policy_manager.py
 
-/live/{asset}/enable|disable – toggle live.
+Owns: load/save policies; epsilon/exploration schedule; per-asset policy selection.
+API: select_policy(asset), act(policy_id, obs) -> action
 
-/kill/{asset} – kill switch.
+7.10 learning/rl/ope_evaluator.py
 
-/diff/{asset} – dry-run diff.
+Owns: off-policy evaluation (WIS/DR) for RL candidates pre-validation.
+API: evaluate(policy_id, dataset) -> metrics
 
-/validation/{strategy} – validation report.
+8) Validation
 
-ui/routes/validation.py
+Only validation modules decide pass/fail for promotion. They do not place orders.
 
-Purpose: Serve validation reports.
+8.1 validation/online_validator.py
 
-Functions:
+Owns: phase-1 online check: ≥100 closed paper trades per candidate on live feed (SL/TP enforced).
+API: start(id), status(id), done(id) -> pass|fail
 
-get_latest_report(strategy_id)
+8.2 validation/backtester.py
 
-📂 Ops & Tests
-tests/
+Owns: event-driven sim: realistic fills, fees, slippage, latency, partial fills.
+API: run(spec, data) -> trades, metrics
 
-Unit tests:
+8.3 validation/walkforward.py
 
-Risk sizing math.
+Owns: purged k-fold + embargo; aggregate fold metrics.
+API: run(spec, data) -> metrics
 
-SL enforcement.
+8.4 validation/stress_tests.py
 
-Indicator calculations.
+Owns: MC reorder, ±param shocks, slippage/latency shocks, regime slicing.
+API: stress(spec, trades) -> stress_metrics
 
-Validation metrics (Sharpe, MaxDD, CVaR).
+8.5 validation/promotion_gate.py
 
-Integration tests:
+Owns: final criteria (PF, Sharpe, MaxDD, CVaR), broker-truth reconciliation tolerance.
+API: decide(metrics) -> pass|fail, reasons
 
-Resume after crash.
+8.6 validation/report_builder.py
 
-UI /diff flow.
+Owns: JSON + HTML reports under logs/validation/{strategy_id}.
+API: build(id, metrics, trades) -> paths
 
-Walk-forward deterministic snapshots.
+9) UI & Notifications
+9.1 ui/api_server.py
 
-📂 State & Logs
+Owns: FastAPI endpoints (status, toggles, flags, reallocations, reports).
+API routes (examples):
 
-state/ – runtime state, RL buffers, model weights.
+GET /status, POST /live/{asset}/enable, POST /kill/{asset},
 
-logs/ – validation results, backtests, ops logs.
+GET /validation/{id}, POST /strategy/{id}/flag/{flag},
 
-🔑 Key Cross-Cutting Concerns
+POST /alloc/{asset}/add/100.
 
-Consistency: All modules lowercase, clear header comment.
+9.2 ui/dashboard.py, ui/components.py
 
-Persistence: Resume trades, positions, runtime state across restarts.
+Owns: two horizontal charts (Paper & Live, 4 lines each + totals); asset panels with balances, reward, Open & History tables (sortable/collapsible), live quotes (rate-safe).
+API: server-render helpers; websocket push.
 
-Security: Secrets in vault, never in code.
+9.3 notifications/telegram_bot.py
 
-Observability: Every trade, state, and decision logged.
+Owns: lifecycle/trade alerts, validation pass/fail, kill switch, flags set/cleared; minimal controls mirroring UI.
 
-✅ This modules.md + README now serve as a single source of truth.
-Any future developer can align code to them without ambiguity.
+10) Brokers
+10.1 brokers/bybit_client.py
+
+Owns: Bybit V5 REST/WS; instrument/tickers; order ops; trading-stop for SL/TP; positions & fills.
+API: place_order(), cancel(), set_trading_stop(), get_positions(), ws_subscribe()
+
+10.2 brokers/ibkr_client.py
+
+Owns: IBKR TWS/Web API; market data; bracket orders; pacing limits; reconnect; positions & fills.
+API: analogous to above.
+
+10.3 brokers/broker_common.py
+
+Owns: retries, backoff, idempotency (client order IDs), clock sync, error normalization.
+
+11) Tests
+
+Unit: risk sizing, exposure caps, budget enforcement, SL/TP attach requests, registry transitions, exploration fairness.
+
+Integration: mock brokers/testnet; order life cycle; reconciliation; UI routes.
+
+Regression: fixed backtest snapshots; performance guardrails.
+
+12) Anti-Duplication Rules (Golden Rules)
+
+Only order_router talks to brokers for orders.
+
+If you need to place/modify/cancel: call order_router.
+
+If you need SL/TP: order_router → sl_tp_manager (never do it elsewhere).
+
+Only risk_manager does per-trade risk math.
+
+Do not re-implement sizing or SL distance checks elsewhere.
+
+Only exposure_manager governs portfolio/correlation caps.
+
+Do not compute exposure rules in strategies.
+
+Only budget_manager decides if you can afford a trade.
+
+Do not check alloc/balance anywhere else.
+
+Only pnl_reconciler is P&L truth.
+
+Any P&L/UI must reconcile to its numbers. If mismatch → raise broker_desync.
+
+Only symbol_universe picks crypto universe.
+
+Do not select symbols inside strategies.
+
+Only exploration_manager/strategy_scheduler assign opportunities.
+
+Strategies produce signals; schedulers decide who trades.
+
+Only validation/* decides promotion.
+
+Do not auto-promote from exploration.
+
+Only session_manager/bankroll_manager control paper equity & top-ups.
+
+Do not mutate paper equity elsewhere.
+
+UI reads; Core decides.
+
+UI never makes business decisions—only triggers APIs.
+
+13) Extension Checklist (When adding “extra” logic)
+
+Pick the owner from this file (or create a new one and add it here).
+
+Define a public API (function names/args).
+
+Wire call flow: callers → owner → (sub-calls).
+
+Write tests (unit + integration).
+
+Document the API and update this MODULES.md.
+
+No duplicate checks: if your logic smells like risk/budget/exposure/orders, you’re in the wrong module—route it.
+
+14) Example Call Flow (Entry → Filled with SL/TP)
+
+strategy_scheduler selects strategy_id for an opportunity.
+
+Strategy (ML/RL) proposes side, signal_weight, preliminary sl/tp.
+
+order_router builds order_context and calls:
+
+risk_manager.pretrade_check(context)
+
+budget_manager.can_afford(context)
+
+exposure_manager.can_open(symbol, side, size)
+
+If all pass → order_router.place_order() → brokers/*
+
+On fill → sl_tp_manager.attach(broker_order, sl_tp_spec)
+
+pnl_reconciler later reconciles fills/positions → updates UI & budgets.
