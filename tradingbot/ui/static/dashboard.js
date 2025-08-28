@@ -2228,3 +2228,58 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }, 5000);
 });
+
+// Clear Paper Trading History Function
+function clearPaperTradingHistory(asset) {
+    console.log(`Clear paper trading history called: ${asset}`);
+    
+    // Show confirmation dialog
+    const confirmed = confirm(`Are you sure you want to clear all paper trading history for ${asset}?\n\nThis will:\n• Reset balance to starting amount\n• Clear all active positions\n• Clear all trade history\n• Reset all statistics\n\nThis action cannot be undone.`);
+    
+    if (!confirmed) {
+        return;
+    }
+    
+    // Show loading state
+    const button = event?.target;
+    if (button) {
+        button.disabled = true;
+        button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Clearing...';
+    }
+    
+    // Make API call to clear history
+    fetch(`/asset/${asset}/clear-history`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'cleared') {
+            // Success - refresh the dashboard
+            if (dashboard) {
+                dashboard.showSystemMessage(`${asset.toUpperCase()} paper trading history cleared successfully!`, 'success');
+                dashboard.loadAllData(); // Refresh all data
+            }
+            console.log(`Paper trading history cleared for ${asset}:`, data);
+        } else {
+            throw new Error(data.message || 'Failed to clear history');
+        }
+    })
+    .catch(error => {
+        console.error(`Error clearing ${asset} history:`, error);
+        if (dashboard) {
+            dashboard.showSystemMessage(`Failed to clear ${asset} history: ${error.message}`, 'error');
+        } else {
+            alert(`Error clearing ${asset} history: ${error.message}`);
+        }
+    })
+    .finally(() => {
+        // Restore button state
+        if (button) {
+            button.disabled = false;
+            button.innerHTML = '<i class="fas fa-trash"></i> Clear';
+        }
+    });
+}

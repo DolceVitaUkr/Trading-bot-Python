@@ -1,0 +1,465 @@
+{
+  "strategy_exploration": {
+    "description": "Comprehensive parameter space for strategy development across crypto and forex markets",
+    "version": "2.0",
+    "last_updated": "2025-08-28"
+  },
+  
+  "market_specific": {
+    "crypto": {
+      "volatility_adjustment": [0.8, 1.0, 1.2, 1.5],
+      "session_filters": ["24h", "asia", "london", "ny", "overlap_london_ny"],
+      "correlation_pairs": ["BTC", "ETH", "BNB", "market_wide"],
+      "news_sentiment_weight": [0.0, 0.1, 0.3, 0.5],
+      "funding_rate_factor": [0.0, 0.2, 0.5, 1.0]
+    },
+    "forex": {
+      "volatility_adjustment": [0.5, 0.8, 1.0, 1.2],
+      "session_filters": ["tokyo", "london", "ny", "overlap_london_ny", "overlap_tokyo_london"],
+      "correlation_pairs": ["DXY", "major_pairs", "commodity_currencies", "safe_haven"],
+      "economic_calendar_weight": [0.0, 0.2, 0.5, 1.0],
+      "interest_rate_differential": [0.0, 0.3, 0.7, 1.0]
+    }
+  },
+
+  "strategy_types": {
+    "trend_following": {
+      "enabled": true,
+      "variants": [
+        "momentum_breakout",
+        "pullback_continuation", 
+        "multi_timeframe_alignment",
+        "trendline_breakout",
+        "channel_breakout",
+        "moving_average_crossover",
+        "ichimoku_cloud",
+        "parabolic_sar_trend"
+      ]
+    },
+    "mean_reversion": {
+      "enabled": true,
+      "variants": [
+        "bollinger_bands_reversion",
+        "rsi_oversold_overbought",
+        "stochastic_extremes",
+        "support_resistance_bounce",
+        "fibonacci_retracement",
+        "pivot_point_reversion",
+        "vwap_reversion",
+        "regression_channel"
+      ]
+    },
+    "momentum": {
+      "enabled": true,
+      "variants": [
+        "rsi_momentum",
+        "macd_momentum",
+        "adx_momentum",
+        "stochastic_momentum",
+        "williams_r_momentum",
+        "rate_of_change",
+        "commodity_channel_index",
+        "ultimate_oscillator"
+      ]
+    },
+    "volatility": {
+      "enabled": true,
+      "variants": [
+        "bollinger_band_squeeze",
+        "atr_expansion",
+        "volatility_breakout",
+        "keltner_channel",
+        "donchian_channel",
+        "average_true_range_bands",
+        "volatility_ratio",
+        "price_volatility_rank"
+      ]
+    },
+    "pattern_recognition": {
+      "enabled": true,
+      "variants": [
+        "double_top_bottom",
+        "head_shoulders",
+        "triangle_patterns",
+        "flag_pennant",
+        "wedge_patterns",
+        "cup_handle",
+        "rectangle_patterns",
+        "harmonic_patterns"
+      ]
+    },
+    "volume_analysis": {
+      "enabled": true,
+      "variants": [
+        "volume_price_trend",
+        "on_balance_volume",
+        "accumulation_distribution",
+        "volume_weighted_moving_average",
+        "money_flow_index",
+        "volume_oscillator",
+        "ease_of_movement",
+        "volume_rate_of_change"
+      ]
+    },
+    "scalping": {
+      "enabled": true,
+      "variants": [
+        "orderbook_imbalance",
+        "bid_ask_spread",
+        "tick_momentum",
+        "level2_pressure",
+        "microtrend_scalping",
+        "news_reaction_scalping",
+        "gap_fill_scalping",
+        "statistical_arbitrage"
+      ]
+    },
+    "swing_trading": {
+      "enabled": true,
+      "variants": [
+        "weekly_pivot_points",
+        "fibonacci_swing_levels",
+        "elliott_wave_swings",
+        "gann_angles",
+        "andrew_pitchfork",
+        "trend_channel_swings",
+        "support_resistance_swings",
+        "moving_average_swings"
+      ]
+    }
+  },
+
+  "technical_indicators": {
+    "moving_averages": {
+      "sma_periods": [5, 8, 13, 21, 34, 55, 89, 144, 200, 233],
+      "ema_periods": [5, 8, 13, 21, 34, 55, 89, 144, 200, 233],
+      "wma_periods": [8, 13, 21, 34, 55],
+      "hull_ma_periods": [9, 14, 21, 28],
+      "tema_periods": [9, 14, 21],
+      "kama_periods": [10, 14, 20, 30],
+      "vidya_periods": [9, 14, 21],
+      "zlema_periods": [8, 13, 21]
+    },
+    
+    "oscillators": {
+      "rsi": {
+        "periods": [7, 9, 14, 21, 28],
+        "overbought_levels": [65, 70, 75, 80],
+        "oversold_levels": [20, 25, 30, 35],
+        "divergence_lookback": [5, 8, 13, 21]
+      },
+      "stochastic": {
+        "k_periods": [5, 9, 14, 21],
+        "d_periods": [3, 5, 8],
+        "smooth_periods": [1, 3, 5],
+        "overbought_levels": [75, 80, 85],
+        "oversold_levels": [15, 20, 25]
+      },
+      "macd": {
+        "fast_periods": [8, 12, 16],
+        "slow_periods": [21, 26, 34],
+        "signal_periods": [7, 9, 12],
+        "histogram_threshold": [0, 0.0001, 0.0005, 0.001]
+      },
+      "williams_r": {
+        "periods": [9, 14, 21, 28],
+        "overbought_levels": [-10, -15, -20],
+        "oversold_levels": [-80, -85, -90]
+      },
+      "cci": {
+        "periods": [14, 20, 28, 50],
+        "overbought_levels": [100, 150, 200],
+        "oversold_levels": [-100, -150, -200]
+      },
+      "ultimate_oscillator": {
+        "period1": [7, 9, 14],
+        "period2": [14, 21, 28],
+        "period3": [28, 42, 56],
+        "weight1": [4, 5, 6],
+        "weight2": [2, 3, 4],
+        "weight3": [1, 2]
+      }
+    },
+
+    "volatility_indicators": {
+      "bollinger_bands": {
+        "periods": [14, 20, 26, 34],
+        "std_deviations": [1.5, 2.0, 2.2, 2.5, 3.0],
+        "squeeze_threshold": [0.1, 0.15, 0.2],
+        "expansion_threshold": [1.2, 1.5, 2.0]
+      },
+      "keltner_channels": {
+        "periods": [14, 20, 26],
+        "atr_multipliers": [1.0, 1.5, 2.0, 2.5],
+        "ma_types": ["ema", "sma", "wma"]
+      },
+      "average_true_range": {
+        "periods": [7, 10, 14, 21, 28],
+        "smoothing_methods": ["sma", "ema", "wilder"]
+      },
+      "donchian_channels": {
+        "periods": [10, 14, 20, 26, 55],
+        "offset_percentages": [0, 10, 20, 30]
+      }
+    },
+
+    "volume_indicators": {
+      "volume_moving_averages": {
+        "periods": [10, 20, 50, 100],
+        "volume_spike_threshold": [1.5, 2.0, 2.5, 3.0]
+      },
+      "money_flow_index": {
+        "periods": [14, 20, 28],
+        "overbought_levels": [70, 80, 85],
+        "oversold_levels": [15, 20, 30]
+      },
+      "on_balance_volume": {
+        "ma_periods": [10, 20, 50],
+        "divergence_periods": [10, 20, 30]
+      },
+      "accumulation_distribution": {
+        "ma_periods": [10, 20, 34],
+        "divergence_lookback": [14, 21, 34]
+      }
+    },
+
+    "trend_indicators": {
+      "adx": {
+        "periods": [9, 14, 21, 28],
+        "trend_threshold": [20, 22, 25, 30],
+        "strong_trend_threshold": [40, 45, 50]
+      },
+      "parabolic_sar": {
+        "acceleration_factors": [0.02, 0.03, 0.05],
+        "max_acceleration": [0.2, 0.3, 0.5],
+        "reversal_confirmation": [true, false]
+      },
+      "aroon": {
+        "periods": [14, 20, 25],
+        "trend_threshold": [70, 75, 80],
+        "consolidation_range": [30, 40, 50]
+      }
+    }
+  },
+
+  "entry_signals": {
+    "signal_combinations": {
+      "single_indicator": 0.3,
+      "two_indicator_confluence": 0.4,
+      "three_indicator_confluence": 0.2,
+      "four_plus_indicator_confluence": 0.1
+    },
+    
+    "signal_types": {
+      "crossover_signals": {
+        "ma_crossovers": ["golden_cross", "death_cross", "short_term_cross"],
+        "oscillator_crossovers": ["signal_line", "zero_line", "extreme_levels"],
+        "price_crossovers": ["support_resistance", "trendline", "channel"]
+      },
+      
+      "momentum_signals": {
+        "divergence_types": ["regular_bullish", "regular_bearish", "hidden_bullish", "hidden_bearish"],
+        "momentum_acceleration": ["increasing", "decreasing", "peak", "trough"],
+        "momentum_extremes": ["oversold_bounce", "overbought_decline"]
+      },
+      
+      "pattern_signals": {
+        "candlestick_patterns": ["doji", "hammer", "shooting_star", "engulfing", "harami", "morning_star", "evening_star"],
+        "chart_patterns": ["triangle", "flag", "pennant", "head_shoulders", "double_top_bottom"],
+        "volume_patterns": ["volume_spike", "volume_dry_up", "volume_accumulation"]
+      },
+      
+      "breakout_signals": {
+        "price_breakouts": ["support_resistance", "trendline", "channel", "consolidation"],
+        "volume_confirmation": [true, false],
+        "retest_requirements": ["immediate", "pullback_retest", "no_retest"]
+      }
+    }
+  },
+
+  "exit_strategies": {
+    "take_profit_methods": {
+      "fixed_ratio": [1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0],
+      "atr_multiples": [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0],
+      "fibonacci_levels": [38.2, 50.0, 61.8, 100.0, 127.2, 161.8],
+      "support_resistance_levels": ["next_level", "major_level", "weekly_level"],
+      "trailing_stop_types": ["percentage", "atr", "parabolic_sar", "moving_average"],
+      "partial_profit_taking": [
+        {"level": 50, "percentage": 25},
+        {"level": 100, "percentage": 50},
+        {"level": 150, "percentage": 75}
+      ]
+    },
+    
+    "stop_loss_methods": {
+      "fixed_percentage": [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0],
+      "atr_multiples": [0.5, 1.0, 1.5, 2.0, 2.5, 3.0],
+      "support_resistance": ["previous_swing", "major_level", "round_number"],
+      "volatility_adjusted": ["low_vol_tighter", "high_vol_wider"],
+      "time_based": ["end_of_session", "max_holding_hours"],
+      "trailing_stop_activation": [25, 50, 75, 100, 150]
+    }
+  },
+
+  "risk_management": {
+    "position_sizing": {
+      "methods": ["fixed_percentage", "kelly_criterion", "optimal_f", "volatility_adjusted", "equity_curve_adjusted"],
+      "risk_percentages": [0.25, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0],
+      "max_positions": [1, 2, 3, 4, 5],
+      "correlation_limits": [0.3, 0.5, 0.7, 0.8],
+      "volatility_scaling": [true, false]
+    },
+    
+    "drawdown_controls": {
+      "daily_loss_limits": [2, 3, 5, 7, 10],
+      "weekly_loss_limits": [5, 7, 10, 15, 20],
+      "monthly_loss_limits": [10, 15, 20, 25, 30],
+      "consecutive_loss_limits": [3, 4, 5, 6, 8],
+      "recovery_modes": ["reduce_size", "pause_trading", "switch_strategy"]
+    },
+    
+    "exposure_limits": {
+      "max_portfolio_exposure": [20, 30, 50, 70, 100],
+      "per_asset_exposure": [5, 10, 15, 20, 25],
+      "sector_exposure_limits": [15, 25, 35, 50],
+      "currency_exposure_limits": [25, 40, 60, 80]
+    }
+  },
+
+  "timeframe_analysis": {
+    "multi_timeframe_setups": {
+      "primary_timeframes": ["1m", "5m", "15m", "1h", "4h", "1d"],
+      "confirmation_timeframes": ["higher", "same", "lower"],
+      "alignment_requirements": ["all_align", "majority_align", "primary_only"],
+      "timeframe_weights": [
+        {"1m": 0.1, "5m": 0.2, "15m": 0.3, "1h": 0.3, "4h": 0.1},
+        {"5m": 0.2, "15m": 0.3, "1h": 0.3, "4h": 0.2},
+        {"15m": 0.25, "1h": 0.35, "4h": 0.25, "1d": 0.15}
+      ]
+    },
+    
+    "session_analysis": {
+      "asian_session": {
+        "start_hour": 21,
+        "end_hour": 6,
+        "volatility_characteristics": ["low_volatility", "range_bound", "breakout_preparation"]
+      },
+      "london_session": {
+        "start_hour": 7,
+        "end_hour": 16,
+        "volatility_characteristics": ["high_volatility", "trend_continuation", "reversal_potential"]
+      },
+      "new_york_session": {
+        "start_hour": 13,
+        "end_hour": 22,
+        "volatility_characteristics": ["high_volatility", "strong_trends", "news_driven"]
+      }
+    }
+  },
+
+  "adaptive_parameters": {
+    "market_regime_detection": {
+      "volatility_regimes": ["low_vol", "medium_vol", "high_vol", "extreme_vol"],
+      "trend_regimes": ["strong_uptrend", "weak_uptrend", "sideways", "weak_downtrend", "strong_downtrend"],
+      "volume_regimes": ["low_volume", "normal_volume", "high_volume", "extreme_volume"],
+      "regime_adjustment_factors": [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
+    },
+    
+    "performance_feedback": {
+      "parameter_adjustment_frequency": ["daily", "weekly", "monthly", "quarterly"],
+      "performance_metrics": ["win_rate", "profit_factor", "sharpe_ratio", "max_drawdown"],
+      "adjustment_magnitudes": [0.05, 0.1, 0.15, 0.2, 0.25],
+      "genetic_algorithm_evolution": [true, false]
+    }
+  },
+
+  "execution_parameters": {
+    "order_types": {
+      "entry_orders": ["market", "limit", "stop", "stop_limit"],
+      "exit_orders": ["market", "limit", "trailing_stop"],
+      "slippage_tolerance": [0.001, 0.002, 0.005, 0.01],
+      "execution_delays": [0, 100, 250, 500, 1000]
+    },
+    
+    "market_microstructure": {
+      "spread_filters": [0.5, 1.0, 2.0, 3.0, 5.0],
+      "liquidity_requirements": ["high", "medium", "low"],
+      "order_book_depth": ["level_1", "level_2", "full_book"],
+      "execution_algorithms": ["twap", "vwap", "implementation_shortfall", "market_impact_minimization"]
+    }
+  },
+
+  "optimization_settings": {
+    "parameter_search_methods": {
+      "grid_search": {
+        "enabled": true,
+        "max_combinations": 10000,
+        "parallel_processing": true
+      },
+      "random_search": {
+        "enabled": true,
+        "iterations": 5000,
+        "seed": null
+      },
+      "bayesian_optimization": {
+        "enabled": true,
+        "acquisition_function": ["expected_improvement", "probability_improvement", "upper_confidence_bound"],
+        "iterations": 1000
+      },
+      "genetic_algorithm": {
+        "enabled": true,
+        "population_size": [20, 50, 100, 200],
+        "generations": [10, 25, 50, 100],
+        "crossover_rate": [0.3, 0.5, 0.7, 0.8],
+        "mutation_rate": [0.05, 0.1, 0.2, 0.3],
+        "elite_percentage": [0.1, 0.2, 0.3]
+      },
+      "particle_swarm": {
+        "enabled": true,
+        "swarm_size": [20, 50, 100],
+        "iterations": [50, 100, 200],
+        "inertia_weight": [0.4, 0.6, 0.8],
+        "cognitive_parameter": [1.0, 1.5, 2.0],
+        "social_parameter": [1.0, 1.5, 2.0]
+      }
+    },
+    
+    "fitness_functions": {
+      "primary_objectives": {
+        "profit_factor": [0.3, 0.4, 0.5],
+        "sharpe_ratio": [0.2, 0.3, 0.4],
+        "max_drawdown": [0.15, 0.2, 0.25],
+        "win_rate": [0.1, 0.15, 0.2],
+        "total_return": [0.05, 0.1, 0.15]
+      },
+      "risk_constraints": {
+        "max_drawdown_limit": [10, 15, 20, 25],
+        "minimum_trades": [50, 100, 200],
+        "minimum_profit_factor": [1.1, 1.2, 1.3, 1.5],
+        "minimum_sharpe_ratio": [0.5, 0.8, 1.0, 1.2]
+      }
+    }
+  },
+
+  "validation_criteria": {
+    "walk_forward_analysis": {
+      "enabled": true,
+      "training_periods": [30, 60, 90, 120],
+      "testing_periods": [7, 14, 30],
+      "step_size": [7, 14, 30]
+    },
+    
+    "out_of_sample_testing": {
+      "enabled": true,
+      "oos_percentage": [20, 25, 30, 35],
+      "validation_periods": [30, 60, 90]
+    },
+    
+    "robustness_tests": {
+      "parameter_sensitivity": true,
+      "market_regime_consistency": true,
+      "transaction_cost_impact": true,
+      "slippage_stress_testing": true
+    }
+  }
+}

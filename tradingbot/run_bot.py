@@ -2,6 +2,16 @@
 
 from __future__ import annotations
 
+import sys
+import os
+from pathlib import Path
+
+# Add the parent directory to Python path if not already there
+current_dir = Path(__file__).parent
+project_root = current_dir.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
 import uvicorn
 
 from tradingbot.ui.app import app

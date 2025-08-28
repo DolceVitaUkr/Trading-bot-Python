@@ -1344,6 +1344,48 @@ def create_app() -> FastAPI:
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"Failed to approve strategy {strategy_id}: {exc}")
 
+    @app.post("/asset/{asset}/clear-history")
+    def clear_paper_trading_history(asset: str):
+        """Clear all paper trading history and reset to starting balance."""
+        valid_assets = ['crypto', 'futures', 'forex', 'forex_options']
+        if asset not in valid_assets:
+            raise HTTPException(status_code=400, detail=f"Invalid asset. Must be one of: {valid_assets}")
+        
+        try:
+            if get_paper_trader:
+                paper_trader = get_paper_trader(asset)
+                
+                # Get initial balance from config
+                starting_balance = runtime.config.config.get('safety', {}).get('PAPER_EQUITY_START', 1000.0)
+                
+                # Reset paper trader state
+                paper_trader.balance = starting_balance
+                paper_trader.starting_balance = starting_balance
+                paper_trader.positions = []
+                paper_trader.trades = []
+                paper_trader.pnl_history = [{
+                    "timestamp": datetime.now().isoformat(), 
+                    "balance": starting_balance
+                }]
+                paper_trader.violations_log = []
+                paper_trader.violation_count = 0
+                
+                # Save the reset state
+                paper_trader._save_state()
+                
+                return {
+                    "asset": asset,
+                    "status": "cleared",
+                    "message": f"Paper trading history cleared for {asset}",
+                    "new_balance": starting_balance,
+                    "timestamp": datetime.now().isoformat()
+                }
+            else:
+                raise HTTPException(status_code=503, detail="Paper trader not available")
+                
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Failed to clear {asset} paper trading history: {exc}")
+
     return app
 
 

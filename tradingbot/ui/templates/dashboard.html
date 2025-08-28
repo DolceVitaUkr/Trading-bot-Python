@@ -252,9 +252,14 @@
                                                 <option value="losses">Losing Trades</option>
                                             </select>
                                         </div>
-                                        <button class="btn btn-refresh" onclick="refreshTradeHistory('crypto', 'paper')">
-                                            <i class="fas fa-refresh"></i> Refresh
-                                        </button>
+                                        <div style="display: flex; gap: 8px;">
+                                            <button class="btn btn-refresh" onclick="refreshTradeHistory('crypto', 'paper')">
+                                                <i class="fas fa-refresh"></i> Refresh
+                                            </button>
+                                            <button class="btn btn-danger" onclick="clearPaperTradingHistory('crypto')" title="Clear all paper trading history and positions">
+                                                <i class="fas fa-trash"></i> Clear History
+                                            </button>
+                                        </div>
                                     </div>
                                     <div class="trade-history-container">
                                         <div class="table-container">
@@ -527,6 +532,117 @@
                                 </table>
                             </div>
                         </div>
+                        
+                        <!-- Analytics Section -->
+                        <div class="analytics-section" id="futures-paper-analytics">
+                            <div class="analytics-header">
+                                <h5><i class="fas fa-chart-bar"></i> Analytics & Trade History</h5>
+                                <button class="btn btn-analytics" onclick="toggleAnalytics('futures', 'paper')">
+                                    <i class="fas fa-chevron-down"></i>
+                                </button>
+                            </div>
+                            <div class="analytics-content" id="futures-paper-analytics-content" style="display: none;">
+                                <div class="analytics-tabs">
+                                    <button class="tab-btn active" onclick="switchTab('futures-paper', 'overview')">Overview</button>
+                                    <button class="tab-btn" onclick="switchTab('futures-paper', 'trades')">Trade History</button>
+                                    <button class="tab-btn" onclick="switchTab('futures-paper', 'symbols')">By Symbol</button>
+                                </div>
+                                
+                                <!-- Overview Tab -->
+                                <div class="tab-content active" id="futures-paper-overview-tab">
+                                    <div class="overview-stats">
+                                        <div class="stat-card">
+                                            <div class="stat-value" id="futures-paper-total-trades">0</div>
+                                            <div class="stat-label">Total Trades</div>
+                                        </div>
+                                        <div class="stat-card">
+                                            <div class="stat-value" id="futures-paper-win-rate-detailed">0%</div>
+                                            <div class="stat-label">Win Rate</div>
+                                        </div>
+                                        <div class="stat-card">
+                                            <div class="stat-value" id="futures-paper-profit-factor">0.00</div>
+                                            <div class="stat-label">Profit Factor</div>
+                                        </div>
+                                        <div class="stat-card">
+                                            <div class="stat-value" id="futures-paper-max-drawdown">0%</div>
+                                            <div class="stat-label">Max Drawdown</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <!-- Trade History Tab -->
+                                <div class="tab-content" id="futures-paper-trades-tab">
+                                    <div class="trade-history-controls">
+                                        <div style="display: flex; gap: 8px; align-items: center;">
+                                            <input type="text" id="futures-paper-search" placeholder="Search symbol..." style="width: 120px;">
+                                            <select id="futures-paper-trade-filter">
+                                                <option value="all">All Trades</option>
+                                                <option value="wins">Winning Trades</option>
+                                                <option value="losses">Losing Trades</option>
+                                            </select>
+                                        </div>
+                                        <div style="display: flex; gap: 8px;">
+                                            <button class="btn btn-refresh" onclick="refreshTradeHistory('futures', 'paper')">
+                                                <i class="fas fa-refresh"></i> Refresh
+                                            </button>
+                                            <button class="btn btn-danger" onclick="clearPaperTradingHistory('futures')" title="Clear all futures paper trading history and positions">
+                                                <i class="fas fa-trash"></i> Clear History
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="trade-history-container">
+                                        <div class="table-container">
+                                            <table class="trade-history-table" id="futures-paper-trade-history">
+                                                <thead>
+                                                    <tr>
+                                                        <th class="sortable" data-column="symbol">Symbol <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="side">Side <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="size">Size <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="entry_price">Entry <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="exit_price">Exit <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="leverage">Leverage <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="pnl_usd">P&L ($) <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="pnl_pct">P&L (%) <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="duration">Duration <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="exit_reason">Exit Reason <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="funding_cost">Funding <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="entry_time">Entry Time <i class="fas fa-sort"></i></th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    <tr class="no-trades"><td colspan="12">No completed trades yet</td></tr>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <!-- By Symbol Tab -->
+                                <div class="tab-content" id="futures-paper-symbols-tab">
+                                    <div class="symbol-performance-container">
+                                        <div class="table-container">
+                                            <table class="symbol-performance-table" id="futures-paper-symbol-performance">
+                                                <thead>
+                                                    <tr>
+                                                        <th class="sortable" data-column="symbol">Symbol <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="trades">Trades <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="win_rate">Win Rate <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="total_pnl">Total P&L <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="avg_pnl">Avg P&L <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="best_trade">Best Trade <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="worst_trade">Worst Trade <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="avg_leverage">Avg Leverage <i class="fas fa-sort"></i></th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    <tr class="no-data"><td colspan="8">No trade data available</td></tr>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -626,6 +742,139 @@
                                 <span class="metric-value">$0.00</span>
                             </div>
                         </div>
+                        <div class="positions-section" id="forex-paper-positions-section">
+                            <h5>Active Positions</h5>
+                            <div class="table-container">
+                                <table class="positions-table" id="forex-paper-positions-list">
+                                    <thead>
+                                        <tr>
+                                            <th class="sortable" data-column="symbol">Symbol <i class="fas fa-sort"></i></th>
+                                            <th class="sortable" data-column="side">Side <i class="fas fa-sort"></i></th>
+                                            <th class="sortable" data-column="size">Size <i class="fas fa-sort"></i></th>
+                                            <th class="sortable" data-column="entry_price">Entry <i class="fas fa-sort"></i></th>
+                                            <th class="sortable" data-column="current_price">Current <i class="fas fa-sort"></i></th>
+                                            <th class="sortable" data-column="pnl">PnL <i class="fas fa-sort"></i></th>
+                                            <th class="sortable" data-column="take_profit">TP <i class="fas fa-sort"></i></th>
+                                            <th class="sortable" data-column="stop_loss">SL <i class="fas fa-sort"></i></th>
+                                            <th class="sortable" data-column="duration">Duration <i class="fas fa-sort"></i></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr class="no-positions"><td colspan="9">No active positions</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                        
+                        <!-- Analytics Section -->
+                        <div class="analytics-section" id="forex-paper-analytics">
+                            <div class="analytics-header">
+                                <h5><i class="fas fa-chart-bar"></i> Analytics & Trade History</h5>
+                                <button class="btn btn-analytics" onclick="toggleAnalytics('forex', 'paper')">
+                                    <i class="fas fa-chevron-down"></i>
+                                </button>
+                            </div>
+                            <div class="analytics-content" id="forex-paper-analytics-content" style="display: none;">
+                                <div class="analytics-tabs">
+                                    <button class="tab-btn active" onclick="switchTab('forex-paper', 'overview')">Overview</button>
+                                    <button class="tab-btn" onclick="switchTab('forex-paper', 'trades')">Trade History</button>
+                                    <button class="tab-btn" onclick="switchTab('forex-paper', 'symbols')">By Symbol</button>
+                                </div>
+                                
+                                <!-- Overview Tab -->
+                                <div class="tab-content active" id="forex-paper-overview-tab">
+                                    <div class="overview-stats">
+                                        <div class="stat-card">
+                                            <div class="stat-value" id="forex-paper-total-trades">0</div>
+                                            <div class="stat-label">Total Trades</div>
+                                        </div>
+                                        <div class="stat-card">
+                                            <div class="stat-value" id="forex-paper-win-rate-detailed">0%</div>
+                                            <div class="stat-label">Win Rate</div>
+                                        </div>
+                                        <div class="stat-card">
+                                            <div class="stat-value" id="forex-paper-profit-factor">0.00</div>
+                                            <div class="stat-label">Profit Factor</div>
+                                        </div>
+                                        <div class="stat-card">
+                                            <div class="stat-value" id="forex-paper-max-drawdown">0%</div>
+                                            <div class="stat-label">Max Drawdown</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <!-- Trade History Tab -->
+                                <div class="tab-content" id="forex-paper-trades-tab">
+                                    <div class="trade-history-controls">
+                                        <div style="display: flex; gap: 8px; align-items: center;">
+                                            <input type="text" id="forex-paper-search" placeholder="Search symbol..." style="width: 120px;">
+                                            <select id="forex-paper-trade-filter">
+                                                <option value="all">All Trades</option>
+                                                <option value="wins">Winning Trades</option>
+                                                <option value="losses">Losing Trades</option>
+                                            </select>
+                                        </div>
+                                        <div style="display: flex; gap: 8px;">
+                                            <button class="btn btn-refresh" onclick="refreshTradeHistory('forex', 'paper')">
+                                                <i class="fas fa-refresh"></i> Refresh
+                                            </button>
+                                            <button class="btn btn-danger" onclick="clearPaperTradingHistory('forex')" title="Clear all forex paper trading history and positions">
+                                                <i class="fas fa-trash"></i> Clear History
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="trade-history-container">
+                                        <div class="table-container">
+                                            <table class="trade-history-table" id="forex-paper-trade-history">
+                                                <thead>
+                                                    <tr>
+                                                        <th class="sortable" data-column="symbol">Symbol <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="side">Side <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="size">Size <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="entry_price">Entry <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="exit_price">Exit <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="pnl_usd">P&L ($) <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="pnl_pct">P&L (%) <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="duration">Duration <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="exit_reason">Exit Reason <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="swap_cost">Swap <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="entry_time">Entry Time <i class="fas fa-sort"></i></th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    <tr class="no-trades"><td colspan="11">No completed trades yet</td></tr>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <!-- By Symbol Tab -->
+                                <div class="tab-content" id="forex-paper-symbols-tab">
+                                    <div class="symbol-performance-container">
+                                        <div class="table-container">
+                                            <table class="symbol-performance-table" id="forex-paper-symbol-performance">
+                                                <thead>
+                                                    <tr>
+                                                        <th class="sortable" data-column="symbol">Symbol <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="trades">Trades <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="win_rate">Win Rate <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="total_pnl">Total P&L <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="avg_pnl">Avg P&L <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="best_trade">Best Trade <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="worst_trade">Worst Trade <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="avg_spread">Avg Spread <i class="fas fa-sort"></i></th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    <tr class="no-data"><td colspan="8">No trade data available</td></tr>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -695,6 +944,9 @@
                         <div class="controls">
                             <button class="btn btn-start" id="forex_options-paper-start" onclick="toggleTrading('forex_options', 'paper')">Start</button>
                             <button class="btn btn-kill" onclick="killAsset('forex_options')">Kill</button>
+                            <button class="btn btn-danger" onclick="clearPaperTradingHistory('forex_options')" title="Clear all forex options paper trading history and positions">
+                                <i class="fas fa-trash"></i> Clear
+                            </button>
                         </div>
                     </div>
                     <div class="trading-content">
@@ -723,6 +975,183 @@
                             <div class="metric">
                                 <span class="metric-label">Daily P&L</span>
                                 <span class="metric-value">$0.00</span>
+                            </div>
+                        </div>
+                        <div class="positions-section" id="forex_options-paper-positions-section">
+                            <h5>Active Positions</h5>
+                            <div class="table-container">
+                                <table class="positions-table" id="forex_options-paper-positions-list">
+                                    <thead>
+                                        <tr>
+                                            <th class="sortable" data-column="symbol">Symbol <i class="fas fa-sort"></i></th>
+                                            <th class="sortable" data-column="side">Side <i class="fas fa-sort"></i></th>
+                                            <th class="sortable" data-column="option_type">Type <i class="fas fa-sort"></i></th>
+                                            <th class="sortable" data-column="strike">Strike <i class="fas fa-sort"></i></th>
+                                            <th class="sortable" data-column="expiry">Expiry <i class="fas fa-sort"></i></th>
+                                            <th class="sortable" data-column="size">Size <i class="fas fa-sort"></i></th>
+                                            <th class="sortable" data-column="entry_price">Entry <i class="fas fa-sort"></i></th>
+                                            <th class="sortable" data-column="current_price">Current <i class="fas fa-sort"></i></th>
+                                            <th class="sortable" data-column="pnl">PnL <i class="fas fa-sort"></i></th>
+                                            <th class="sortable" data-column="delta">Delta <i class="fas fa-sort"></i></th>
+                                            <th class="sortable" data-column="gamma">Gamma <i class="fas fa-sort"></i></th>
+                                            <th class="sortable" data-column="theta">Theta <i class="fas fa-sort"></i></th>
+                                            <th class="sortable" data-column="vega">Vega <i class="fas fa-sort"></i></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr class="no-positions"><td colspan="13">No active positions</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                        
+                        <!-- Analytics Section -->
+                        <div class="analytics-section" id="forex_options-paper-analytics">
+                            <div class="analytics-header">
+                                <h5><i class="fas fa-chart-bar"></i> Analytics & Trade History</h5>
+                                <button class="btn btn-analytics" onclick="toggleAnalytics('forex_options', 'paper')">
+                                    <i class="fas fa-chevron-down"></i>
+                                </button>
+                            </div>
+                            <div class="analytics-content" id="forex_options-paper-analytics-content" style="display: none;">
+                                <div class="analytics-tabs">
+                                    <button class="tab-btn active" onclick="switchTab('forex_options-paper', 'overview')">Overview</button>
+                                    <button class="tab-btn" onclick="switchTab('forex_options-paper', 'trades')">Trade History</button>
+                                    <button class="tab-btn" onclick="switchTab('forex_options-paper', 'symbols')">By Symbol</button>
+                                    <button class="tab-btn" onclick="switchTab('forex_options-paper', 'greeks')">Greeks Analysis</button>
+                                </div>
+                                
+                                <!-- Overview Tab -->
+                                <div class="tab-content active" id="forex_options-paper-overview-tab">
+                                    <div class="overview-stats">
+                                        <div class="stat-card">
+                                            <div class="stat-value" id="forex_options-paper-total-trades">0</div>
+                                            <div class="stat-label">Total Trades</div>
+                                        </div>
+                                        <div class="stat-card">
+                                            <div class="stat-value" id="forex_options-paper-win-rate-detailed">0%</div>
+                                            <div class="stat-label">Win Rate</div>
+                                        </div>
+                                        <div class="stat-card">
+                                            <div class="stat-value" id="forex_options-paper-profit-factor">0.00</div>
+                                            <div class="stat-label">Profit Factor</div>
+                                        </div>
+                                        <div class="stat-card">
+                                            <div class="stat-value" id="forex_options-paper-max-drawdown">0%</div>
+                                            <div class="stat-label">Max Drawdown</div>
+                                        </div>
+                                        <div class="stat-card">
+                                            <div class="stat-value" id="forex_options-paper-theta-pnl">$0.00</div>
+                                            <div class="stat-label">Theta P&L</div>
+                                        </div>
+                                        <div class="stat-card">
+                                            <div class="stat-value" id="forex_options-paper-implied-vol">0%</div>
+                                            <div class="stat-label">Avg IV</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <!-- Trade History Tab -->
+                                <div class="tab-content" id="forex_options-paper-trades-tab">
+                                    <div class="trade-history-controls">
+                                        <div style="display: flex; gap: 8px; align-items: center;">
+                                            <input type="text" id="forex_options-paper-search" placeholder="Search symbol..." style="width: 120px;">
+                                            <select id="forex_options-paper-trade-filter">
+                                                <option value="all">All Trades</option>
+                                                <option value="wins">Winning Trades</option>
+                                                <option value="losses">Losing Trades</option>
+                                                <option value="calls">Call Options</option>
+                                                <option value="puts">Put Options</option>
+                                                <option value="spreads">Spreads</option>
+                                            </select>
+                                        </div>
+                                        <div style="display: flex; gap: 8px;">
+                                            <button class="btn btn-refresh" onclick="refreshTradeHistory('forex_options', 'paper')">
+                                                <i class="fas fa-refresh"></i> Refresh
+                                            </button>
+                                            <button class="btn btn-danger" onclick="clearPaperTradingHistory('forex_options')" title="Clear all forex options paper trading history and positions">
+                                                <i class="fas fa-trash"></i> Clear History
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="trade-history-container">
+                                        <div class="table-container">
+                                            <table class="trade-history-table" id="forex_options-paper-trade-history">
+                                                <thead>
+                                                    <tr>
+                                                        <th class="sortable" data-column="symbol">Symbol <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="option_type">Type <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="strike">Strike <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="expiry">Expiry <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="side">Side <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="size">Size <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="entry_price">Entry <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="exit_price">Exit <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="pnl_usd">P&L ($) <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="pnl_pct">P&L (%) <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="implied_vol">IV <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="duration">Duration <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="exit_reason">Exit Reason <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="entry_time">Entry Time <i class="fas fa-sort"></i></th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    <tr class="no-trades"><td colspan="14">No completed trades yet</td></tr>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <!-- By Symbol Tab -->
+                                <div class="tab-content" id="forex_options-paper-symbols-tab">
+                                    <div class="symbol-performance-container">
+                                        <div class="table-container">
+                                            <table class="symbol-performance-table" id="forex_options-paper-symbol-performance">
+                                                <thead>
+                                                    <tr>
+                                                        <th class="sortable" data-column="symbol">Symbol <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="trades">Trades <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="win_rate">Win Rate <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="total_pnl">Total P&L <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="avg_pnl">Avg P&L <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="best_trade">Best Trade <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="worst_trade">Worst Trade <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="avg_iv">Avg IV <i class="fas fa-sort"></i></th>
+                                                        <th class="sortable" data-column="theta_pnl">Theta P&L <i class="fas fa-sort"></i></th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    <tr class="no-data"><td colspan="9">No trade data available</td></tr>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <!-- Greeks Analysis Tab -->
+                                <div class="tab-content" id="forex_options-paper-greeks-tab">
+                                    <div class="greeks-analysis-container">
+                                        <div class="greeks-summary">
+                                            <div class="greeks-card">
+                                                <div class="greeks-value" id="forex_options-paper-portfolio-delta">0.00</div>
+                                                <div class="greeks-label">Portfolio Delta</div>
+                                            </div>
+                                            <div class="greeks-card">
+                                                <div class="greeks-value" id="forex_options-paper-portfolio-gamma">0.00</div>
+                                                <div class="greeks-label">Portfolio Gamma</div>
+                                            </div>
+                                            <div class="greeks-card">
+                                                <div class="greeks-value" id="forex_options-paper-portfolio-theta">$0.00</div>
+                                                <div class="greeks-label">Daily Theta</div>
+                                            </div>
+                                            <div class="greeks-card">
+                                                <div class="greeks-value" id="forex_options-paper-portfolio-vega">$0.00</div>
+                                                <div class="greeks-label">Portfolio Vega</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
