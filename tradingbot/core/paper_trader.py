@@ -18,6 +18,11 @@ except ImportError:
     ExchangeBybit = None
 
 try:
+    from tradingbot.brokers.connectibkrapi import IBKRConnectionManager
+except ImportError:
+    IBKRConnectionManager = None
+
+try:
     from tradingbot.rl.example_integration import TradingBotRewardIntegration
     REWARD_SYSTEM_AVAILABLE = True
 except ImportError:
@@ -88,23 +93,50 @@ class PaperTrader:
         self.last_market_update = None
         self.market_data_staleness_threshold = 60  # Max 60 seconds old data
         
-        # Initialize Bybit connection for REAL market data ONLY
+        # Initialize broker connections for REAL market data ONLY
         self.bybit_exchange = None
-        if ExchangeBybit and asset_type == "crypto":
+        self.ibkr_connection = None
+        
+        if ExchangeBybit and asset_type in ["crypto", "futures"]:
             try:
-                self.bybit_exchange = ExchangeBybit("CRYPTO_SPOT", "paper")
+                exchange_type = "CRYPTO_SPOT" if asset_type == "crypto" else "CRYPTO_FUTURES"
+                self.bybit_exchange = ExchangeBybit(exchange_type, "paper")
                 self.log.critical("STRICT MODE: Connected to Bybit for REAL market data validation")
             except Exception as e:
                 self.log.critical(f"CRITICAL FAILURE: Could not connect to Bybit: {e}")
                 self.log.critical("STRICT MODE: Paper trading HALTED without real market connection")
                 raise Exception("REAL MARKET CONNECTION REQUIRED")
         
-        # Define symbols to track for live data (verified available on Bybit)
-        self.tracked_symbols = [
-            "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", 
-            "ADAUSDT", "AVAXUSDT", "DOTUSDT", "LINKUSDT", "UNIUSDT",
-            "LTCUSDT", "BCHUSDT", "ATOMUSDT", "NEARUSDT", "ICPUSDT"
-        ]
+        elif IBKRConnectionManager and asset_type in ["forex", "forex_options"]:
+            try:
+                self.ibkr_connection = IBKRConnectionManager()
+                self.log.critical("STRICT MODE: Connected to IBKR for REAL market data validation")
+            except Exception as e:
+                self.log.critical(f"CRITICAL FAILURE: Could not connect to IBKR: {e}")
+                self.log.critical("STRICT MODE: Paper trading HALTED without real market connection")
+                raise Exception("REAL MARKET CONNECTION REQUIRED")
+        
+        # Define symbols to track based on asset type
+        if asset_type == "crypto":
+            self.tracked_symbols = [
+                "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", 
+                "ADAUSDT", "AVAXUSDT", "DOTUSDT", "LINKUSDT", "UNIUSDT",
+                "LTCUSDT", "BCHUSDT", "ATOMUSDT", "NEARUSDT", "ICPUSDT"
+            ]
+        elif asset_type == "futures":
+            self.tracked_symbols = [
+                "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"
+            ]
+        elif asset_type == "forex":
+            self.tracked_symbols = [
+                "EUR/USD", "GBP/USD", "USD/JPY", "USD/CHF", "AUD/USD"
+            ]
+        elif asset_type == "forex_options":
+            self.tracked_symbols = [
+                "SPX", "QQQ", "IWM", "DIA", "VIX"
+            ]
+        else:
+            self.tracked_symbols = []
         
         # Initialize reward system integration
         self.reward_system = None
@@ -177,10 +209,10 @@ class PaperTrader:
     async def update_market_data(self):
         """Update market data with STRICT real-time validation."""
         try:
-            if not self.bybit_exchange:
+            if self.asset_type in ["crypto", "futures"] and not self.bybit_exchange:
                 raise StrictMarketDataViolation("No Bybit connection - cannot proceed without real data")
             
-            if self.asset_type == "crypto":
+            if self.asset_type in ["crypto", "futures"]:
                 self.log.info("[STRICT] Fetching live market data from Bybit with timestamp validation...")
                 
                 # Test connection with timeout
@@ -261,6 +293,81 @@ class PaperTrader:
                 # STRICT ENFORCEMENT: Must have minimum real data
                 if success_count < 5:  # Increased minimum requirement
                     raise StrictMarketDataViolation(f"Only {success_count}/5 minimum real data points available")
+                
+                self.last_market_update = current_time
+            
+            elif self.asset_type in ["forex", "forex_options"] and self.ibkr_connection:
+                # Use REAL IBKR market data
+                self.log.info("[STRICT] Fetching live market data from IBKR with timestamp validation...")
+                
+                # Test connection first
+                if not await self.ibkr_connection.is_connected():
+                    await self.ibkr_connection.connect()
+                    if not await self.ibkr_connection.is_connected():
+                        raise StrictMarketDataViolation("IBKR connection test failed")
+                
+                success_count = 0
+                current_time = datetime.now()
+                
+                # Clear any potentially stale data
+                self.market_data.clear()
+                
+                for symbol in self.tracked_symbols:
+                    try:
+                        # Get market data from IBKR
+                        contract = None
+                        if self.asset_type == "forex":
+                            # Create forex contract
+                            base_currency, quote_currency = symbol.split('/')
+                            contract = {
+                                "symbol": base_currency,
+                                "secType": "CASH",
+                                "currency": quote_currency,
+                                "exchange": "IDEALPRO"
+                            }
+                        else:  # forex_options
+                            # Create index/ETF contract for options
+                            contract = {
+                                "symbol": symbol,
+                                "secType": "IND" if symbol in ["SPX", "VIX"] else "STK",
+                                "currency": "USD",
+                                "exchange": "SMART"
+                            }
+                        
+                        # Get market data
+                        market_data = await self.ibkr_connection.get_market_data(contract)
+                        
+                        if market_data and market_data.get("last_price"):
+                            current_price = float(market_data["last_price"])
+                            volume = float(market_data.get("volume", 0))
+                            
+                            self.market_data[symbol] = {
+                                "price": current_price,
+                                "volume": volume,
+                                "timestamp": current_time.isoformat(),
+                                "data_timestamp": current_time.isoformat(),
+                                "staleness_seconds": 0,
+                                "bid": float(market_data.get("bid", current_price)),
+                                "ask": float(market_data.get("ask", current_price)),
+                                "source": "ibkr_live_verified",
+                                "validated": True,
+                                "strict_validated": True
+                            }
+                            
+                            success_count += 1
+                            self.log.debug(f"VALIDATED: {symbol} ${current_price:.4f}")
+                        else:
+                            self.log.warning(f"No market data received for {symbol}")
+                            
+                    except Exception as e:
+                        self.log.error(f"Failed to get data for {symbol}: {e}")
+                        continue
+                
+                self.log.critical(f"STRICT VALIDATION: {success_count} symbols with REAL IBKR data")
+                
+                # STRICT ENFORCEMENT: Must have minimum real data
+                if success_count < 3:  # Minimum for forex/options
+                    raise StrictMarketDataViolation(f"Only {success_count}/3 minimum real data points available")
                 
                 self.last_market_update = current_time
                 

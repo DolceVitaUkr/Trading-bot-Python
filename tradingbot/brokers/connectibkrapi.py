@@ -158,6 +158,73 @@ class IBKRConnectionManager:
     @property
     def is_paper_account(self) -> Optional[bool]:
         return self._is_paper_account
+    
+    def is_connected(self) -> bool:
+        """Check if TWS is connected."""
+        return self.ib.isConnected()
+    
+    async def connect(self):
+        """Connect to TWS (alias for connect_tws)."""
+        await self.connect_tws()
+    
+    async def get_wallet_data(self) -> dict:
+        """Get wallet/account data from IBKR."""
+        if not self.is_connected():
+            await self.connect()
+        
+        try:
+            # Get account summary
+            accounts = self.ib.managedAccounts()
+            if not accounts:
+                return {'balance': 0.0, 'available_balance': 0.0}
+            
+            account = accounts[0]
+            summary = await self.ib.accountSummaryAsync(account)
+            
+            # Extract relevant data
+            balance = 0.0
+            available = 0.0
+            
+            for item in summary:
+                if item.tag == 'TotalCashBalance' and item.currency == 'BASE':
+                    balance = float(item.value)
+                elif item.tag == 'AvailableFunds' and item.currency == 'BASE':
+                    available = float(item.value)
+            
+            return {
+                'balance': balance,
+                'available_balance': available,
+                'used_in_positions': balance - available,
+                'pnl': 0.0,
+                'pnl_percent': 0.0
+            }
+        except Exception as e:
+            log.error(f"Failed to get wallet data: {e}")
+            return {'balance': 0.0, 'available_balance': 0.0}
+    
+    async def get_market_data(self, contract: dict) -> dict:
+        """Get market data for a contract."""
+        if not self.is_connected():
+            await self.connect()
+        
+        try:
+            # Create IB contract
+            from ib_insync import Forex
+            ib_contract = Forex(pair=f"{contract['symbol']}{contract['currency']}")
+            
+            # Request market data
+            ticker = self.ib.reqMktData(ib_contract)
+            await asyncio.sleep(2)  # Wait for data
+            
+            return {
+                'bid': ticker.bid or 0.0,
+                'ask': ticker.ask or 0.0,
+                'last': ticker.last or 0.0,
+                'timestamp': ticker.time
+            }
+        except Exception as e:
+            log.error(f"Failed to get market data: {e}")
+            return {'bid': 0.0, 'ask': 0.0, 'last': 0.0}
 
 # Example usage
 async def main():

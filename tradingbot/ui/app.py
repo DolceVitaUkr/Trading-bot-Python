@@ -44,6 +44,22 @@ runtime = RuntimeController()
 validator = ValidationManager()
 pair_manager = PairManager() if PairManager else None
 
+# Activity tracking
+from collections import deque
+from datetime import datetime
+activity_log = deque(maxlen=100)  # Keep last 100 activities
+
+def log_activity(source: str, message: str, activity_type: str = "info"):
+    """Add activity to the log."""
+    activity = {
+        "timestamp": datetime.now().isoformat(),
+        "source": source,
+        "message": message,
+        "type": activity_type
+    }
+    activity_log.append(activity)
+    print(f"[ACTIVITY] {source}: {message}")
+
 # Initialize exchange connectors
 bybit_crypto = None
 bybit_futures = None
@@ -54,8 +70,10 @@ if ExchangeBybit:
         print("[INFO] Initializing Bybit connections...")
         bybit_crypto = ExchangeBybit("CRYPTO_SPOT", "live")
         print("[SUCCESS] Bybit Crypto connection initialized")
+        log_activity("BYBIT", "Crypto Spot connection initialized", "success")
         bybit_futures = ExchangeBybit("CRYPTO_FUTURES", "live")
         print("[SUCCESS] Bybit Futures connection initialized")
+        log_activity("BYBIT", "Crypto Futures connection initialized", "success")
     except Exception as e:
         print(f"[ERROR] Warning: Could not initialize Bybit connections: {e}")
         print(f"[ERROR] This means live trading will not be available")
@@ -92,7 +110,7 @@ def create_app() -> FastAPI:
     
     @app.get("/", response_class=HTMLResponse)
     def dashboard(request: Request):
-        return templates.TemplateResponse("dashboard.html", {"request": request})
+        return templates.TemplateResponse("dashboard-new.html", {"request": request})
 
     @app.get("/status")
     def status():
@@ -418,60 +436,20 @@ def create_app() -> FastAPI:
     def get_recent_activity():
         """Get recent bot activity and status updates."""
         try:
-            activities = []
-            state = runtime.get_state()
+            # Return the actual activity log
+            activities = list(activity_log)
             
-            # Add current bot status
-            if state.get('global', {}).get('kill_switch', False):
-                activities.append({
-                    "type": "warning",
-                    "message": "Kill switch is ACTIVE - trading disabled",
-                    "timestamp": "2025-08-25T18:25:30Z"
-                })
-            else:
-                activities.append({
-                    "type": "info", 
-                    "message": "Bot operational - monitoring markets",
-                    "timestamp": "2025-08-25T18:25:30Z"
-                })
-            
-            # Check trading mode
-            config = runtime.config.config.get("safety", {})
-            mode = config.get("START_MODE", "paper")
-            if mode == "paper":
+            # If no activities yet, add a default one
+            if not activities:
                 activities.append({
                     "type": "info",
-                    "message": "Paper trading mode active",
-                    "timestamp": "2025-08-25T18:25:30Z"
+                    "message": "Bot operational - monitoring markets",
+                    "timestamp": datetime.now().isoformat(),
+                    "source": "SYSTEM"
                 })
-            else:
-                activities.append({
-                    "type": "warning",
-                    "message": "LIVE trading mode active", 
-                    "timestamp": "2025-08-25T18:25:30Z"
-                })
-                
-            # Check telegram status
-            telegram_config = runtime.config.config.get("telegram", {})
-            if telegram_config.get("token") and telegram_config.get("chat_id"):
-                activities.append({
-                    "type": "success",
-                    "message": "Telegram notifications configured",
-                    "timestamp": "2025-08-25T18:25:30Z"
-                })
-            else:
-                activities.append({
-                    "type": "warning",
-                    "message": "Telegram notifications disabled",
-                    "timestamp": "2025-08-25T18:25:30Z"
-                })
-                
-            # Add scanning status
-            activities.append({
-                "type": "info",
-                "message": "Scanning markets for trading opportunities",
-                "timestamp": "2025-08-25T18:25:30Z"
-            })
+            
+            # Return in reverse order (newest first)
+            activities.reverse()
             
             return {"activities": activities}
         except Exception as e:
@@ -592,6 +570,7 @@ def create_app() -> FastAPI:
                             "history": [{"balance": portfolio_state.total_balance_usd}]
                         }
                         print(f"Wallet data: {live_wallet_data}")
+                        log_activity("BYBIT", f"{asset.upper()} wallet connected - Balance: ${portfolio_state.total_balance_usd:.2f}", "success")
                     else:
                         connection_status = "no_balance"
                         print("No balance found in any account type")
@@ -806,64 +785,6 @@ def create_app() -> FastAPI:
                     "live_approved": 0
                 }
             }
-
-    @app.post("/shutdown")
-    async def shutdown_server():
-        """Shutdown the server gracefully."""
-        import os
-        import signal
-        import threading
-        
-        def shutdown():
-            # Give time for response to be sent
-            import time
-            time.sleep(1)
-            # Send shutdown signal
-            os.kill(os.getpid(), signal.SIGTERM)
-        
-        # Run shutdown in background thread
-        threading.Thread(target=shutdown).start()
-        
-        return {"status": "shutting down", "message": "Server is shutting down..."}
-    
-    @app.post("/asset/{asset}/start/{mode}")
-    def start_asset_trading_endpoint(asset: str, mode: str):
-        """Start trading for specific asset and mode."""
-        valid_assets = ['crypto', 'futures', 'forex', 'forex_options']
-        valid_modes = ['paper', 'live']
-        
-        if asset not in valid_assets:
-            raise HTTPException(status_code=400, detail=f"Invalid asset. Must be one of: {valid_assets}")
-        if mode not in valid_modes:
-            raise HTTPException(status_code=400, detail=f"Invalid mode. Must be one of: {valid_modes}")
-        
-        # Temporarily just return success to debug the issue
-        return {
-            "asset": asset,
-            "mode": mode,
-            "status": "started"
-        }
-
-    @app.post("/asset/{asset}/stop/{mode}")
-    def stop_asset_trading_endpoint(asset: str, mode: str):
-        """Stop trading for specific asset and mode."""
-        valid_assets = ['crypto', 'futures', 'forex', 'forex_options']
-        valid_modes = ['paper', 'live']
-        
-        if asset not in valid_assets:
-            raise HTTPException(status_code=400, detail=f"Invalid asset. Must be one of: {valid_assets}")
-        if mode not in valid_modes:
-            raise HTTPException(status_code=400, detail=f"Invalid mode. Must be one of: {valid_modes}")
-        
-        try:
-            # Skip runtime controller for now
-            return {
-                "asset": asset,
-                "mode": mode,
-                "status": "stopped"
-            }
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"Failed to stop {asset} {mode} trading: {exc}")
 
     @app.post("/asset/{asset}/kill")
     def kill_asset_trading(asset: str):
@@ -1739,6 +1660,86 @@ def create_app() -> FastAPI:
             
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"Failed to reset model: {exc}")
+
+    @app.post("/shutdown")
+    async def shutdown_server():
+        """Shutdown the server gracefully."""
+        import os
+        import signal
+        import threading
+        
+        def shutdown():
+            # Give time for response to be sent
+            import time
+            time.sleep(1)
+            # Send shutdown signal
+            os.kill(os.getpid(), signal.SIGTERM)
+        
+        # Run shutdown in background thread
+        threading.Thread(target=shutdown).start()
+        
+        return {"status": "shutting down", "message": "Server is shutting down..."}
+    
+    @app.post("/asset/{asset}/start/{mode}")
+    def start_asset_trading_endpoint(asset: str, mode: str):
+        """Start trading for specific asset and mode."""
+        valid_assets = ['crypto', 'futures', 'forex', 'forex_options']
+        valid_modes = ['paper', 'live']
+        
+        if asset not in valid_assets:
+            raise HTTPException(status_code=400, detail=f"Invalid asset. Must be one of: {valid_assets}")
+        if mode not in valid_modes:
+            raise HTTPException(status_code=400, detail=f"Invalid mode. Must be one of: {valid_modes}")
+        
+        try:
+            # Update runtime to start trading for this asset
+            runtime.start_asset_trading(asset.upper(), mode)
+            
+            # Log activity
+            log_activity(asset.upper(), f"Starting {mode} trading...", "info")
+            
+            # If paper trading, initialize paper trader
+            if mode == "paper" and get_paper_trader:
+                paper_trader = get_paper_trader(asset)
+                print(f"\n[START] {asset.upper()} Paper Trading Started")
+                print(f"[BALANCE] Initial Balance: ${paper_trader.balance:.2f}")
+                print(f"[STATUS] Paper trading is now ACTIVE")
+                
+                # Log more detailed activity
+                log_activity(asset.upper(), f"Paper trading started - Balance: ${paper_trader.balance:.2f}", "success")
+            
+            return {
+                "asset": asset,
+                "mode": mode,
+                "status": "started"
+            }
+        except Exception as exc:
+            import traceback
+            print(f"\n[ERROR] Error in start_asset_trading_endpoint: {exc}")
+            print(f"Exception type: {type(exc).__name__}")
+            traceback.print_exc()
+            raise HTTPException(status_code=500, detail=f"Failed to start {asset} {mode} trading: {str(exc)}")
+
+    @app.post("/asset/{asset}/stop/{mode}")
+    def stop_asset_trading_endpoint(asset: str, mode: str):
+        """Stop trading for specific asset and mode."""
+        valid_assets = ['crypto', 'futures', 'forex', 'forex_options']
+        valid_modes = ['paper', 'live']
+        
+        if asset not in valid_assets:
+            raise HTTPException(status_code=400, detail=f"Invalid asset. Must be one of: {valid_assets}")
+        if mode not in valid_modes:
+            raise HTTPException(status_code=400, detail=f"Invalid mode. Must be one of: {valid_modes}")
+        
+        try:
+            runtime.stop_asset_trading(asset.upper(), mode)
+            return {
+                "asset": asset,
+                "mode": mode,
+                "status": "stopped"
+            }
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Failed to stop {asset} {mode} trading: {exc}")
 
     return app
 

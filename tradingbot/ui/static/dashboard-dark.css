@@ -786,6 +786,95 @@ body {
     }
 }
 
+/* Activity Footer Styles */
+.activity-footer {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: var(--panel-opaque);
+    backdrop-filter: blur(20px);
+    border-top: 1px solid var(--line);
+    max-height: 200px;
+    z-index: 100;
+    box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.3);
+}
+
+.activity-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--line);
+}
+
+.activity-header h4 {
+    margin: 0;
+    color: var(--text);
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.activity-list {
+    max-height: 140px;
+    overflow-y: auto;
+    padding: 8px 20px;
+}
+
+.activity-item {
+    display: flex;
+    gap: 12px;
+    padding: 6px 0;
+    font-size: 12px;
+    color: var(--muted);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.activity-item:last-child {
+    border-bottom: none;
+}
+
+.activity-time {
+    color: var(--muted);
+    min-width: 60px;
+    font-family: monospace;
+}
+
+.activity-source {
+    color: var(--cobalt);
+    font-weight: 600;
+    min-width: 80px;
+}
+
+.activity-message {
+    flex: 1;
+    color: var(--text);
+}
+
+.activity-item.error .activity-source {
+    color: var(--error);
+}
+
+.activity-item.warning .activity-source {
+    color: var(--warn);
+}
+
+.activity-item.success .activity-source {
+    color: var(--success);
+}
+
+.no-data {
+    text-align: center;
+    padding: 20px;
+    color: var(--muted);
+    font-size: 13px;
+}
+
+/* Make sure main content doesn't get hidden behind footer */
+.dashboard-container {
+    padding-bottom: 220px;
+}
+
 /* Print Styles */
 @media print {
     .nav-tabs,

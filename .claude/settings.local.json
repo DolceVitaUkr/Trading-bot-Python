@@ -22,7 +22,8 @@
       "Bash(stop_server.bat)",
       "Bash(dir:*)",
       "Bash(del test_paper_trader.py)",
-      "Bash(./stop_server.bat)"
+      "Bash(./stop_server.bat)",
+      "Bash(./kill_bot.bat)"
     ],
     "deny": [],
     "ask": [],

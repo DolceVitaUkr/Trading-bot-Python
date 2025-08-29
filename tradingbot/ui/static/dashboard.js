@@ -207,7 +207,8 @@ class MultiAssetDashboard {
             try {
                 await Promise.all([
                     this.updateGlobalStats(),
-                    this.updateAllAssets()
+                    this.updateAllAssets(),
+                    this.updateRecentActivities()
                 ]);
                 
                 // Reset reconnect attempts on successful update
@@ -274,6 +275,53 @@ class MultiAssetDashboard {
     async updateAllAssets() {
         const updatePromises = this.assets.map(asset => this.updateAsset(asset));
         await Promise.all(updatePromises);
+    }
+    
+    async updateRecentActivities() {
+        try {
+            const response = await fetch(`${this.baseUrl}/activity/recent`);
+            const data = await response.json();
+            
+            console.log('Activity data received:', data);  // Debug log
+            
+            const activityList = document.getElementById('activityList');
+            if (!activityList) {
+                console.error('Activity list element not found');
+                return;
+            }
+            
+            if (data.activities && data.activities.length > 0) {
+                // Clear existing content
+                activityList.innerHTML = '';
+                
+                // Add each activity
+                data.activities.slice(0, 20).forEach(activity => {
+                    const activityItem = document.createElement('div');
+                    activityItem.className = `activity-item ${activity.type || 'info'}`;
+                    
+                    const time = new Date(activity.timestamp).toLocaleTimeString('en-US', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        hour12: false
+                    });
+                    
+                    activityItem.innerHTML = `
+                        <span class="activity-time">${time}</span>
+                        <span class="activity-source">[${activity.source || 'SYSTEM'}]</span>
+                        <span class="activity-message">${activity.message}</span>
+                    `;
+                    
+                    activityList.appendChild(activityItem);
+                });
+            } else {
+                console.log('No activities found');
+                if (activityList.children.length === 0) {
+                    activityList.innerHTML = '<div class="no-data">No recent activity</div>';
+                }
+            }
+        } catch (error) {
+            console.error('Failed to update activities:', error);
+        }
     }
 
     async updateAsset(asset) {
