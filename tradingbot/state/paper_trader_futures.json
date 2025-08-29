@@ -1,5 +1,5 @@
 {
-  "balance": 876.7582660070626,
+  "balance": -14000.0,
   "starting_balance": 1000.0,
   "positions": [
     {
@@ -1274,339 +1274,55 @@
   ],
   "pnl_history": [
     {
-      "timestamp": "2025-08-26T19:32:05.204726",
+      "timestamp": "2025-08-29T11:53:06.408094",
       "balance": 1000.0
-    },
-    {
-      "timestamp": "2025-08-26T20:35:39.971584",
-      "balance": 1019.632386444888
-    },
-    {
-      "timestamp": "2025-08-26T20:30:39.971584",
-      "balance": 1021.9373234411432
-    },
-    {
-      "timestamp": "2025-08-26T20:25:39.971584",
-      "balance": 1015.5261085553034
-    },
-    {
-      "timestamp": "2025-08-26T20:20:39.971584",
-      "balance": 1010.0199527785084
-    },
-    {
-      "timestamp": "2025-08-26T20:15:39.971584",
-      "balance": 995.1898209343171
-    },
-    {
-      "timestamp": "2025-08-26T20:35:43.321427",
-      "balance": 991.7050319340846,
-      "pnl": -3.4847890002326,
-      "trade_id": "paper_1"
-    },
-    {
-      "timestamp": "2025-08-26T20:35:46.872111",
-      "balance": 980.3809148152119,
-      "pnl": -11.324117118872637,
-      "trade_id": "paper_2"
-    },
-    {
-      "timestamp": "2025-08-26T20:35:50.390854",
-      "balance": 970.3574329913963,
-      "pnl": -10.02348182381555,
-      "trade_id": "paper_3"
-    },
-    {
-      "timestamp": "2025-08-27T00:52:46.768856",
-      "balance": 817.980696239224,
-      "pnl": -152.37673675217232,
-      "trade_id": "paper_4"
-    },
-    {
-      "timestamp": "2025-08-27T00:53:05.986368",
-      "balance": 817.980696239224,
-      "pnl": 0.0,
-      "trade_id": "paper_5"
-    },
-    {
-      "timestamp": "2025-08-27T00:53:18.002615",
-      "balance": 817.980696239224,
-      "pnl": 0.0,
-      "trade_id": "paper_6"
-    },
-    {
-      "timestamp": "2025-08-27T00:53:27.003713",
-      "balance": 817.980696239224,
-      "pnl": 0.0,
-      "trade_id": "paper_7"
-    },
-    {
-      "timestamp": "2025-08-27T00:53:44.986094",
-      "balance": 817.980696239224,
-      "pnl": 0.0,
-      "trade_id": "paper_8"
-    },
-    {
-      "timestamp": "2025-08-27T00:54:23.350734",
-      "balance": 817.980696239224,
-      "pnl": 0.0,
-      "trade_id": "paper_9"
-    },
-    {
-      "timestamp": "2025-08-27T00:54:35.343376",
-      "balance": 817.980696239224,
-      "pnl": 0.0,
-      "trade_id": "paper_10"
-    },
-    {
-      "timestamp": "2025-08-27T00:54:53.353380",
-      "balance": 817.980696239224,
-      "pnl": 0.0,
-      "trade_id": "paper_11"
-    },
-    {
-      "timestamp": "2025-08-27T00:56:46.287737",
-      "balance": 817.980696239224,
-      "pnl": 0.0,
-      "trade_id": "paper_12"
-    },
-    {
-      "timestamp": "2025-08-27T01:04:30.683101",
-      "balance": 817.929968894108,
-      "pnl": -0.05072734511605782,
-      "trade_id": "paper_13"
-    },
-    {
-      "timestamp": "2025-08-27T01:23:45.210326",
-      "balance": 817.898570811471,
-      "pnl": -0.03139808263700167,
-      "trade_id": "paper_14"
-    },
-    {
-      "timestamp": "2025-08-27T01:24:45.210231",
-      "balance": 817.898570811471,
-      "pnl": 0.0,
-      "trade_id": "paper_15"
-    },
-    {
-      "timestamp": "2025-08-27T01:26:30.146553",
-      "balance": 835.6550606406695,
-      "pnl": 17.756489829198433,
-      "trade_id": "paper_16"
-    },
-    {
-      "timestamp": "2025-08-27T01:26:33.526753",
-      "balance": 829.2057111470455
-    },
-    {
-      "timestamp": "2025-08-27T01:21:33.526753",
-      "balance": 820.0248053697786
-    },
-    {
-      "timestamp": "2025-08-27T01:16:33.526753",
-      "balance": 869.9128990695591
-    },
-    {
-      "timestamp": "2025-08-27T01:11:33.526753",
-      "balance": 888.3096836413674
-    },
-    {
-      "timestamp": "2025-08-27T01:06:33.526753",
-      "balance": 931.2969941322856
-    },
-    {
-      "timestamp": "2025-08-27T01:26:36.856585",
-      "balance": 948.1378425731799,
-      "pnl": 16.840848440894295,
-      "trade_id": "paper_17"
-    },
-    {
-      "timestamp": "2025-08-27T01:26:40.393365",
-      "balance": 949.7260248923425,
-      "pnl": 1.5881823191625717,
-      "trade_id": "paper_18"
-    },
-    {
-      "timestamp": "2025-08-27T01:26:41.395453",
-      "balance": 949.7260248923425,
-      "pnl": 0.0,
-      "trade_id": "paper_19"
-    },
-    {
-      "timestamp": "2025-08-27T01:26:48.136550",
-      "balance": 949.7260248923425,
-      "pnl": 0.0,
-      "trade_id": "paper_20"
-    },
-    {
-      "timestamp": "2025-08-27T07:46:16.081154",
-      "balance": 816.4376787518904,
-      "pnl": -133.288346140452,
-      "trade_id": "paper_21"
-    },
-    {
-      "timestamp": "2025-08-27T07:46:16.081154",
-      "balance": 846.3342059661086,
-      "pnl": 29.896527214218164,
-      "trade_id": "paper_22"
-    },
-    {
-      "timestamp": "2025-08-27T07:47:13.080118",
-      "balance": 846.3342059661086,
-      "pnl": 0.0,
-      "trade_id": "paper_23"
-    },
-    {
-      "timestamp": "2025-08-27T07:47:38.713054",
-      "balance": 846.3342059661086,
-      "pnl": 0.0,
-      "trade_id": "paper_24"
-    },
-    {
-      "timestamp": "2025-08-27T07:47:42.048256",
-      "balance": 846.3342059661086,
-      "pnl": 0.0,
-      "trade_id": "paper_25"
-    },
-    {
-      "timestamp": "2025-08-27T07:48:41.729860",
-      "balance": 846.3342059661086,
-      "pnl": 0.0,
-      "trade_id": "paper_26"
-    },
-    {
-      "timestamp": "2025-08-27T07:48:53.725243",
-      "balance": 846.3342059661086,
-      "pnl": 0.0,
-      "trade_id": "paper_27"
-    },
-    {
-      "timestamp": "2025-08-27T08:12:07.857242",
-      "balance": 845.3646314901465,
-      "pnl": -0.9695744759620486,
-      "trade_id": "paper_28"
-    },
-    {
-      "timestamp": "2025-08-27T08:12:55.854184",
-      "balance": 845.3646314901465,
-      "pnl": 0.0,
-      "trade_id": "paper_29"
-    },
-    {
-      "timestamp": "2025-08-27T08:28:17.035045",
-      "balance": 857.374736991766,
-      "pnl": 12.010105501619456,
-      "trade_id": "paper_30"
-    },
-    {
-      "timestamp": "2025-08-27T08:28:20.084330",
-      "balance": 842.9061134346855
-    },
-    {
-      "timestamp": "2025-08-27T08:23:20.084330",
-      "balance": 872.9005569004111
-    },
-    {
-      "timestamp": "2025-08-27T08:18:20.084330",
-      "balance": 903.7315700270082
-    },
-    {
-      "timestamp": "2025-08-27T08:13:20.084330",
-      "balance": 930.6792091038784
-    },
-    {
-      "timestamp": "2025-08-27T08:08:20.084330",
-      "balance": 930.9605579403456
-    },
-    {
-      "timestamp": "2025-08-27T08:28:23.035448",
-      "balance": 930.9605579403456,
-      "pnl": 0.0,
-      "trade_id": "paper_31"
-    },
-    {
-      "timestamp": "2025-08-27T08:28:23.423182",
-      "balance": 935.7498664434767,
-      "pnl": 4.789308503131081,
-      "trade_id": "paper_31"
-    },
-    {
-      "timestamp": "2025-08-27T08:28:26.953751",
-      "balance": 926.5180421641123,
-      "pnl": -9.231824279364279,
-      "trade_id": "paper_33"
-    },
-    {
-      "timestamp": "2025-08-27T08:28:30.484236",
-      "balance": 926.415639579489,
-      "pnl": -0.10240258462325612,
-      "trade_id": "paper_34"
-    },
-    {
-      "timestamp": "2025-08-27T08:28:41.024482",
-      "balance": 926.415639579489,
-      "pnl": 0.0,
-      "trade_id": "paper_35"
-    },
-    {
-      "timestamp": "2025-08-27T08:28:44.025932",
-      "balance": 926.415639579489,
-      "pnl": 0.0,
-      "trade_id": "paper_36"
-    },
-    {
-      "timestamp": "2025-08-27T08:28:47.023993",
-      "balance": 926.415639579489,
-      "pnl": 0.0,
-      "trade_id": "paper_37"
-    },
-    {
-      "timestamp": "2025-08-27T08:29:23.001673",
-      "balance": 926.415639579489,
-      "pnl": 0.0,
-      "trade_id": "paper_38"
-    },
-    {
-      "timestamp": "2025-08-27T08:29:59.634450",
-      "balance": 926.415639579489,
-      "pnl": 0.0,
-      "trade_id": "paper_39"
-    },
-    {
-      "timestamp": "2025-08-27T08:30:44.634128",
-      "balance": 926.415639579489,
-      "pnl": 0.0,
-      "trade_id": "paper_40"
-    },
-    {
-      "timestamp": "2025-08-27T09:04:39.637924",
-      "balance": 876.7582660070626,
-      "pnl": -49.65737357242644,
-      "trade_id": "paper_41"
-    },
-    {
-      "timestamp": "2025-08-27T12:59:24.564423",
-      "balance": 876.7582660070626,
-      "pnl": 0.0,
-      "trade_id": "paper_42"
-    },
-    {
-      "timestamp": "2025-08-27T13:00:12.564757",
-      "balance": 876.7582660070626,
-      "pnl": 0.0,
-      "trade_id": "paper_43"
-    },
-    {
-      "timestamp": "2025-08-27T13:00:21.563594",
-      "balance": 876.7582660070626,
-      "pnl": 0.0,
-      "trade_id": "paper_44"
-    },
-    {
-      "timestamp": "2025-08-27T13:00:36.564632",
-      "balance": 876.7582660070626,
-      "pnl": 0.0,
-      "trade_id": "paper_45"
     }
   ],
-  "last_update": "2025-08-27T15:50:31.309967"
+  "violations_log": [
+    {
+      "type": "MARKET_DATA_VIOLATION",
+      "error": "No Bybit connection - cannot proceed without real data",
+      "timestamp": "2025-08-29T11:45:14.116183",
+      "penalty": 10000.0,
+      "violation_id": 1
+    },
+    {
+      "type": "STARTUP_FAILURE",
+      "error": "No Bybit connection - cannot proceed without real data",
+      "timestamp": "2025-08-29T11:45:14.116183",
+      "penalty": 5000.0,
+      "violation_id": 2
+    },
+    {
+      "type": "MARKET_DATA_VIOLATION",
+      "error": "No Bybit connection - cannot proceed without real data",
+      "timestamp": "2025-08-29T11:45:28.247174",
+      "penalty": 10000.0,
+      "violation_id": 3
+    },
+    {
+      "type": "STARTUP_FAILURE",
+      "error": "No Bybit connection - cannot proceed without real data",
+      "timestamp": "2025-08-29T11:45:28.250180",
+      "penalty": 5000.0,
+      "violation_id": 4
+    },
+    {
+      "type": "MARKET_DATA_VIOLATION",
+      "error": "No Bybit connection - cannot proceed without real data",
+      "timestamp": "2025-08-29T11:54:57.997087",
+      "penalty": 10000.0,
+      "violation_id": 5
+    },
+    {
+      "type": "STARTUP_FAILURE",
+      "error": "No Bybit connection - cannot proceed without real data",
+      "timestamp": "2025-08-29T11:54:58.002087",
+      "penalty": 5000.0,
+      "violation_id": 6
+    }
+  ],
+  "violation_count": 6,
+  "strict_enforcement": true,
+  "last_update": "2025-08-29T11:54:58.002087"
 }

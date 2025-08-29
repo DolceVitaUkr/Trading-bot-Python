@@ -1,5 +1,5 @@
 {
-  "balance": 998.3808486539674,
+  "balance": -14001.619151346033,
   "starting_balance": 1000.0,
   "positions": [
     {
@@ -1329,5 +1329,23 @@
       "trade_id": "paper_34"
     }
   ],
-  "last_update": "2025-08-27T15:50:31.323414"
+  "violations_log": [
+    {
+      "type": "MARKET_DATA_VIOLATION",
+      "error": "No Bybit connection - cannot proceed without real data",
+      "timestamp": "2025-08-29T11:45:11.009642",
+      "penalty": 10000.0,
+      "violation_id": 1
+    },
+    {
+      "type": "STARTUP_FAILURE",
+      "error": "No Bybit connection - cannot proceed without real data",
+      "timestamp": "2025-08-29T11:45:11.009642",
+      "penalty": 5000.0,
+      "violation_id": 2
+    }
+  ],
+  "violation_count": 2,
+  "strict_enforcement": true,
+  "last_update": "2025-08-29T11:45:11.009642"
 }

@@ -35,8 +35,14 @@ class RuntimeController:
 
     # ------------------------------------------------------------------
     def _save(self) -> None:
-        with open(self.state_path, "w", encoding="utf-8") as fh:
-            json.dump(self.state, fh, indent=2)
+        try:
+            # Convert Path to string for Windows compatibility
+            file_path = str(self.state_path)
+            with open(file_path, "w", encoding="utf-8") as fh:
+                json.dump(self.state, fh, indent=2)
+        except Exception as e:
+            print(f"Error saving state to {self.state_path}: {e}")
+            raise
 
     # ------------------------------------------------------------------
     def enable_live(self, asset: str) -> None:
@@ -88,7 +94,7 @@ class RuntimeController:
         trading_state = self.state.setdefault("trading", {})
         trading_state[asset] = {"status": "running", "mode": mode}
         self._save()
-        self.notifier.send(f"Started {asset} {mode} trading")
+        # self.notifier.send(f"Started {asset} {mode} trading")
         
     def stop_asset_trading(self, asset: str, mode: str) -> None:
         """Stop trading for specific asset and mode."""
@@ -96,7 +102,37 @@ class RuntimeController:
         if asset in trading_state:
             trading_state[asset]["status"] = "stopped"
         self._save()
-        self.notifier.send(f"Stopped {asset} {mode} trading")
+        # self.notifier.send(f"Stopped {asset} {mode} trading")
+        
+    def enable_trading(self, asset: str, mode: str) -> None:
+        """Enable trading for specific asset and mode."""
+        trading_state = self.state.setdefault("trading", {})
+        asset_state = trading_state.setdefault(asset, {})
+        asset_state[f"{mode}_enabled"] = True
+        self._save()
+        # self.notifier.send(f"{asset} {mode} trading enabled")
+        
+    def disable_trading(self, asset: str, mode: str) -> None:
+        """Disable trading for specific asset and mode."""
+        trading_state = self.state.setdefault("trading", {})
+        asset_state = trading_state.setdefault(asset, {})
+        asset_state[f"{mode}_enabled"] = False
+        self._save()
+        # self.notifier.send(f"{asset} {mode} trading disabled")
+        
+    def pause_asset_trading(self, asset: str) -> None:
+        """Temporarily pause trading for maintenance."""
+        trading_state = self.state.setdefault("trading", {})
+        asset_state = trading_state.setdefault(asset, {})
+        asset_state["paused"] = True
+        self._save()
+        
+    def resume_asset_trading(self, asset: str) -> None:
+        """Resume trading after maintenance."""
+        trading_state = self.state.setdefault("trading", {})
+        asset_state = trading_state.setdefault(asset, {})
+        asset_state["paused"] = False
+        self._save()
         
     def kill_asset_trading(self, asset: str) -> None:
         """Kill switch for specific asset."""

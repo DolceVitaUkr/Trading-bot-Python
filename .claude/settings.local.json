@@ -15,12 +15,25 @@
       "Bash(uvicorn:*)",
       "Bash(grep:*)",
       "Bash(killall:*)",
-      "Bash(node:*)"
+      "Bash(node:*)",
+      "mcp__ide__getDiagnostics",
+      "mcp__ide__executeCode",
+      "Bash(taskkill:*)",
+      "Bash(stop_server.bat)",
+      "Bash(dir:*)",
+      "Bash(del test_paper_trader.py)",
+      "Bash(./stop_server.bat)"
     ],
     "deny": [],
     "ask": [],
     "additionalDirectories": [
       "D:\\d\\githubtradebot"
     ]
+  },
+  "model": "claude-opus-4-20250514",
+  "mcpServers": {
+    "playwright": {
+      "url": "http://127.0.0.1:8931/mcp"
+    }
   }
 }

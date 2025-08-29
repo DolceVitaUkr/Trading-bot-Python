@@ -5,11 +5,11 @@
   },
   "trading": {
     "CRYPTO": {
-      "status": "stopped",
+      "status": "running",
       "mode": "paper"
     },
     "FUTURES": {
-      "status": "stopped",
+      "status": "running",
       "mode": "paper"
     },
     "FOREX": {

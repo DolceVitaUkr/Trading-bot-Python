@@ -73,6 +73,10 @@
                     <i class="fas fa-stop"></i>
                     Emergency Stop
                 </button>
+                <button class="shutdown-btn" onclick="shutdownServer()" style="margin-left: 10px;">
+                    <i class="fas fa-power-off"></i>
+                    Shutdown
+                </button>
             </div>
         </header>
 
@@ -106,7 +110,13 @@
                                 <span class="status-text">Idle</span>
                             </div>
                             <div class="controls">
-                                <button class="btn btn-start" id="crypto-paper-start" onclick="toggleTrading('crypto', 'paper')">Start</button>
+                                <div class="trading-toggle">
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" id="crypto-paper-toggle" onchange="handleTradingToggle('crypto', 'paper', this.checked)">
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                    <span class="toggle-label">Paper Trading</span>
+                                </div>
                                 <button class="btn btn-kill" onclick="killAsset('crypto')">Kill</button>
                             </div>
                         </div>
@@ -309,7 +319,13 @@
                                 <span class="status-text">Idle</span>
                             </div>
                             <div class="controls">
-                                <button class="btn btn-start disabled" id="crypto-live-start" onclick="toggleTrading('crypto', 'live')" disabled>Start</button>
+                                <div class="trading-toggle">
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" id="crypto-live-toggle" onchange="handleTradingToggle('crypto', 'live', this.checked)" disabled>
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                    <span class="toggle-label">Live Trading</span>
+                                </div>
                                 <button class="btn btn-kill" onclick="killAsset('crypto')">Kill</button>
                             </div>
                         </div>
@@ -477,7 +493,13 @@
                     <div class="section-header">
                         <h4><i class="fas fa-flask"></i> Strategy Development</h4>
                         <div class="controls">
-                            <button class="btn btn-start" id="futures-paper-start" onclick="toggleTrading('futures', 'paper')">Start</button>
+                            <div class="trading-toggle">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="futures-paper-toggle" onchange="handleTradingToggle('futures', 'paper', this.checked)">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span class="toggle-label">Paper Trading</span>
+                            </div>
                             <button class="btn btn-kill" onclick="killAsset('futures')">Kill</button>
                         </div>
                     </div>
@@ -651,7 +673,13 @@
                     <div class="section-header">
                         <h4><i class="fas fa-rocket"></i> Live Trading</h4>
                         <div class="controls">
-                            <button class="btn btn-start disabled" id="futures-live-start" onclick="toggleTrading('futures', 'live')" disabled>Start</button>
+                            <div class="trading-toggle">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="futures-live-toggle" onchange="handleTradingToggle('futures', 'live', this.checked)" disabled>
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span class="toggle-label">Live Trading</span>
+                            </div>
                             <button class="btn btn-kill" onclick="killAsset('futures')">Kill</button>
                         </div>
                     </div>
@@ -710,7 +738,13 @@
                     <div class="section-header">
                         <h4><i class="fas fa-flask"></i> Strategy Development</h4>
                         <div class="controls">
-                            <button class="btn btn-start" id="forex-paper-start" onclick="toggleTrading('forex', 'paper')">Start</button>
+                            <div class="trading-toggle">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="forex-paper-toggle" onchange="handleTradingToggle('forex', 'paper', this.checked)">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span class="toggle-label">Paper Trading</span>
+                            </div>
                             <button class="btn btn-kill" onclick="killAsset('forex')">Kill</button>
                         </div>
                     </div>
@@ -883,7 +917,13 @@
                     <div class="section-header">
                         <h4><i class="fas fa-rocket"></i> Live Trading</h4>
                         <div class="controls">
-                            <button class="btn btn-start disabled" id="forex-live-start" onclick="toggleTrading('forex', 'live')" disabled>Start</button>
+                            <div class="trading-toggle">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="forex-live-toggle" onchange="handleTradingToggle('forex', 'live', this.checked)" disabled>
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span class="toggle-label">Live Trading</span>
+                            </div>
                             <button class="btn btn-kill" onclick="killAsset('forex')">Kill</button>
                         </div>
                     </div>
@@ -942,7 +982,13 @@
                     <div class="section-header">
                         <h4><i class="fas fa-flask"></i> Strategy Development</h4>
                         <div class="controls">
-                            <button class="btn btn-start" id="forex_options-paper-start" onclick="toggleTrading('forex_options', 'paper')">Start</button>
+                            <div class="trading-toggle">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="forex_options-paper-toggle" onchange="handleTradingToggle('forex_options', 'paper', this.checked)">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span class="toggle-label">Paper Trading</span>
+                            </div>
                             <button class="btn btn-kill" onclick="killAsset('forex_options')">Kill</button>
                         </div>
                     </div>
@@ -1159,7 +1205,13 @@
                     <div class="section-header">
                         <h4><i class="fas fa-rocket"></i> Live Trading</h4>
                         <div class="controls">
-                            <button class="btn btn-start disabled" id="forex_options-live-start" onclick="toggleTrading('forex_options', 'live')" disabled>Start</button>
+                            <div class="trading-toggle">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="forex_options-live-toggle" onchange="handleTradingToggle('forex_options', 'live', this.checked)" disabled>
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span class="toggle-label">Live Trading</span>
+                            </div>
                             <button class="btn btn-kill" onclick="killAsset('forex_options')">Kill</button>
                         </div>
                     </div>
@@ -1280,6 +1332,53 @@
         </div>
     </div>
 
+    <script>
+        // Shutdown server function
+        async function shutdownServer() {
+            const confirmed = confirm(
+                '⚠️ SHUTDOWN CONFIRMATION ⚠️\n\n' +
+                'Are you sure you want to shutdown the trading bot server?\n\n' +
+                'This will:\n' +
+                '• Stop all active trading\n' +
+                '• Close all connections\n' +
+                '• Terminate the server process\n\n' +
+                'Click OK to shutdown or Cancel to abort.'
+            );
+            
+            if (!confirmed) return;
+            
+            try {
+                const response = await fetch('/shutdown', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    alert('Server is shutting down...\n\nThe dashboard will stop responding shortly.');
+                    
+                    // Update UI to show shutdown state
+                    document.getElementById('server-status').querySelector('span').textContent = 'Shutting Down';
+                    document.getElementById('server-status').classList.add('offline');
+                    document.getElementById('systemStatus').querySelector('span').textContent = 'System Offline';
+                    document.getElementById('systemStatus').classList.remove('online');
+                    document.getElementById('systemStatus').classList.add('offline');
+                    
+                    // Disable all controls
+                    document.querySelectorAll('button, input[type="checkbox"]').forEach(el => {
+                        el.disabled = true;
+                    });
+                } else {
+                    alert('Failed to shutdown server. Please try again or stop it manually.');
+                }
+            } catch (error) {
+                console.error('Shutdown error:', error);
+                alert('Error shutting down server: ' + error.message);
+            }
+        }
+    </script>
     <script src="/static/dashboard.js?v=2025082704"></script>
 </body>
 </html>

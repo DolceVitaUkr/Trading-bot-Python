@@ -240,6 +240,8 @@ class MultiAssetDashboard {
 
             // Update global statistics
             this.updateElement('totalPnl', this.formatCurrency(data.total_pnl || 0));
+            this.updateElement('totalPaperWallet', this.formatCurrency(data.total_paper_wallet || 0));
+            this.updateElement('totalLiveWallet', this.formatCurrency(data.total_live_wallet || 0));
             this.updateElement('activeAssets', `${data.active_assets || 0}/4`);
             this.updateElement('totalPositions', data.total_positions || 0);
 
@@ -346,7 +348,7 @@ class MultiAssetDashboard {
 
     updateWallet(asset, type, walletData) {
         if (!walletData) {
-            this.updateElement(`${asset}-${type}-balance`, 'Total: $0.00 | Available: $0.00 | Used: $0.00');
+            this.updateElement(`${asset}-${type}-balance`, '$0.00');
             this.updateElement(`${asset}-${type}-change`, 'No data');
             return;
         }
@@ -355,14 +357,8 @@ class MultiAssetDashboard {
         const pnl = walletData.pnl || 0;
         const pnlPercent = walletData.pnl_percent || 0;
         
-        // Calculate used amount from open positions (if available)
-        const usedInPositions = walletData.used_in_positions || 0;
-        const availableBalance = walletData.available_balance || (balance - usedInPositions);
-
-        // Create enhanced balance display
-        const balanceDisplay = `Total: ${this.formatCurrency(balance)} | Available: ${this.formatCurrency(availableBalance)} | Used: ${this.formatCurrency(usedInPositions)}`;
-        
-        this.updateElement(`${asset}-${type}-balance`, balanceDisplay);
+        // Update balance display
+        this.updateElement(`${asset}-${type}-balance`, this.formatCurrency(balance));
         
         const changeElement = document.getElementById(`${asset}-${type}-change`);
         if (changeElement) {
@@ -617,49 +613,44 @@ class MultiAssetDashboard {
     }
 
     updateAssetControls(asset, status) {
-        const paperBtn = document.getElementById(`${asset}-paper-start`);
-        const liveBtn = document.getElementById(`${asset}-live-start`);
+        const paperToggle = document.getElementById(`${asset}-paper-toggle`);
+        const liveToggle = document.getElementById(`${asset}-live-toggle`);
         const killBtn = document.getElementById(`${asset}-kill`);
         const paperStatus = document.getElementById(`${asset}-paper-status`);
         const liveStatus = document.getElementById(`${asset}-live-status`);
 
-        if (!paperBtn || !liveBtn || !killBtn) return;
-
-        // Update paper trading button and status
-        if (status.paper_trading_active) {
-            paperBtn.textContent = 'STOP';
-            paperBtn.className = 'btn btn-start active';
-            this.updateTradingStatus(paperStatus, 'learning', 'Learning');
-        } else {
-            paperBtn.textContent = 'START';
-            paperBtn.className = 'btn btn-start';
-            this.updateTradingStatus(paperStatus, 'idle', 'Idle');
+        // Update paper trading toggle and status
+        if (paperToggle) {
+            paperToggle.checked = status.paper_trading_active || false;
+            this.updateTradingStatus(paperStatus, status.paper_trading_active ? 'learning' : 'idle', 
+                                   status.paper_trading_active ? 'Learning' : 'Idle');
         }
 
-        // Update live trading button and status
-        if (status.live_trading_active) {
-            liveBtn.textContent = 'STOP';
-            liveBtn.className = 'btn btn-start active';
-            liveBtn.disabled = false;
-            this.updateTradingStatus(liveStatus, 'active', 'Live Trading');
-        } else {
-            liveBtn.textContent = 'START';
-            liveBtn.className = 'btn btn-start';
-            liveBtn.disabled = !status.live_trading_approved;
-            this.updateTradingStatus(liveStatus, 'idle', 'Idle');
+        // Update live trading toggle and status
+        if (liveToggle) {
+            liveToggle.checked = status.live_trading_active || false;
+            liveToggle.disabled = !status.live_trading_approved;
+            this.updateTradingStatus(liveStatus, status.live_trading_active ? 'active' : 'idle', 
+                                   status.live_trading_active ? 'Live Trading' : 'Idle');
         }
 
         // Update kill switch
-        if (status.kill_switch_active) {
-            killBtn.textContent = 'KILLED';
-            killBtn.className = 'btn btn-kill disabled';
-            killBtn.disabled = true;
-            this.updateTradingStatus(paperStatus, 'error', 'Killed');
-            this.updateTradingStatus(liveStatus, 'error', 'Killed');
-        } else {
-            killBtn.textContent = 'KILL';
-            killBtn.className = 'btn btn-kill';
-            killBtn.disabled = false;
+        if (killBtn) {
+            if (status.kill_switch_active) {
+                killBtn.textContent = 'KILLED';
+                killBtn.className = 'btn btn-kill disabled';
+                killBtn.disabled = true;
+                this.updateTradingStatus(paperStatus, 'error', 'Killed');
+                this.updateTradingStatus(liveStatus, 'error', 'Killed');
+                
+                // Uncheck toggles when killed
+                if (paperToggle) paperToggle.checked = false;
+                if (liveToggle) liveToggle.checked = false;
+            } else {
+                killBtn.textContent = 'KILL';
+                killBtn.className = 'btn btn-kill';
+                killBtn.disabled = false;
+            }
         }
     }
     
@@ -756,35 +747,29 @@ class MultiAssetDashboard {
     updateServerStatus(status, text) {
         const statusElement = document.getElementById('server-status');
         if (statusElement) {
-            statusElement.className = `status-indicator ${status}`;
-            const textElement = statusElement.querySelector('span');
-            if (textElement) textElement.textContent = text;
+            statusElement.className = status === 'online' ? 'status-connected' : 'status-offline';
+            statusElement.textContent = text || (status === 'online' ? 'Online' : 'Offline');
         }
     }
     
     updateBybitStatus(status) {
         const statusElement = document.getElementById('bybit-status');
         if (statusElement) {
-            const statusClass = status === 'connected' ? 'online' : 
-                               status === 'auth_failed' ? 'auth-error' : 'offline';
+            const isConnected = status === 'connected';
+            statusElement.className = isConnected ? 'status-connected' : 'status-offline';
+            
             const statusText = status === 'connected' ? 'Connected' :
-                              status === 'auth_failed' ? 'Auth Error' : 'Offline';
-                              
-            statusElement.className = `status-indicator ${statusClass}`;
-            const textElement = statusElement.querySelector('span');
-            if (textElement) textElement.textContent = statusText;
+                              status === 'auth_failed' ? 'Auth Failed' : 'Offline';
+            statusElement.textContent = statusText;
         }
     }
     
     updateIbkrStatus(status) {
         const statusElement = document.getElementById('ibkr-status');
         if (statusElement) {
-            const statusClass = status === 'connected' ? 'online' : 'offline';
-            const statusText = status === 'connected' ? 'Connected' : 'Offline';
-                              
-            statusElement.className = `status-indicator ${statusClass}`;
-            const textElement = statusElement.querySelector('span');
-            if (textElement) textElement.textContent = statusText;
+            const isConnected = status === 'connected';
+            statusElement.className = isConnected ? 'status-connected' : 'status-offline';
+            statusElement.textContent = isConnected ? 'Connected' : 'Offline';
         }
     }
     
@@ -808,6 +793,36 @@ class MultiAssetDashboard {
         if (errorDisplay) {
             errorDisplay.style.display = 'none';
         }
+    }
+    
+    addActivityLog(asset, message, type = 'info') {
+        const activityContainer = document.getElementById(`${asset}-activity`);
+        if (!activityContainer) return;
+        
+        const now = new Date();
+        const timeStr = now.toLocaleTimeString('en-US', { 
+            hour: '2-digit', 
+            minute: '2-digit',
+            hour12: false 
+        });
+        
+        const activityLine = document.createElement('div');
+        activityLine.className = `activity-line ${type}`;
+        activityLine.innerHTML = `
+            <span class="activity-time">${timeStr}</span>
+            <span class="activity-text">${message}</span>
+        `;
+        
+        // Add to top and keep only last 4 entries
+        activityContainer.insertBefore(activityLine, activityContainer.firstChild);
+        while (activityContainer.children.length > 4) {
+            activityContainer.removeChild(activityContainer.lastChild);
+        }
+    }
+    
+    logActivity(asset, message, type = 'info') {
+        // Alias for addActivityLog - normalize asset name
+        this.addActivityLog(asset.toLowerCase(), message, type);
     }
 
     // Global functions for HTML onclick handlers
@@ -1794,6 +1809,30 @@ function toggleTrading(asset, mode) {
     } catch (error) {
         console.error('Toggle trading error:', error);
         alert(`Error starting ${asset} ${mode} trading: ${error.message}`);
+    }
+}
+
+// Handle toggle switch changes
+async function handleTradingToggle(asset, mode, isChecked) {
+    console.log(`Trading toggle changed: ${asset} ${mode} ${isChecked}`);
+    const toggleElement = document.getElementById(`${asset}-${mode}-toggle`);
+    
+    if (isChecked) {
+        try {
+            await dashboard.startAssetTrading(asset, mode);
+        } catch (error) {
+            console.error(`Failed to start ${asset} ${mode} trading:`, error);
+            // Revert toggle on failure
+            if (toggleElement) toggleElement.checked = false;
+        }
+    } else {
+        try {
+            await dashboard.stopAssetTrading(asset, mode);
+        } catch (error) {
+            console.error(`Failed to stop ${asset} ${mode} trading:`, error);
+            // Revert toggle on failure
+            if (toggleElement) toggleElement.checked = true;
+        }
     }
 }
 

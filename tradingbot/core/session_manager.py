@@ -23,7 +23,7 @@ from pathlib import Path
 
 from .interfaces import SessionState, Asset
 from .bankroll_manager import BankrollManager
-from .pnl_reconciler import PnlReconciler
+from .pnl_reconciler import PnLReconciler
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,7 @@ class SessionManager:
     
     def __init__(self, 
                  bankroll_manager: BankrollManager,
-                 pnl_reconciler: PnlReconciler,
+                 pnl_reconciler: PnLReconciler,
                  state_dir: str = "tradingbot/state"):
         self.bankroll_manager = bankroll_manager
         self.pnl_reconciler = pnl_reconciler

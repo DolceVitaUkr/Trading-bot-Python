@@ -1,0 +1,200 @@
+/* Safe Rollout Toggle Styles */
+.rollout-switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-right: 12px;
+}
+
+.rollout-label {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/* Paper Toggle - Safe Green */
+.rollout-toggle.paper {
+    position: relative;
+    display: inline-block;
+    width: 60px;
+    height: 28px;
+}
+
+.rollout-toggle.paper input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.rollout-toggle.paper .rollout-toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(107, 114, 128, 0.3);
+    transition: .4s;
+    border-radius: 28px;
+    border: 2px solid rgba(107, 114, 128, 0.5);
+}
+
+.rollout-toggle.paper .rollout-toggle-slider:before {
+    position: absolute;
+    content: "OFF";
+    height: 20px;
+    width: 20px;
+    left: 4px;
+    bottom: 2px;
+    background-color: white;
+    transition: .4s;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 8px;
+    font-weight: 700;
+    color: #6b7280;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.rollout-toggle.paper input:checked + .rollout-toggle-slider {
+    background-color: #10b981;
+    border-color: #10b981;
+}
+
+.rollout-toggle.paper input:checked + .rollout-toggle-slider:before {
+    transform: translateX(32px);
+    content: "ON";
+    color: #10b981;
+}
+
+/* Live Toggle - Dangerous Red with Extra Safety */
+.rollout-toggle.live {
+    position: relative;
+    display: inline-block;
+    width: 60px;
+    height: 28px;
+    opacity: 0.5;
+}
+
+.rollout-toggle.live input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.rollout-toggle.live .rollout-toggle-slider {
+    position: absolute;
+    cursor: not-allowed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(239, 68, 68, 0.1);
+    transition: .4s;
+    border-radius: 28px;
+    border: 2px solid rgba(239, 68, 68, 0.3);
+}
+
+.rollout-toggle.live .rollout-toggle-slider:before {
+    position: absolute;
+    content: "⚠️";
+    height: 20px;
+    width: 20px;
+    left: 4px;
+    bottom: 2px;
+    background-color: white;
+    transition: .4s;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.rollout-toggle.live input:enabled + .rollout-toggle-slider {
+    cursor: pointer;
+}
+
+.rollout-toggle.live input:enabled:checked + .rollout-toggle-slider {
+    background-color: #ef4444;
+    border-color: #ef4444;
+}
+
+.rollout-toggle.live input:enabled:checked + .rollout-toggle-slider:before {
+    transform: translateX(32px);
+    content: "LIVE";
+    font-size: 7px;
+    font-weight: 700;
+    color: #ef4444;
+}
+
+.rollout-toggle.live.enabled {
+    opacity: 1;
+}
+
+/* Visual separator between Paper and Live */
+.asset-rollout {
+    display: inline-flex;
+    gap: 24px;
+    align-items: center;
+    padding: 8px 16px;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 12px;
+    position: relative;
+}
+
+.asset-rollout::after {
+    content: "";
+    position: absolute;
+    width: 1px;
+    height: 24px;
+    background: var(--line);
+    left: 50%;
+    transform: translateX(-50%);
+}
+
+/* Activity Log Styles */
+.asset-activity {
+    padding: 12px 16px;
+    border-top: 1px solid var(--line);
+    background: rgba(0, 0, 0, 0.2);
+    font-size: 12px;
+}
+
+.activity-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+    color: var(--muted);
+}
+
+.activity-line .activity-time {
+    color: var(--muted);
+    font-size: 11px;
+    min-width: 50px;
+}
+
+.activity-line .activity-text {
+    flex: 1;
+}
+
+.activity-line.trade {
+    color: var(--text);
+}
+
+.activity-line.position-opened {
+    color: #10b981;
+}
+
+.activity-line.position-closed {
+    color: #f59e0b;
+}
+
+.activity-line.error {
+    color: #ef4444;
+}

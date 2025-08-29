@@ -1,6 +1,7 @@
 MODULES.md — Responsibility Map & Extension Rules
 
 ## Module Versions (authoritative)
+### Core Architecture Modules
 - core/order_router.py ........ v1.00
 - core/sl_tp_manager.py ...... v1.00  
 - core/risk_manager.py ....... v1.00
@@ -16,13 +17,31 @@ MODULES.md — Responsibility Map & Extension Rules
 - core/symbol_universe.py .... v1.00
 - core/diff_engine.py ........ v1.00
 - core/trade_executor.py ..... v1.01
-- core/tradeexecutor.py ...... v1.01
+
+### Existing Core Modules (Legacy Naming)
+- core/configmanager.py ...... v1.00
+- core/datamanager.py ........ v1.00
+- core/paper_trader.py ....... v1.00
+- core/validation_manager.py . v1.00
+- core/strategy_manager.py ... v1.00
+- core/pair_manager.py ....... v1.00
+- core/runtime_controller.py . v1.00
+- core/telegrambot.py ......... v1.00
+
+### Validation Modules
 - validation/online_validator.py v1.00
 - validation/promotion_gate.py v1.00
 
+### v1.02 — 2025-08-29 (File Cleanup)
+- REMOVED: core/tradeexecutor.py (deprecated wrapper)
+- REMOVED: core/pairmanager.py (compatibility wrapper)
+- REMOVED: core/runtimecontroller.py (compatibility wrapper) 
+- REMOVED: core/validationmanager.py (compatibility wrapper)
+- REMOVED: core/errorhandler.py (broken import, unused)
+- File naming standardized: Removed all duplicate wrapper files
+
 ### v1.01 — 2025-08-29
 - core/trade_executor.py: REFACTOR - removed direct broker calls, now routes all orders through order_router only
-- core/tradeexecutor.py: DEPRECATED - marked as deprecated compatibility wrapper with warnings
 - core/session_manager.py: NEW - paper session control ($1,000 start), reward reset, session resume after restart
 - core/bankroll_manager.py: NEW - auto top-ups (+$1000 when ≤$10), epoch logging, session bankroll tracking
 - core/symbol_universe.py: NEW - crypto universe selection (20-40 pairs by 24h volume), refresh timer, spike detector

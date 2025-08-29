@@ -8,11 +8,11 @@
       "side": "buy",
       "size": 0.0006726095456746722,
       "entry_price": 111506.0,
-      "current_price": 111506.1,
+      "current_price": 108041.0,
       "take_profit": 113736.12,
       "stop_loss": 94780.09999999999,
-      "pnl": 6.726095457138232e-05,
-      "pnl_pct": 8.96812727618431e-05,
+      "pnl": -2.3305920757627394,
+      "pnl_pct": -3.1074561010169854,
       "timestamp": "2025-08-29T06:39:56.810439",
       "status": "open",
       "market_data_source": "bybit_live_verified",
@@ -20,7 +20,7 @@
       "strict_validated": true,
       "max_loss_enforced": true,
       "sl_violations": 0,
-      "last_update": "2025-08-29T06:40:02.156604"
+      "last_update": "2025-08-29T21:02:49.512024"
     },
     {
       "id": "pos_2_1756442396",
@@ -28,11 +28,11 @@
       "side": "buy",
       "size": 0.016726435797248834,
       "entry_price": 4483.92,
-      "current_price": 4483.07,
+      "current_price": 4316.0,
       "take_profit": 4573.5984,
       "stop_loss": 3811.332,
-      "pnl": -0.014217470427667593,
-      "pnl_pct": -0.018956627236890126,
+      "pnl": -2.8087030990740254,
+      "pnl_pct": -3.744937465432034,
       "timestamp": "2025-08-29T06:39:56.810439",
       "status": "open",
       "market_data_source": "bybit_live_verified",
@@ -40,7 +40,7 @@
       "strict_validated": true,
       "max_loss_enforced": true,
       "sl_violations": 0,
-      "last_update": "2025-08-29T06:40:02.156604"
+      "last_update": "2025-08-29T21:02:49.512024"
     }
   ],
   "trades": [],
@@ -53,5 +53,5 @@
   "violations_log": [],
   "violation_count": 0,
   "strict_enforcement": true,
-  "last_update": "2025-08-29T06:40:02.156604"
+  "last_update": "2025-08-29T21:02:49.512024"
 }
