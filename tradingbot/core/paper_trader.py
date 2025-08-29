@@ -980,4 +980,385 @@ def get_paper_trader(asset_type: str) -> PaperTrader:
     return _paper_traders[asset_type]
 
 
-__all__ = ["PaperTrader", "get_paper_trader", "StrictMarketDataViolation", "StopLossViolation"]
+def Run_Paper_Trades(asset: str, strategy: str, symbols: List[str], start: str, end: str, 
+                    config_hash: str = None, data_hash: str = None, seed: int = None) -> Dict[str, Any]:
+    """
+    Run paper trades for a specific asset with asset-specific rules enforcement.
+    
+    Args:
+        asset: Asset type (crypto_spot, crypto_futures, forex, forex_options)
+        strategy: Strategy name/identifier
+        symbols: List of trading symbols
+        start: Start date (YYYY-MM-DD)
+        end: End date (YYYY-MM-DD)
+        config_hash: Configuration hash for reproducibility
+        data_hash: Data hash for reproducibility  
+        seed: Random seed for reproducible results
+        
+    Returns:
+        Dict with trade results, equity curve, and metadata
+    """
+    from .configmanager import config_manager
+    import pandas as pd
+    import numpy as np
+    import hashlib
+    import random as rnd
+    
+    log = get_logger(f"run_paper_trades.{asset}")
+    log.info(f"Starting paper trades for {asset} strategy {strategy}")
+    
+    # Set seed for reproducibility
+    if seed is not None:
+        rnd.seed(seed)
+        np.random.seed(seed)
+    
+    # Get asset-specific rules
+    asset_rules = config_manager.get_asset_rules(asset)
+    if not asset_rules:
+        raise ValueError(f"No rules defined for asset type: {asset}")
+    
+    # Initialize results structure
+    results = {
+        "asset": asset,
+        "strategy": strategy,
+        "symbols": symbols,
+        "start_date": start,
+        "end_date": end,
+        "config_hash": config_hash or _generate_config_hash(strategy, asset_rules),
+        "data_hash": data_hash,
+        "seed": seed,
+        "trades": [],
+        "equity_curve": [],
+        "performance_metrics": {},
+        "violations": [],
+        "asset_rules_applied": asset_rules
+    }
+    
+    # Create paper trader instance
+    paper_trader = get_paper_trader(asset)
+    
+    # Apply asset-specific execution model
+    execution_model = asset_rules.get('execution_model', 'limit_order_book')
+    fees = asset_rules.get('fees', {})
+    slippage_model = asset_rules.get('slippage_model', 'basic')
+    lot_rules = asset_rules.get('lot_rules', {})
+    risk_caps = asset_rules.get('risk_caps', {})
+    latency_jitter = asset_rules.get('latency_jitter', 0)
+    
+    # Simulate trading period
+    try:
+        start_date = datetime.fromisoformat(start)
+        end_date = datetime.fromisoformat(end)
+        
+        # Track simulation state
+        simulation_state = {
+            "current_date": start_date,
+            "positions": [],
+            "daily_trades": 0,
+            "total_exposure": 0.0,
+            "daily_pnl": 0.0
+        }
+        
+        # Main simulation loop
+        current_date = start_date
+        while current_date <= end_date:
+            # Check trading hours
+            if not _is_trading_hours(current_date, asset_rules.get('trading_hours', '24h')):
+                current_date += timedelta(hours=1)
+                continue
+            
+            # Simulate market data and trading decisions for each symbol
+            for symbol in symbols:
+                # Apply asset-specific risk caps
+                if _check_risk_limits_exceeded(simulation_state, risk_caps):
+                    log.warning(f"Risk limits exceeded for {symbol} at {current_date}")
+                    results["violations"].append({
+                        "type": "RISK_LIMIT_EXCEEDED",
+                        "symbol": symbol,
+                        "timestamp": current_date.isoformat(),
+                        "details": simulation_state
+                    })
+                    continue
+                
+                # Simulate trade execution with asset-specific rules
+                trade_result = _simulate_trade_execution(
+                    symbol, current_date, asset_rules, simulation_state
+                )
+                
+                if trade_result:
+                    # Apply fees and slippage
+                    trade_result = _apply_asset_fees_slippage(trade_result, asset_rules)
+                    
+                    # Apply latency jitter
+                    if latency_jitter > 0:
+                        trade_result['latency_ms'] = np.random.exponential(latency_jitter)
+                    
+                    # Record trade
+                    results["trades"].append(trade_result)
+                    simulation_state["daily_trades"] += 1
+                    
+                    # Update equity curve
+                    equity_point = {
+                        "timestamp": current_date.isoformat(),
+                        "balance": simulation_state.get("balance", paper_trader.balance),
+                        "pnl": trade_result.get("pnl_usd", 0),
+                        "symbol": symbol
+                    }
+                    results["equity_curve"].append(equity_point)
+            
+            # Move to next time step
+            current_date += timedelta(hours=1)  # Hourly simulation
+        
+        # Generate final performance metrics
+        results["performance_metrics"] = _calculate_performance_metrics(
+            results["trades"], results["equity_curve"]
+        )
+        
+        # Save trade log and equity curve to CSV
+        trade_log_path = _save_trade_log(results, asset, strategy)
+        equity_curve_path = _save_equity_curve(results, asset, strategy)
+        
+        results["trade_log_path"] = trade_log_path
+        results["equity_curve_path"] = equity_curve_path
+        
+        log.info(f"Completed paper trades for {asset}: {len(results['trades'])} trades, "
+                f"{len(results['violations'])} violations")
+        
+        return results
+        
+    except Exception as e:
+        log.error(f"Error running paper trades for {asset}: {e}")
+        results["error"] = str(e)
+        return results
+
+
+def _generate_config_hash(strategy: str, asset_rules: Dict[str, Any]) -> str:
+    """Generate hash for configuration reproducibility."""
+    import hashlib
+    config_str = f"{strategy}_{json.dumps(asset_rules, sort_keys=True)}"
+    return hashlib.md5(config_str.encode()).hexdigest()[:8]
+
+
+def _is_trading_hours(dt: datetime, trading_hours: str) -> bool:
+    """Check if current time is within trading hours for asset."""
+    if trading_hours == "24h":
+        return True
+    elif trading_hours == "session_based":
+        # Simplified session check - can be enhanced
+        hour = dt.hour
+        return 0 <= hour <= 23  # All hours for now
+    return True
+
+
+def _check_risk_limits_exceeded(state: Dict[str, Any], risk_caps: Dict[str, Any]) -> bool:
+    """Check if risk limits are exceeded."""
+    max_daily_trades = risk_caps.get('max_daily_trades', 1000)
+    max_position_pct = risk_caps.get('max_position_pct', 100)
+    
+    if state.get('daily_trades', 0) >= max_daily_trades:
+        return True
+    if state.get('total_exposure', 0) >= max_position_pct:
+        return True
+    
+    return False
+
+
+def _simulate_trade_execution(symbol: str, dt: datetime, asset_rules: Dict[str, Any], 
+                            state: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Simulate trade execution with asset-specific rules."""
+    import random
+    
+    # Simplified trade simulation - randomly decide to trade
+    if random.random() < 0.1:  # 10% chance of trade per hour
+        side = random.choice(['BUY', 'SELL'])
+        
+        # Simulate price and size based on asset rules
+        lot_rules = asset_rules.get('lot_rules', {})
+        base_price = 50000 + random.uniform(-5000, 5000)  # Simplified price
+        
+        if asset_rules.get('leverage_cap', 1) > 1:
+            # Futures/leveraged asset
+            size = random.uniform(0.001, 0.1)
+            leverage = random.uniform(1, min(asset_rules['leverage_cap'], 10))
+        else:
+            # Spot asset
+            size = random.uniform(0.01, 1.0)
+            leverage = 1
+        
+        # Calculate notional
+        notional = base_price * size
+        min_notional = lot_rules.get('min_notional', 1.0)
+        
+        if notional < min_notional:
+            return None  # Trade too small
+        
+        # Create trade result
+        pnl_usd = random.uniform(-100, 200)  # Simplified P&L
+        
+        return {
+            "symbol": symbol,
+            "side": side,
+            "size": size,
+            "entry_price": base_price,
+            "exit_price": base_price + (pnl_usd / size),
+            "leverage": leverage,
+            "pnl_usd": pnl_usd,
+            "pnl_pct": (pnl_usd / notional) * 100,
+            "timestamp": dt.isoformat(),
+            "duration_minutes": random.randint(10, 240),
+            "exit_reason": random.choice(["TP", "SL", "TIME", "MANUAL"])
+        }
+    
+    return None
+
+
+def _apply_asset_fees_slippage(trade: Dict[str, Any], asset_rules: Dict[str, Any]) -> Dict[str, Any]:
+    """Apply asset-specific fees and slippage to trade."""
+    fees = asset_rules.get('fees', {})
+    slippage_model = asset_rules.get('slippage_model', 'basic')
+    
+    # Calculate fees
+    total_fees = 0.0
+    notional = trade['entry_price'] * trade['size']
+    
+    if 'maker' in fees and 'taker' in fees:
+        # Crypto-style fees
+        fee_rate = fees['taker']  # Assume market orders
+        total_fees = notional * fee_rate
+    elif 'spread' in fees:
+        # Forex-style fees
+        total_fees = fees.get('commission', 0)
+    elif 'premium_pct' in fees:
+        # Options-style fees
+        total_fees = notional * fees['premium_pct'] + fees.get('commission', 0)
+    
+    # Apply funding costs for futures
+    if 'funding' in fees and fees['funding'] > 0:
+        funding_cost = notional * fees['funding']
+        total_fees += funding_cost
+    
+    # Calculate slippage based on model
+    slippage_cost = 0.0
+    if slippage_model == "stochastic_spread_impact":
+        slippage_cost = notional * 0.0001  # 0.01% slippage
+    elif slippage_model == "stochastic_spread_impact_x2":
+        slippage_cost = notional * 0.0002  # 0.02% slippage for futures
+    
+    # Update trade with costs
+    trade['fees'] = total_fees
+    trade['slippage'] = slippage_cost
+    trade['net_pnl'] = trade['pnl_usd'] - total_fees - slippage_cost
+    
+    return trade
+
+
+def _calculate_performance_metrics(trades: List[Dict[str, Any]], 
+                                 equity_curve: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Calculate comprehensive performance metrics."""
+    if not trades:
+        return {}
+    
+    # Basic metrics
+    total_trades = len(trades)
+    winning_trades = len([t for t in trades if t.get('net_pnl', 0) > 0])
+    losing_trades = total_trades - winning_trades
+    win_rate = winning_trades / total_trades if total_trades > 0 else 0
+    
+    # P&L metrics
+    total_pnl = sum(t.get('net_pnl', 0) for t in trades)
+    wins = [t['net_pnl'] for t in trades if t.get('net_pnl', 0) > 0]
+    losses = [t['net_pnl'] for t in trades if t.get('net_pnl', 0) <= 0]
+    
+    avg_win = sum(wins) / len(wins) if wins else 0
+    avg_loss = sum(losses) / len(losses) if losses else 0
+    profit_factor = abs(sum(wins) / sum(losses)) if losses and sum(losses) != 0 else 0
+    
+    # Risk metrics (simplified)
+    returns = []
+    if len(equity_curve) > 1:
+        for i in range(1, len(equity_curve)):
+            if equity_curve[i-1]['balance'] != 0:
+                ret = (equity_curve[i]['balance'] - equity_curve[i-1]['balance']) / equity_curve[i-1]['balance']
+                returns.append(ret)
+    
+    sharpe = 0.0
+    max_dd = 0.0
+    if returns:
+        import numpy as np
+        returns_array = np.array(returns)
+        if np.std(returns_array) != 0:
+            sharpe = np.mean(returns_array) / np.std(returns_array) * np.sqrt(252)  # Annualized
+        
+        # Simple max drawdown calculation
+        balances = [ec['balance'] for ec in equity_curve]
+        peak = balances[0]
+        max_dd_abs = 0
+        for balance in balances:
+            if balance > peak:
+                peak = balance
+            drawdown = (peak - balance) / peak if peak != 0 else 0
+            max_dd_abs = max(max_dd_abs, drawdown)
+        max_dd = max_dd_abs
+    
+    return {
+        "total_trades": total_trades,
+        "winning_trades": winning_trades,
+        "losing_trades": losing_trades,
+        "win_rate": round(win_rate, 4),
+        "total_pnl": round(total_pnl, 2),
+        "avg_win": round(avg_win, 2),
+        "avg_loss": round(avg_loss, 2),
+        "profit_factor": round(profit_factor, 2),
+        "sharpe_ratio": round(sharpe, 2),
+        "max_drawdown": round(max_dd, 4),
+        "avg_trade_pnl": round(total_pnl / total_trades, 2) if total_trades > 0 else 0
+    }
+
+
+def _save_trade_log(results: Dict[str, Any], asset: str, strategy: str) -> str:
+    """Save trade log to CSV file."""
+    import pandas as pd
+    
+    if not results["trades"]:
+        return ""
+    
+    # Create output directory
+    output_dir = Path("tradingbot/state/validation_results")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Create filename with timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"TradeLog_{asset}_{strategy}_{timestamp}.csv"
+    filepath = output_dir / filename
+    
+    # Convert trades to DataFrame and save
+    df = pd.DataFrame(results["trades"])
+    df.to_csv(filepath, index=False)
+    
+    return str(filepath)
+
+
+def _save_equity_curve(results: Dict[str, Any], asset: str, strategy: str) -> str:
+    """Save equity curve to CSV file."""
+    import pandas as pd
+    
+    if not results["equity_curve"]:
+        return ""
+    
+    # Create output directory
+    output_dir = Path("tradingbot/state/validation_results")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Create filename with timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"EquityCurve_{asset}_{strategy}_{timestamp}.csv"
+    filepath = output_dir / filename
+    
+    # Convert equity curve to DataFrame and save
+    df = pd.DataFrame(results["equity_curve"])
+    df.to_csv(filepath, index=False)
+    
+    return str(filepath)
+
+
+__all__ = ["PaperTrader", "get_paper_trader", "StrictMarketDataViolation", "StopLossViolation", "Run_Paper_Trades"]

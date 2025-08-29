@@ -39,6 +39,9 @@ class ConfigManager:
                 "PAPER_RESET_THRESHOLD": 0.0,
             },
         )
+        
+        # Add asset-specific rules matrix for multi-asset validation
+        self.asset_rules = self._get_asset_rules_matrix()
 
     def _substitute_env_vars(self, config_value: Any) -> Any:
         """Recursively substitutes environment variables in config values."""
@@ -91,6 +94,198 @@ class ConfigManager:
         self.config = self._load_json(self.config_dir / "config.json")
         self.assets = self._load_json(self.config_dir / "assets.json")
         self.strategies = self._load_json(self.config_dir / "strategies.json")
+        self.asset_rules = self._get_asset_rules_matrix()
+        
+    def _get_asset_rules_matrix(self) -> Dict[str, Any]:
+        """Returns asset-specific rules matrix for multi-asset validation."""
+        return {
+            "crypto_spot": {
+                "fees": {
+                    "maker": 0.001,  # 0.1%
+                    "taker": 0.001,  # 0.1%
+                    "funding": 0.0   # No funding for spot
+                },
+                "slippage_model": "stochastic_spread_impact",
+                "leverage_cap": 1,
+                "lot_rules": {
+                    "min_notional": 10.0,
+                    "tick_size": 0.01,
+                    "lot_size": 0.00001
+                },
+                "trading_hours": "24h",
+                "funding_borrow": None,
+                "min_sample": {
+                    "trades": 1000,
+                    "months": 6
+                },
+                "latency_jitter": 50,  # ms
+                "execution_model": "limit_order_book",
+                "risk_caps": {
+                    "max_position_pct": 20,
+                    "max_daily_trades": 100
+                },
+                "baselines": ["buy_hold", "vol_target_bh", "sma_10_20", "random_turnover_matched"],
+                "thresholds": {
+                    "sharpe": 2.0,
+                    "sortino": 3.0,
+                    "profit_factor": 1.8,
+                    "max_dd": 0.15,
+                    "cvar_95": 0.10,
+                    "win_rate_min": 0.50,
+                    "avg_win_loss_ratio": 1.5,
+                    "expectancy": 0.20,
+                    "avg_profit_trade_pct": 0.30,
+                    "rolling_windows_pass": 0.75,
+                    "seed_sharpe_spread": 0.3,
+                    "oos_is_ratio": 0.7,
+                    "pbo_max": 0.10,
+                    "baseline_beat_sharpe": 1.2,
+                    "baseline_beat_pf": 1.1
+                }
+            },
+            "crypto_futures": {
+                "fees": {
+                    "maker": 0.0002,  # 0.02%
+                    "taker": 0.0005,  # 0.05%
+                    "funding": 0.0001  # Per 8 hours
+                },
+                "slippage_model": "stochastic_spread_impact_x2",
+                "leverage_cap": 50,
+                "lot_rules": {
+                    "min_notional": 5.0,
+                    "tick_size": 0.01,
+                    "lot_size": 0.001
+                },
+                "trading_hours": "24h",
+                "funding_borrow": "3x_daily",
+                "min_sample": {
+                    "trades": 1000,
+                    "months": 6
+                },
+                "latency_jitter": 100,  # ms
+                "execution_model": "perpetual_futures",
+                "risk_caps": {
+                    "max_position_pct": 10,
+                    "max_daily_trades": 200,
+                    "liquidation_buffer": 0.2
+                },
+                "baselines": ["buy_hold", "vol_target_bh", "sma_10_20", "random_turnover_matched"],
+                "stress_tests": {
+                    "funding_multiplier": 2,
+                    "slippage_multiplier": 2
+                },
+                "thresholds": {
+                    "sharpe": 2.0,
+                    "sortino": 3.0,
+                    "profit_factor": 1.8,
+                    "max_dd": 0.15,
+                    "cvar_95": 0.10,
+                    "win_rate_min": 0.50,
+                    "avg_win_loss_ratio": 1.5,
+                    "expectancy": 0.20,
+                    "avg_profit_trade_pct": 0.30,
+                    "rolling_windows_pass": 0.75,
+                    "seed_sharpe_spread": 0.3,
+                    "oos_is_ratio": 0.7,
+                    "pbo_max": 0.10,
+                    "baseline_beat_sharpe": 1.2,
+                    "baseline_beat_pf": 1.1
+                }
+            },
+            "forex": {
+                "fees": {
+                    "spread": 0.0001,  # 1 pip for majors
+                    "commission": 2.0   # USD per 100k
+                },
+                "slippage_model": "tight_spread_sessions",
+                "leverage_cap": 50,
+                "lot_rules": {
+                    "standard_lot": 100000,
+                    "min_lot": 0.01,
+                    "tick_size": 0.00001
+                },
+                "trading_hours": "session_based",
+                "funding_borrow": None,
+                "min_sample": {
+                    "trades": 1000,
+                    "months": 6
+                },
+                "latency_jitter": 25,  # ms
+                "execution_model": "ecn_spot_fx",
+                "risk_caps": {
+                    "max_position_pct": 15,
+                    "max_daily_trades": 150
+                },
+                "baselines": ["carry_neutral_sma_50_200", "buy_hold_synthetic", "random"],
+                "thresholds": {
+                    "sharpe": 2.0,
+                    "sortino": 3.0,
+                    "profit_factor": 1.8,
+                    "max_dd": 0.15,
+                    "cvar_95": 0.10,
+                    "win_rate_min": 0.50,
+                    "avg_win_loss_ratio": 1.5,
+                    "expectancy": 0.20,
+                    "avg_profit_trade_pct": 0.30,
+                    "rolling_windows_pass": 0.75,
+                    "seed_sharpe_spread": 0.3,
+                    "oos_is_ratio": 0.7,
+                    "pbo_max": 0.10,
+                    "baseline_beat_sharpe": 1.2,
+                    "baseline_beat_pf": 1.1
+                }
+            },
+            "forex_options": {
+                "fees": {
+                    "premium_pct": 0.001,  # 0.1% of premium
+                    "commission": 1.0      # Per contract
+                },
+                "slippage_model": "mid_spread_fill_prob",
+                "leverage_cap": 1,
+                "lot_rules": {
+                    "contract_size": 10000,
+                    "min_premium": 0.0001,
+                    "tick_size": 0.0001
+                },
+                "trading_hours": "session_based",
+                "funding_borrow": None,
+                "min_sample": {
+                    "trades": 500,  # Lower for options
+                    "months": 3
+                },
+                "latency_jitter": 200,  # ms
+                "execution_model": "options_market_maker",
+                "risk_caps": {
+                    "max_position_pct": 25,
+                    "max_daily_trades": 50,
+                    "delta_band": 0.5,
+                    "gamma_limit": 1000,
+                    "vega_limit": 5000
+                },
+                "baselines": ["covered_call", "delta_hedged_straddle"],
+                "thresholds": {
+                    "sharpe": 1.8,  # Slightly lower for options
+                    "sortino": 2.5,
+                    "profit_factor": 1.6,
+                    "max_dd": 0.20,  # Higher tolerance
+                    "cvar_95": 0.15,
+                    "win_rate_min": 0.45,  # Lower for options
+                    "avg_win_loss_ratio": 1.3,
+                    "expectancy": 0.15,
+                    "avg_profit_trade_pct": 0.25,
+                    "rolling_windows_pass": 0.75,
+                    "seed_sharpe_spread": 0.4,
+                    "oos_is_ratio": 0.65,
+                    "pbo_max": 0.15,
+                    "baseline_beat_sharpe": 1.1,
+                    "baseline_beat_pf": 1.05
+                }
+            }
+        }
+        
+    def get_asset_rules(self, asset_type: str) -> Dict[str, Any]:
+        """Get asset-specific rules for validation."""
+        return self.asset_rules.get(asset_type, {})
 
 
 # Global instance for easy access

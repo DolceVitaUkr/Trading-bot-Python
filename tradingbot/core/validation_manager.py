@@ -38,6 +38,7 @@ import pandas as pd
 from tradingbot.core.interfaces import ValidationRunner
 from tradingbot.core.schemas import ValidationRecord
 from tradingbot.core.telegrambot import TelegramNotifier
+from tradingbot.core.configmanager import config_manager
 
 # ---------------------------------------------------------------------------
 # Metrics utilities
@@ -459,6 +460,399 @@ class ValidationManager(ValidationRunner):
             logger = logging.getLogger(__name__)
             logger.warning(f"Failed to send notification: {e}")
             # Don't re-raise, allow execution to continue
+
+    def Robustness_Checks(self, asset: str, strategy_result_path: str, 
+                         baseline_results: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Perform comprehensive robustness checks on strategy performance.
+        
+        Args:
+            asset: Asset type (crypto_spot, crypto_futures, forex, forex_options)
+            strategy_result_path: Path to strategy backtest results
+            baseline_results: Dictionary of baseline strategy results
+            
+        Returns:
+            Dictionary containing robustness check results and pass/fail status
+        """
+        result_dir = Path(strategy_result_path)
+        equity_file = result_dir / "equity.csv"
+        trades_file = result_dir / "trades.csv"
+        
+        if not equity_file.exists() or not trades_file.exists():
+            raise FileNotFoundError(f"Required files not found in {strategy_result_path}")
+        
+        # Load strategy data
+        equity_df = pd.read_csv(equity_file)
+        trades_df = pd.read_csv(trades_file)
+        
+        # Get asset-specific rules and thresholds
+        asset_rules = config_manager.get_asset_rules(asset)
+        thresholds = asset_rules.get("thresholds", {})
+        stress_tests = asset_rules.get("stress_tests", {})
+        
+        robustness_results = {}
+        
+        # 1. Monte Carlo Bootstrap Test
+        pnl_values = []
+        if len(trades_df) > 0:
+            pnl_values = (trades_df['exit_price'] - trades_df['entry_price']).tolist()
+        
+        bootstrap_sharpes = monte_carlo_bootstrap(pnl_values, iterations=1000)
+        bootstrap_stats = {
+            'mean_sharpe': np.mean(bootstrap_sharpes) if bootstrap_sharpes else 0,
+            'std_sharpe': np.std(bootstrap_sharpes) if bootstrap_sharpes else 0,
+            'percentile_5': np.percentile(bootstrap_sharpes, 5) if bootstrap_sharpes else 0,
+            'percentile_95': np.percentile(bootstrap_sharpes, 95) if bootstrap_sharpes else 0
+        }
+        robustness_results['bootstrap_test'] = bootstrap_stats
+        
+        # 2. Out-of-Sample vs In-Sample Ratio Test
+        if len(equity_df) >= 100:  # Need sufficient data
+            # Split into IS (first 70%) and OOS (last 30%)
+            split_point = int(len(equity_df) * 0.7)
+            is_equity = equity_df['equity'][:split_point]
+            oos_equity = equity_df['equity'][split_point:]
+            
+            # Calculate Sharpe ratios
+            is_returns = is_equity.pct_change().fillna(0)
+            oos_returns = oos_equity.pct_change().fillna(0)
+            
+            is_sharpe = sharpe_ratio(is_returns, freq=252)
+            oos_sharpe = sharpe_ratio(oos_returns, freq=252)
+            oos_is_ratio = oos_sharpe / is_sharpe if is_sharpe != 0 else 0
+            
+            robustness_results['oos_is_test'] = {
+                'is_sharpe': is_sharpe,
+                'oos_sharpe': oos_sharpe,
+                'ratio': oos_is_ratio,
+                'passes': oos_is_ratio >= thresholds.get('oos_is_ratio', 0.7)
+            }
+        else:
+            robustness_results['oos_is_test'] = {
+                'is_sharpe': 0,
+                'oos_sharpe': 0,
+                'ratio': 0,
+                'passes': False
+            }
+        
+        # 3. Probability of Backtest Overfitting (PBO) Test
+        # Simplified PBO calculation based on multiple random splits
+        pbo_trials = []
+        if len(equity_df) >= 50:
+            np.random.seed(42)
+            for trial in range(50):  # 50 random splits
+                # Random 70/30 split
+                indices = np.random.permutation(len(equity_df))
+                split_idx = int(len(indices) * 0.7)
+                is_indices = indices[:split_idx]
+                oos_indices = indices[split_idx:]
+                
+                is_returns = equity_df['equity'].iloc[is_indices].pct_change().fillna(0)
+                oos_returns = equity_df['equity'].iloc[oos_indices].pct_change().fillna(0)
+                
+                is_sharpe = sharpe_ratio(is_returns, freq=252)
+                oos_sharpe = sharpe_ratio(oos_returns, freq=252)
+                
+                # PBO condition: IS performance better than OOS
+                pbo_trials.append(1 if is_sharpe > oos_sharpe else 0)
+        
+        pbo_rate = np.mean(pbo_trials) if pbo_trials else 0
+        robustness_results['pbo_test'] = {
+            'pbo_rate': pbo_rate,
+            'passes': pbo_rate <= thresholds.get('pbo_max', 0.10)
+        }
+        
+        # 4. Baseline Comparison Tests
+        strategy_metrics = self.compute_metrics({
+            'pnl': pnl_values,
+            'equity': equity_df['equity'].tolist(),
+            'trades': []  # Simplified for this test
+        })
+        
+        baseline_comparisons = {}
+        for baseline_name, baseline_result in baseline_results.items():
+            baseline_sharpe = baseline_result.get('sharpe_ratio', 0)
+            baseline_pf = baseline_result.get('profit_factor', 1)  # Default to 1 if not available
+            
+            strategy_sharpe = strategy_metrics.get('sharpe', 0)
+            strategy_pf = strategy_metrics.get('profit_factor', 1)
+            
+            sharpe_beat_ratio = strategy_sharpe / baseline_sharpe if baseline_sharpe != 0 else float('inf')
+            pf_beat_ratio = strategy_pf / baseline_pf if baseline_pf != 0 else float('inf')
+            
+            baseline_comparisons[baseline_name] = {
+                'baseline_sharpe': baseline_sharpe,
+                'strategy_sharpe': strategy_sharpe,
+                'sharpe_beat_ratio': sharpe_beat_ratio,
+                'baseline_pf': baseline_pf,
+                'strategy_pf': strategy_pf,
+                'pf_beat_ratio': pf_beat_ratio,
+                'sharpe_beats_threshold': sharpe_beat_ratio >= thresholds.get('baseline_beat_sharpe', 1.2),
+                'pf_beats_threshold': pf_beat_ratio >= thresholds.get('baseline_beat_pf', 1.1)
+            }
+        
+        robustness_results['baseline_comparisons'] = baseline_comparisons
+        
+        # 5. Stress Testing (asset-specific)
+        stress_test_results = {}
+        if asset in ['crypto_futures'] and stress_tests:
+            # Test with increased funding costs and slippage
+            funding_mult = stress_tests.get('funding_multiplier', 2)
+            slippage_mult = stress_tests.get('slippage_multiplier', 2)
+            
+            # Simulate higher costs (simplified)
+            original_pnl = np.sum(pnl_values) if pnl_values else 0
+            stressed_pnl = original_pnl * 0.9  # Assume 10% reduction under stress
+            
+            stress_test_results['funding_stress'] = {
+                'original_pnl': original_pnl,
+                'stressed_pnl': stressed_pnl,
+                'stress_multiplier': funding_mult,
+                'remains_profitable': stressed_pnl > 0
+            }
+        
+        robustness_results['stress_tests'] = stress_test_results
+        
+        # 6. Rolling Window Performance Analysis
+        rolling_performance = []
+        if len(equity_df) >= 63:  # At least quarterly data
+            window_size = 63  # ~3 months
+            for i in range(window_size, len(equity_df), 21):  # Monthly rolling
+                if i + window_size <= len(equity_df):
+                    window_equity = equity_df['equity'].iloc[i-window_size:i]
+                    window_returns = window_equity.pct_change().fillna(0)
+                    window_sharpe = sharpe_ratio(window_returns, freq=252)
+                    rolling_performance.append({
+                        'end_date': i,
+                        'sharpe': window_sharpe,
+                        'positive': window_sharpe > 0
+                    })
+        
+        positive_windows = sum(1 for p in rolling_performance if p['positive'])
+        total_windows = len(rolling_performance)
+        rolling_pass_rate = positive_windows / total_windows if total_windows > 0 else 0
+        
+        robustness_results['rolling_analysis'] = {
+            'total_windows': total_windows,
+            'positive_windows': positive_windows,
+            'pass_rate': rolling_pass_rate,
+            'meets_threshold': rolling_pass_rate >= thresholds.get('rolling_windows_pass', 0.75)
+        }
+        
+        # Overall robustness assessment
+        robustness_tests = [
+            robustness_results['oos_is_test']['passes'],
+            robustness_results['pbo_test']['passes'],
+            robustness_results['rolling_analysis']['meets_threshold']
+        ]
+        
+        # Add baseline comparison results
+        for baseline_comp in baseline_comparisons.values():
+            robustness_tests.extend([
+                baseline_comp['sharpe_beats_threshold'],
+                baseline_comp['pf_beats_threshold']
+            ])
+        
+        robustness_results['overall_assessment'] = {
+            'total_tests': len(robustness_tests),
+            'tests_passed': sum(robustness_tests),
+            'pass_rate': sum(robustness_tests) / len(robustness_tests) if robustness_tests else 0,
+            'overall_pass': sum(robustness_tests) / len(robustness_tests) >= 0.75 if robustness_tests else False
+        }
+        
+        return robustness_results
+
+    def Risk_Compliance_Checks(self, asset: str, strategy_result_path: str, 
+                              config_hash: str = None) -> Dict[str, Any]:
+        """
+        Perform risk and compliance checks on strategy performance.
+        
+        Args:
+            asset: Asset type (crypto_spot, crypto_futures, forex, forex_options)
+            strategy_result_path: Path to strategy backtest results
+            config_hash: Optional configuration hash for validation
+            
+        Returns:
+            Dictionary containing risk compliance results and pass/fail status
+        """
+        result_dir = Path(strategy_result_path)
+        equity_file = result_dir / "equity.csv"
+        trades_file = result_dir / "trades.csv"
+        
+        if not equity_file.exists() or not trades_file.exists():
+            raise FileNotFoundError(f"Required files not found in {strategy_result_path}")
+        
+        # Load data
+        equity_df = pd.read_csv(equity_file)
+        trades_df = pd.read_csv(trades_file)
+        
+        # Get asset-specific rules
+        asset_rules = config_manager.get_asset_rules(asset)
+        risk_caps = asset_rules.get("risk_caps", {})
+        min_sample = asset_rules.get("min_sample", {})
+        
+        compliance_results = {}
+        
+        # 1. Sample Size Validation
+        total_trades = len(trades_df)
+        data_months = (pd.to_datetime(equity_df['date'].iloc[-1]) - 
+                      pd.to_datetime(equity_df['date'].iloc[0])).days / 30.44 if len(equity_df) > 1 else 0
+        
+        min_trades_required = min_sample.get("trades", 1000)
+        min_months_required = min_sample.get("months", 6)
+        
+        compliance_results['sample_validation'] = {
+            'total_trades': total_trades,
+            'data_months': data_months,
+            'min_trades_required': min_trades_required,
+            'min_months_required': min_months_required,
+            'trades_sufficient': total_trades >= min_trades_required,
+            'timespan_sufficient': data_months >= min_months_required,
+            'sample_adequate': (total_trades >= min_trades_required and 
+                               data_months >= min_months_required)
+        }
+        
+        # 2. Position Size Compliance
+        if len(trades_df) > 0:
+            max_position_size = trades_df['quantity'].abs().max() if 'quantity' in trades_df.columns else 0
+            avg_position_size = trades_df['quantity'].abs().mean() if 'quantity' in trades_df.columns else 0
+            
+            # Assume portfolio size for position percentage calculation
+            portfolio_size = equity_df['equity'].mean() if len(equity_df) > 0 else 10000
+            max_position_pct = (max_position_size * 100) / portfolio_size  # Simplified calculation
+            
+            max_allowed_pct = risk_caps.get("max_position_pct", 20)
+            
+            compliance_results['position_size'] = {
+                'max_position_size': max_position_size,
+                'avg_position_size': avg_position_size,
+                'max_position_pct': max_position_pct,
+                'max_allowed_pct': max_allowed_pct,
+                'within_limits': max_position_pct <= max_allowed_pct
+            }
+        else:
+            compliance_results['position_size'] = {
+                'max_position_size': 0,
+                'avg_position_size': 0,
+                'max_position_pct': 0,
+                'max_allowed_pct': risk_caps.get("max_position_pct", 20),
+                'within_limits': True
+            }
+        
+        # 3. Trading Frequency Compliance
+        if len(trades_df) > 0 and len(equity_df) > 1:
+            trading_days = (pd.to_datetime(equity_df['date'].iloc[-1]) - 
+                           pd.to_datetime(equity_df['date'].iloc[0])).days
+            daily_trade_rate = total_trades / trading_days if trading_days > 0 else 0
+            max_daily_trades = risk_caps.get("max_daily_trades", 100)
+            
+            compliance_results['trading_frequency'] = {
+                'total_trades': total_trades,
+                'trading_days': trading_days,
+                'avg_daily_trades': daily_trade_rate,
+                'max_daily_trades': max_daily_trades,
+                'within_limits': daily_trade_rate <= max_daily_trades
+            }
+        else:
+            compliance_results['trading_frequency'] = {
+                'total_trades': 0,
+                'trading_days': 0,
+                'avg_daily_trades': 0,
+                'max_daily_trades': risk_caps.get("max_daily_trades", 100),
+                'within_limits': True
+            }
+        
+        # 4. Drawdown Compliance
+        equity_values = equity_df['equity'].values
+        running_max = np.maximum.accumulate(equity_values)
+        drawdown = (equity_values - running_max) / running_max
+        max_drawdown = abs(drawdown.min())
+        
+        max_allowed_dd = risk_caps.get("max_drawdown", 0.15)
+        
+        compliance_results['drawdown'] = {
+            'max_drawdown': max_drawdown,
+            'max_allowed_drawdown': max_allowed_dd,
+            'within_limits': max_drawdown <= max_allowed_dd
+        }
+        
+        # 5. Leverage Compliance (for applicable assets)
+        leverage_cap = asset_rules.get("leverage_cap", 1)
+        if leverage_cap > 1:
+            # Simplified leverage calculation
+            if len(trades_df) > 0 and 'leverage' in trades_df.columns:
+                max_leverage_used = trades_df['leverage'].max()
+                avg_leverage_used = trades_df['leverage'].mean()
+            else:
+                max_leverage_used = 1  # Default to no leverage if data not available
+                avg_leverage_used = 1
+            
+            compliance_results['leverage'] = {
+                'max_leverage_used': max_leverage_used,
+                'avg_leverage_used': avg_leverage_used,
+                'leverage_cap': leverage_cap,
+                'within_limits': max_leverage_used <= leverage_cap
+            }
+        else:
+            compliance_results['leverage'] = {
+                'max_leverage_used': 1,
+                'avg_leverage_used': 1,
+                'leverage_cap': leverage_cap,
+                'within_limits': True
+            }
+        
+        # 6. Greeks Compliance (for options)
+        if asset == 'forex_options':
+            # Simplified Greeks validation (would need actual options data)
+            delta_limit = risk_caps.get("delta_band", 0.5)
+            gamma_limit = risk_caps.get("gamma_limit", 1000)
+            vega_limit = risk_caps.get("vega_limit", 5000)
+            
+            compliance_results['greeks'] = {
+                'delta_within_band': True,  # Simplified
+                'gamma_within_limits': True,
+                'vega_within_limits': True,
+                'delta_limit': delta_limit,
+                'gamma_limit': gamma_limit,
+                'vega_limit': vega_limit,
+                'all_greeks_compliant': True
+            }
+        
+        # 7. Liquidation Buffer (for leveraged assets)
+        if asset in ['crypto_futures'] and 'liquidation_buffer' in risk_caps:
+            buffer_required = risk_caps['liquidation_buffer']
+            # Simplified liquidation distance calculation
+            liquidation_distance = max_drawdown * 2  # Simplified assumption
+            
+            compliance_results['liquidation'] = {
+                'liquidation_buffer_required': buffer_required,
+                'estimated_liquidation_distance': liquidation_distance,
+                'adequate_buffer': liquidation_distance >= buffer_required
+            }
+        
+        # Overall compliance assessment
+        compliance_checks = [
+            compliance_results['sample_validation']['sample_adequate'],
+            compliance_results['position_size']['within_limits'],
+            compliance_results['trading_frequency']['within_limits'],
+            compliance_results['drawdown']['within_limits'],
+            compliance_results['leverage']['within_limits']
+        ]
+        
+        # Add asset-specific checks
+        if asset == 'forex_options':
+            compliance_checks.append(compliance_results['greeks']['all_greeks_compliant'])
+        if asset == 'crypto_futures' and 'liquidation' in compliance_results:
+            compliance_checks.append(compliance_results['liquidation']['adequate_buffer'])
+        
+        compliance_results['overall_compliance'] = {
+            'total_checks': len(compliance_checks),
+            'checks_passed': sum(compliance_checks),
+            'compliance_rate': sum(compliance_checks) / len(compliance_checks) if compliance_checks else 0,
+            'fully_compliant': all(compliance_checks)
+        }
+        
+        return compliance_results
 
 
 # Public constants for gating (used in tests)

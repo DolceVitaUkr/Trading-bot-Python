@@ -5,7 +5,7 @@
   },
   "trading": {
     "CRYPTO": {
-      "status": "running",
+      "status": "stopped",
       "mode": "paper"
     },
     "FUTURES": {

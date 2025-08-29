@@ -1,139 +1,115 @@
+# file: tradingbot/core/trade_executor.py
+# module_version: v1.01
+
 """
-Order execution routing with slippage, fee reconciliation, and mode switching.
+Trade Executor - Now a CLIENT of order_router.py
+Converts legacy Order objects to OrderContext and delegates to order_router.
+NO DIRECT ORDER PLACEMENT - all orders route through order_router only.
 """
 
-# file: core/trade_executor.py
 import logging
 from typing import Dict, Any, Optional
 
-from tradingbot.brokers.exchangebybit import ExchangeBybit
-from tradingbot.brokers.exchangeibkr import ExchangeIBKR
 from tradingbot.core.configmanager import config_manager
 from tradingbot.core.schemas import Order
+from tradingbot.core.order_router import order_router, OrderContext
 
 logger = logging.getLogger(__name__)
 
 
 class TradeExecutor:
     """
-    Routes standardized Order objects to the correct broker adapter for execution.
+    LEGACY COMPATIBILITY: Routes standardized Order objects to order_router.
+    NO LONGER PLACES ORDERS DIRECTLY - ALL ROUTING VIA ORDER_ROUTER.
     """
 
-    def __init__(self, bybit_adapter: Optional[ExchangeBybit] = None, ibkr_adapter: Optional[ExchangeIBKR] = None):
+    def __init__(self, bybit_adapter=None, ibkr_adapter=None):
         """
-        Initializes the Trade_Executor with broker adapters.
+        Initialize trade executor as order_router client.
+        Broker adapters are now managed by order_router, not here.
         """
-        self.bybit_adapter = bybit_adapter
-        self.ibkr_adapter = ibkr_adapter
         self.bot_settings = config_manager.get_config().get("bot_settings", {})
         self.account_scope = self.bot_settings.get("account_scope", {})
         safety = config_manager.get_config().get("safety", {})
         self.mode = safety.get("START_MODE", "paper")
+        
+        logger.info("TradeExecutor initialized as order_router client - NO DIRECT ORDER PLACEMENT")
 
-    def _get_asset_key(self, broker: Any) -> str:
-        """Infer asset config key based on the broker type."""
-        if isinstance(broker, ExchangeBybit):
-            return "crypto_spot"
-        return "forex"
-
-    def _apply_slippage(self, order: Order, slippage_bps: float) -> Order:
-        """Apply slippage (in basis points) to the order prices."""
-        if slippage_bps <= 0:
-            return order
-
-        adjusted = order.copy(deep=True)
-        multiplier = 1 + (slippage_bps / 10000) if order.side == "buy" else 1 - (slippage_bps / 10000)
-        if adjusted.limit_price:
-            adjusted.limit_price *= multiplier
-        if adjusted.stop_loss:
-            adjusted.stop_loss *= multiplier
-        if adjusted.take_profit:
-            adjusted.take_profit *= multiplier
-        return adjusted
-
-    async def _apply_fees_and_reconcile(
-        self,
-        broker: Any,
-        order: Order,
-        result: Dict[str, Any],
-        asset_key: str,
-    ) -> Dict[str, Any]:
-        """Annotate result with fee info and updated positions."""
-        asset_cfg = config_manager.get_asset_config(asset_key)
-        fees = asset_cfg.get("fees", {})
-        fee_rate = fees.get("maker" if order.order_type == "limit" else "taker", 0)
-        price = result.get("price") or order.limit_price or 0
-        result["fee"] = price * order.quantity * fee_rate
-
-        if hasattr(broker, "get_positions"):
-            try:
-                if isinstance(broker, ExchangeBybit):
-                    result["positions"] = await broker.get_positions("linear")
-                else:
-                    result["positions"] = await broker.get_positions()
-            except Exception as e:
-                logger.warning(f"Failed to reconcile positions: {e}")
-
-        return result
-
-    async def _execute_oco_order(self, broker: Any, order: Order) -> Dict[str, Any]:
-        """Execute an order with stop-loss and take-profit legs."""
-        if hasattr(broker, "place_oco_order"):
-            return await broker.place_oco_order(order)
-        return await broker.place_order(order)
-
-    def _get_broker_for_symbol(self, symbol: str) -> Optional[Any]:
-        """Determines which broker to use for a given symbol."""
-        # This is a simplified routing logic. A more robust implementation might
-        # query an asset master or use more complex rules.
-        # For now, we assume crypto is Bybit and forex/options are IBKR.
-        if "USD" in symbol or "USDT" in symbol: # Simple crypto check
-            return self.bybit_adapter
-        else: # Assume Forex
-            return self.ibkr_adapter
+    def _convert_order_to_context(self, order: Order) -> OrderContext:
+        """Convert legacy Order object to OrderContext for order_router."""
+        # Determine asset type based on symbol
+        asset_type = "spot"  # Default
+        if "USD" in order.symbol and "USDT" not in order.symbol:
+            asset_type = "forex"
+        elif order.symbol.endswith("PERP") or "FUT" in order.symbol:
+            asset_type = "futures"
+            
+        return OrderContext(
+            asset_type=asset_type,
+            symbol=order.symbol,
+            side=order.side,
+            quantity=order.quantity,
+            price=order.limit_price,
+            order_type=order.order_type,
+            sl_price=order.stop_loss,
+            tp_price=order.take_profit,
+            strategy_id=getattr(order, 'strategy_id', None),
+            signal_weight=getattr(order, 'signal_weight', 1.0),
+            client_order_id=order.order_id,
+            metadata={
+                "converted_from_legacy": True,
+                "original_order_type": order.order_type
+            }
+        )
 
     async def execute_order(self, order: Order) -> Dict[str, Any]:
         """
-        Routes the order to the appropriate broker for execution.
+        REFACTORED: Routes the order through order_router.py ONLY.
+        NO DIRECT BROKER CALLS - all routing via order_router.
 
         Args:
             order (Order): The standardized order to be executed.
 
         Returns:
-            A dictionary containing the execution result from the broker.
+            A dictionary containing the execution result from order_router.
         """
-        broker = self._get_broker_for_symbol(order.symbol)
-
-        if not broker:
-            msg = f"No broker found for symbol: {order.symbol}"
-            logger.error(msg)
-            return {"status": "REJECTED", "reason": msg}
-
         try:
-            asset_key = self._get_asset_key(broker)
-            asset_cfg = config_manager.get_asset_config(asset_key)
-            slippage_bps = asset_cfg.get("slippage_bps", 0)
-            adjusted_order = self._apply_slippage(order, slippage_bps)
-
+            # Convert legacy Order to OrderContext
+            context = self._convert_order_to_context(order)
+            
             logger.info(
-                f"Routing order {adjusted_order.order_id} for {adjusted_order.symbol} to {broker.__class__.__name__} in {self.mode} mode"
+                f"[TRADE_EXECUTOR] Routing order {order.order_id} for {order.symbol} "
+                f"through order_router in {self.mode} mode"
             )
 
-            if self.mode == "paper":
-                result = {"status": "FILLED", "simulated": True, "mode": "paper"}
+            # Route through order_router ONLY
+            order_result = await order_router.place_order(context)
+            
+            # Convert OrderResult back to legacy format
+            if order_result.success:
+                result = {
+                    "status": "FILLED" if order_result.status and order_result.status.value == "filled" else "SUBMITTED",
+                    "order_id": order_result.order_id,
+                    "client_order_id": order_result.client_order_id,
+                    "filled_qty": order_result.filled_qty,
+                    "filled_price": order_result.filled_price,
+                    "fees": order_result.fees,
+                    "timestamp": order_result.timestamp.isoformat() if order_result.timestamp else None,
+                    "routed_via": "order_router",
+                    "mode": self.mode
+                }
             else:
-                if adjusted_order.stop_loss and adjusted_order.take_profit:
-                    result = await self._execute_oco_order(broker, adjusted_order)
-                else:
-                    result = await broker.place_order(adjusted_order)
-
-            result = await self._apply_fees_and_reconcile(
-                broker, adjusted_order, result, asset_key
-            )
+                result = {
+                    "status": "REJECTED",
+                    "reason": order_result.reason,
+                    "client_order_id": order_result.client_order_id,
+                    "routed_via": "order_router",
+                    "mode": self.mode
+                }
+                
             return result
+            
         except Exception as e:
-            msg = (
-                f"An error occurred while executing order {order.order_id} on {broker.__class__.__name__}: {e}"
-            )
+            msg = f"TradeExecutor failed to route order {order.order_id} through order_router: {e}"
             logger.exception(msg)
             return {"status": "ERROR", "reason": msg}

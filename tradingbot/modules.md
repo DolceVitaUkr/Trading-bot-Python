@@ -1,4 +1,48 @@
 MODULES.md — Responsibility Map & Extension Rules
+
+## Module Versions (authoritative)
+- core/order_router.py ........ v1.00
+- core/sl_tp_manager.py ...... v1.00  
+- core/risk_manager.py ....... v1.00
+- core/budget_manager.py ..... v1.00
+- core/exposure_manager.py ... v1.00
+- core/pnl_reconciler.py ..... v1.00
+- core/app_runtime.py ........ v1.00
+- core/strategy_registry.py .. v1.00
+- core/exploration_manager.py  v1.00
+- core/strategy_scheduler.py . v1.00
+- core/session_manager.py .... v1.00
+- core/bankroll_manager.py ... v1.00
+- core/symbol_universe.py .... v1.00
+- core/diff_engine.py ........ v1.00
+- core/trade_executor.py ..... v1.01
+- core/tradeexecutor.py ...... v1.01
+- validation/online_validator.py v1.00
+- validation/promotion_gate.py v1.00
+
+### v1.01 — 2025-08-29
+- core/trade_executor.py: REFACTOR - removed direct broker calls, now routes all orders through order_router only
+- core/tradeexecutor.py: DEPRECATED - marked as deprecated compatibility wrapper with warnings
+- core/session_manager.py: NEW - paper session control ($1,000 start), reward reset, session resume after restart
+- core/bankroll_manager.py: NEW - auto top-ups (+$1000 when ≤$10), epoch logging, session bankroll tracking
+- core/symbol_universe.py: NEW - crypto universe selection (20-40 pairs by 24h volume), refresh timer, spike detector
+- core/diff_engine.py: NEW - dry-run diff engine for paper vs hypothetical live comparison audits
+- core/interfaces.py: ENHANCED - added Asset, OrderSide, OrderType enums and SessionState dataclass
+
+### v1.00 — 2025-08-28
+- core/order_router.py: NEW - centralized order placement with pretrade pipeline (risk→budget→exposure), idempotent client_order_id, broker routing
+- core/sl_tp_manager.py: NEW - server-side SL/TP management, Bybit trading-stop, IBKR brackets, reconnect recovery
+- core/risk_manager.py: NEW - position sizing, risk checks, drawdown throttling, per-asset caps
+- core/budget_manager.py: NEW - asset allocation enforcement, software wallet splits, P&L compounding within buckets
+- core/exposure_manager.py: NEW - correlation limits, cluster caps, portfolio exposure control
+- core/pnl_reconciler.py: NEW - broker truth reconciliation, position/fill tracking, desync detection
+- core/app_runtime.py: NEW - lifecycle orchestration, paper/live toggle, graceful shutdown, main loop
+- core/strategy_registry.py: NEW - strategy states/flags/counters, lifecycle management, SQLite persistence
+- core/exploration_manager.py: NEW - candidate rotation, fairness scheduling, continuous exploration enforcement
+- core/strategy_scheduler.py: NEW - opportunity→strategy mapping with filtering
+- validation/online_validator.py: NEW - ≥100 trades validation gate on live feed
+- validation/promotion_gate.py: NEW - final promotion criteria (PF≥1.5, Sharpe≥2.0, DD≤15%, etc)
+
 🔎 TL;DR (Quick Recap)
 
 Single Source of Truth (SSOT)

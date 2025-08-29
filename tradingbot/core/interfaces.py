@@ -1,11 +1,47 @@
 """
 Core interfaces for the trading bot, defined as Protocols.
 """
-from typing import Protocol, List, Dict, Any, Tuple, TypeAlias
+from typing import Protocol, List, Dict, Any, Tuple, TypeAlias, Optional
+from datetime import datetime
+from enum import Enum
+from dataclasses import dataclass
 import pandas as pd
 
 # Placeholder for OHLCV data, assuming pandas DataFrame
 OHLCV: TypeAlias = pd.DataFrame
+
+# Core enums
+class Asset(Enum):
+    """Supported asset classes"""
+    CRYPTO = "crypto"
+    FOREX = "forex" 
+    FUTURES = "futures"
+    OPTIONS = "options"
+
+class OrderSide(Enum):
+    """Order side"""
+    BUY = "buy"
+    SELL = "sell"
+
+class OrderType(Enum):
+    """Order types"""
+    MARKET = "market"
+    LIMIT = "limit"
+    STOP = "stop"
+    STOP_LIMIT = "stop_limit"
+
+# Core data structures
+@dataclass
+class SessionState:
+    """Paper trading session state"""
+    session_id: str
+    start_time: datetime
+    assets: List[Asset]
+    initial_equity_per_asset: float
+    current_equity: Dict[Asset, float]
+    reward: Dict[Asset, float] 
+    open_positions: Dict[Asset, List[Any]]
+    session_metadata: Dict[str, Any]
 
 class MarketData(Protocol):
     """Interface for market data providers."""
