@@ -1,8 +1,4 @@
 {
-  "assets": {},
-  "global": {
-    "kill_switch": false
-  },
   "trading": {
     "CRYPTO": {
       "status": "running",
@@ -20,5 +16,7 @@
       "status": "running",
       "mode": "paper"
     }
-  }
+  },
+  "positions": {},
+  "last_update": "2025-08-30T07:11:55.081341"
 }

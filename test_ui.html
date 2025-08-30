@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>UI Data Test</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        .test-section { margin: 20px 0; padding: 20px; border: 1px solid #ccc; }
+        .status { padding: 5px 10px; margin: 5px; display: inline-block; }
+        .success { background: #4CAF50; color: white; }
+        .error { background: #f44336; color: white; }
+        .data-display { background: #f5f5f5; padding: 10px; margin: 10px 0; white-space: pre-wrap; font-family: monospace; }
+    </style>
+</head>
+<body>
+    <h1>Trading Bot UI Data Test</h1>
+    
+    <div class="test-section">
+        <h2>API Connection Test</h2>
+        <button onclick="testGlobalStats()">Test Global Stats</button>
+        <button onclick="testCryptoPositions()">Test Crypto Positions</button>
+        <button onclick="testCryptoStatus()">Test Crypto Status</button>
+        <button onclick="testActivities()">Test Activities</button>
+        <div id="api-results"></div>
+    </div>
+    
+    <div class="test-section">
+        <h2>Dashboard JavaScript Test</h2>
+        <button onclick="loadDashboardJS()">Load Dashboard.js</button>
+        <div id="js-status"></div>
+    </div>
+    
+    <div class="test-section">
+        <h2>Chart Test</h2>
+        <canvas id="test-chart" width="400" height="200"></canvas>
+        <button onclick="testChart()">Test Chart Update</button>
+    </div>
+
+    <script>
+        const baseUrl = 'http://localhost:8000';
+        
+        async function testGlobalStats() {
+            const resultsDiv = document.getElementById('api-results');
+            try {
+                const response = await fetch(`${baseUrl}/stats/global`);
+                const data = await response.json();
+                resultsDiv.innerHTML = `
+                    <span class="status success">Global Stats Success</span>
+                    <div class="data-display">${JSON.stringify(data, null, 2)}</div>
+                `;
+            } catch (error) {
+                resultsDiv.innerHTML = `<span class="status error">Global Stats Error: ${error.message}</span>`;
+            }
+        }
+        
+        async function testCryptoPositions() {
+            const resultsDiv = document.getElementById('api-results');
+            try {
+                const response = await fetch(`${baseUrl}/asset/crypto/positions`);
+                const data = await response.json();
+                resultsDiv.innerHTML = `
+                    <span class="status success">Crypto Positions Success</span>
+                    <div class="data-display">${JSON.stringify(data, null, 2)}</div>
+                `;
+            } catch (error) {
+                resultsDiv.innerHTML = `<span class="status error">Crypto Positions Error: ${error.message}</span>`;
+            }
+        }
+        
+        async function testCryptoStatus() {
+            const resultsDiv = document.getElementById('api-results');
+            try {
+                const response = await fetch(`${baseUrl}/asset/crypto/status`);
+                const data = await response.json();
+                resultsDiv.innerHTML = `
+                    <span class="status success">Crypto Status Success</span>
+                    <div class="data-display">${JSON.stringify(data, null, 2)}</div>
+                `;
+            } catch (error) {
+                resultsDiv.innerHTML = `<span class="status error">Crypto Status Error: ${error.message}</span>`;
+            }
+        }
+        
+        async function testActivities() {
+            const resultsDiv = document.getElementById('api-results');
+            try {
+                const response = await fetch(`${baseUrl}/activity/recent`);
+                const data = await response.json();
+                resultsDiv.innerHTML = `
+                    <span class="status success">Activities Success</span>
+                    <div class="data-display">${JSON.stringify(data, null, 2)}</div>
+                `;
+            } catch (error) {
+                resultsDiv.innerHTML = `<span class="status error">Activities Error: ${error.message}</span>`;
+            }
+        }
+        
+        function loadDashboardJS() {
+            const statusDiv = document.getElementById('js-status');
+            const script = document.createElement('script');
+            script.src = '/static/dashboard.js';
+            script.onload = () => {
+                statusDiv.innerHTML = '<span class="status success">Dashboard.js loaded successfully</span>';
+                // Check if MultiAssetDashboard class is available
+                if (typeof MultiAssetDashboard !== 'undefined') {
+                    statusDiv.innerHTML += '<div>MultiAssetDashboard class is available</div>';
+                }
+            };
+            script.onerror = () => {
+                statusDiv.innerHTML = '<span class="status error">Failed to load dashboard.js</span>';
+            };
+            document.head.appendChild(script);
+        }
+        
+        let testChart = null;
+        
+        function testChart() {
+            const ctx = document.getElementById('test-chart').getContext('2d');
+            
+            if (testChart) {
+                // Update existing chart
+                testChart.data.labels.push(new Date().toLocaleTimeString());
+                testChart.data.datasets[0].data.push(Math.random() * 100);
+                testChart.update();
+            } else {
+                // Create new chart
+                testChart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: [new Date().toLocaleTimeString()],
+                        datasets: [{
+                            label: 'Test Data',
+                            data: [Math.random() * 100],
+                            borderColor: 'rgb(75, 192, 192)',
+                            tension: 0.1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false
+                    }
+                });
+            }
+        }
+    </script>
+</body>
+</html>

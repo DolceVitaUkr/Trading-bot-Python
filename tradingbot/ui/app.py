@@ -40,6 +40,41 @@ except ImportError:
 from .routes.validation import router as validation_router
 from .routes.diff import router as diff_router
 
+import re
+
+
+def should_log_activity(source: str, message: str) -> bool:
+    """Filter to only log important activities."""
+    # Important keywords to always log
+    important_keywords = [
+        'started', 'stopped', 'connected', 'disconnected', 'error', 
+        'trade', 'position', 'closed', 'opened', 'executed',
+        'paper trading started', 'paper trading stopped'
+    ]
+    
+    # Skip repetitive wallet balance checks
+    skip_patterns = [
+        r'wallet connected.*Balance',
+        r'Testing.*API connection',
+        r'Fetching wallet balance',
+        r'Successfully fetched wallet balance'
+    ]
+    
+    message_lower = message.lower()
+    
+    # Skip if matches skip patterns
+    for pattern in skip_patterns:
+        if re.search(pattern, message, re.IGNORECASE):
+            return False
+    
+    # Log if contains important keywords
+    for keyword in important_keywords:
+        if keyword in message_lower:
+            return True
+    
+    return False
+
+
 runtime = RuntimeController()
 validator = ValidationManager()
 pair_manager = PairManager() if PairManager else None
@@ -51,6 +86,10 @@ activity_log = deque(maxlen=100)  # Keep last 100 activities
 
 def log_activity(source: str, message: str, activity_type: str = "info"):
     """Add activity to the log."""
+    # Only log important activities
+    if not should_log_activity(source, message):
+        return
+        
     activity = {
         "timestamp": datetime.now().isoformat(),
         "source": source,
@@ -110,7 +149,7 @@ def create_app() -> FastAPI:
     
     @app.get("/", response_class=HTMLResponse)
     def dashboard(request: Request):
-        return templates.TemplateResponse("dashboard-new.html", {"request": request})
+        return templates.TemplateResponse("dashboard.html", {"request": request})
 
     @app.get("/status")
     def status():
@@ -570,7 +609,8 @@ def create_app() -> FastAPI:
                             "history": [{"balance": portfolio_state.total_balance_usd}]
                         }
                         print(f"Wallet data: {live_wallet_data}")
-                        log_activity("BYBIT", f"{asset.upper()} wallet connected - Balance: ${portfolio_state.total_balance_usd:.2f}", "success")
+                        # Only log on first connection or balance change
+                        # log_activity("BYBIT", f"{asset.upper()} wallet connected - Balance: ${portfolio_state.total_balance_usd:.2f}", "success")
                     else:
                         connection_status = "no_balance"
                         print("No balance found in any account type")
@@ -614,32 +654,11 @@ def create_app() -> FastAPI:
             elif asset in ["forex", "forex_options"] and ibkr_connection_manager:
                 try:
                     # Get IBKR account balance
-                    if await ibkr_connection_manager.is_connected():
+                    if ibkr_connection_manager.is_connected():
                         connection_status = "connected"
-                        account_values = await ibkr_connection_manager.get_account_values()
-                        
-                        # Extract key account values
-                        total_balance = 0.0
-                        available_balance = 0.0
-                        unrealized_pnl = 0.0
-                        
-                        for value in account_values:
-                            if value.tag == "NetLiquidation":
-                                total_balance = float(value.value)
-                            elif value.tag == "AvailableFunds":
-                                available_balance = float(value.value)
-                            elif value.tag == "UnrealizedPnL":
-                                unrealized_pnl = float(value.value)
-                        
-                        live_wallet_data = {
-                            "balance": total_balance,
-                            "available_balance": available_balance,
-                            "used_in_positions": total_balance - available_balance,
-                            "pnl": unrealized_pnl,
-                            "pnl_percent": (unrealized_pnl / total_balance * 100) if total_balance > 0 else 0.0,
-                            "history": [{"balance": total_balance}]
-                        }
-                        print(f"IBKR wallet data: {live_wallet_data}")
+                        live_wallet_data = await ibkr_connection_manager.get_wallet_data()
+                        # Only log on first connection or balance change
+                        # log_activity("IBKR", f"{asset.upper()} wallet connected - Balance: ${live_wallet_data['balance']:.2f}")
                     else:
                         connection_status = "offline"
                         print("IBKR not connected")

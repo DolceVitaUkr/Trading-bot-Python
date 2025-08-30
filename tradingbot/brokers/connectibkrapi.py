@@ -43,8 +43,13 @@ class IBKRConnectionManager:
     def on_tws_connect(self):
         """Event handler for successful TWS connection."""
         log.info("TWS/Gateway connection successful.")
-        log.info(f"Server version: {self.ib.serverVersion()}")
-        log.info(f"TWS connection time: {self.ib.twsConnectionTime()}")
+        try:
+            if hasattr(self.ib, 'serverVersion'):
+                log.info(f"Server version: {self.ib.serverVersion()}")
+            if hasattr(self.ib, 'twsConnectionTime'):
+                log.info(f"TWS connection time: {self.ib.twsConnectionTime()}")
+        except Exception as e:
+            log.debug(f"Could not log server info: {e}")
 
     def on_tws_disconnect(self):
         """Event handler for TWS disconnection."""
@@ -92,7 +97,10 @@ class IBKRConnectionManager:
         is_paper = account_id.startswith('D')
         self._is_paper_account = is_paper
 
-        if IBKR_API_MODE == "paper" and not is_paper:
+        # Check if we're using paper trading mode with live account
+        paper_trading_enabled = config_manager.get_config().get("bot_settings", {}).get("ibkr_paper_trading", False)
+        
+        if IBKR_API_MODE == "paper" and not is_paper and not paper_trading_enabled:
             log.error(f"Configuration requires a paper account, but connected to a live account ({account_id}).")
             await self.disconnect_tws()
             raise ConnectionError("Connected to live account in paper mode.")
@@ -101,8 +109,11 @@ class IBKRConnectionManager:
 
         if TRAINING_MODE:
             log.info("TRAINING_MODE is ON. Order placement will be blocked.")
-            if not self.ib.client.isReadOnly():
-                 log.warning("TRAINING_MODE is ON, but TWS API is not set to Read-Only. Orders can still be placed.")
+            try:
+                if hasattr(self.ib.client, 'isReadOnly') and not self.ib.client.isReadOnly():
+                    log.warning("TRAINING_MODE is ON, but TWS API is not set to Read-Only. Orders can still be placed.")
+            except Exception:
+                pass  # Skip if client doesn't have isReadOnly method
 
     async def disconnect_tws(self):
         """Disconnects from the TWS/Gateway."""
@@ -186,9 +197,9 @@ class IBKRConnectionManager:
             available = 0.0
             
             for item in summary:
-                if item.tag == 'TotalCashBalance' and item.currency == 'BASE':
+                if item.tag == 'NetLiquidation' and item.currency in ['BASE', 'USD']:
                     balance = float(item.value)
-                elif item.tag == 'AvailableFunds' and item.currency == 'BASE':
+                elif item.tag == 'AvailableFunds' and item.currency in ['BASE', 'USD']:
                     available = float(item.value)
             
             return {

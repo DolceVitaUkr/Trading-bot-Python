@@ -1,0 +1,16 @@
+{
+  "balance": 1000.0,
+  "starting_balance": 1000.0,
+  "positions": [],
+  "trades": [],
+  "pnl_history": [
+    {
+      "timestamp": "2025-08-30T08:26:18.756970",
+      "balance": 1000.0
+    }
+  ],
+  "violations_log": [],
+  "violation_count": 0,
+  "strict_enforcement": true,
+  "last_update": "2025-08-30T08:26:18.756970"
+}

@@ -1,0 +1,50 @@
+{
+  "dependencies": {
+    "fastapi": "OK",
+    "uvicorn": "OK",
+    "aiohttp": "OK",
+    "pybit": "OK",
+    "ib_insync": "OK",
+    "ccxt": "FAILED: No module named 'ccxt'",
+    "telegram": "OK",
+    "numpy": "OK",
+    "pandas": "OK",
+    "structlog": "OK",
+    "orjson": "OK",
+    "ujson": "OK"
+  },
+  "paper_traders": {
+    "crypto": {
+      "status": "OK",
+      "balance": 1000.0,
+      "positions": 0
+    },
+    "futures": {
+      "status": "OK",
+      "balance": 1000.0,
+      "positions": 0
+    },
+    "forex": {
+      "status": "OK",
+      "balance": 1000.0,
+      "positions": 0
+    },
+    "forex_options": {
+      "status": "OK",
+      "balance": 1000.0,
+      "positions": 0
+    }
+  },
+  "api_endpoints": {
+    "/stats/global": "OK",
+    "/activity/recent": "OK",
+    "/asset/crypto/status": "OK",
+    "/asset/crypto/positions": "OK",
+    "/brokers/status": "OK",
+    "/ping": "OK"
+  },
+  "mcp_integration": {
+    "ide": "OK"
+  },
+  "overall": "FAILED"
+}

@@ -1,57 +1,89 @@
 {
   "balance": 1000.0,
   "starting_balance": 1000.0,
-  "positions": [
-    {
-      "id": "pos_1_1756442396",
-      "symbol": "BTC/USDT",
-      "side": "buy",
-      "size": 0.0006726095456746722,
-      "entry_price": 111506.0,
-      "current_price": 108041.0,
-      "take_profit": 113736.12,
-      "stop_loss": 94780.09999999999,
-      "pnl": -2.3305920757627394,
-      "pnl_pct": -3.1074561010169854,
-      "timestamp": "2025-08-29T06:39:56.810439",
-      "status": "open",
-      "market_data_source": "bybit_live_verified",
-      "real_data": true,
-      "strict_validated": true,
-      "max_loss_enforced": true,
-      "sl_violations": 0,
-      "last_update": "2025-08-29T21:02:49.512024"
-    },
-    {
-      "id": "pos_2_1756442396",
-      "symbol": "ETH/USDT",
-      "side": "buy",
-      "size": 0.016726435797248834,
-      "entry_price": 4483.92,
-      "current_price": 4316.0,
-      "take_profit": 4573.5984,
-      "stop_loss": 3811.332,
-      "pnl": -2.8087030990740254,
-      "pnl_pct": -3.744937465432034,
-      "timestamp": "2025-08-29T06:39:56.810439",
-      "status": "open",
-      "market_data_source": "bybit_live_verified",
-      "real_data": true,
-      "strict_validated": true,
-      "max_loss_enforced": true,
-      "sl_violations": 0,
-      "last_update": "2025-08-29T21:02:49.512024"
-    }
-  ],
+  "positions": [],
   "trades": [],
   "pnl_history": [
     {
-      "timestamp": "2025-08-29T06:39:39.498111",
+      "timestamp": "2025-08-30T07:40:53.588899",
+      "balance": 993.13
+    },
+    {
+      "timestamp": "2025-08-30T07:46:53.588899",
+      "balance": 993.92
+    },
+    {
+      "timestamp": "2025-08-30T07:52:53.588899",
+      "balance": 989.23
+    },
+    {
+      "timestamp": "2025-08-30T07:58:53.588899",
+      "balance": 986.23
+    },
+    {
+      "timestamp": "2025-08-30T08:04:53.588899",
+      "balance": 990.23
+    },
+    {
+      "timestamp": "2025-08-30T08:10:53.588899",
+      "balance": 986.82
+    },
+    {
+      "timestamp": "2025-08-30T08:16:53.588899",
+      "balance": 982.85
+    },
+    {
+      "timestamp": "2025-08-30T08:22:53.588899",
+      "balance": 982.07
+    },
+    {
+      "timestamp": "2025-08-30T08:28:53.588899",
+      "balance": 985.65
+    },
+    {
+      "timestamp": "2025-08-30T08:34:53.588899",
+      "balance": 987.15
+    },
+    {
+      "timestamp": "2025-08-30T08:40:53.588899",
+      "balance": 990.8
+    },
+    {
+      "timestamp": "2025-08-30T08:46:53.588899",
+      "balance": 995.08
+    },
+    {
+      "timestamp": "2025-08-30T08:52:53.588899",
+      "balance": 992.42
+    },
+    {
+      "timestamp": "2025-08-30T08:58:53.588899",
+      "balance": 990.21
+    },
+    {
+      "timestamp": "2025-08-30T09:04:53.588899",
+      "balance": 990.81
+    },
+    {
+      "timestamp": "2025-08-30T09:10:53.588899",
+      "balance": 993.43
+    },
+    {
+      "timestamp": "2025-08-30T09:16:53.588899",
+      "balance": 998.34
+    },
+    {
+      "timestamp": "2025-08-30T09:22:53.588899",
+      "balance": 999.32
+    },
+    {
+      "timestamp": "2025-08-30T09:28:53.588899",
+      "balance": 997.73
+    },
+    {
+      "timestamp": "2025-08-30T09:34:53.572900",
       "balance": 1000.0
     }
   ],
-  "violations_log": [],
-  "violation_count": 0,
-  "strict_enforcement": true,
-  "last_update": "2025-08-29T21:02:49.512024"
+  "violations_log": []
 }

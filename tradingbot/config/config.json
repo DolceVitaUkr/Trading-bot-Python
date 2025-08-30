@@ -12,7 +12,7 @@
     "ibkr": {
       "host": "127.0.0.1",
       "port": 7496,
-      "client_id": 1
+      "client_id": 2
     }
   },
   "server": {
@@ -41,7 +41,7 @@
     "PAPER_RESET_THRESHOLD": 0.5
   },
   "bot_settings": {
-    "ibkr_api_mode": "paper",
+    "ibkr_api_mode": "live",
     "products_enabled": [
       "CRYPTO_SPOT",
       "CRYPTO_FUTURES",
@@ -59,17 +59,19 @@
     "simulation_start_balance": 1000.0,
     "per_trade_risk_percent": 0.01,
     "min_trade_amount_usd": 10.0,
-    "max_klines_request": 900
+    "max_klines_request": 900,
+    "ibkr_paper_trading": true,
+    "training_mode": false
   },
   "kpi_targets": {
-    "win_rate": 0.70,
+    "win_rate": 0.7,
     "sharpe_ratio": 2.2,
     "risk_reward_ratio": 1.5,
     "avg_profit_swing": 0.07,
     "avg_profit_scalp": 0.003,
     "max_drawdown": 0.12,
     "daily_loss_limit": 0.03,
-    "monthly_profit_target": 0.10,
+    "monthly_profit_target": 0.1,
     "consec_loss_cooldown": 3
   }
 }

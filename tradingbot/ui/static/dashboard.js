@@ -30,6 +30,21 @@ class MultiAssetDashboard {
         if (emergencyBtn) {
             emergencyBtn.addEventListener('click', () => this.emergencyStopAll());
         }
+        
+        // Bind toggle switches for each asset
+        this.assets.forEach(asset => {
+            // Paper trading toggle
+            const paperToggle = document.getElementById(`${asset}-paper-toggle`);
+            if (paperToggle) {
+                paperToggle.addEventListener('change', (e) => this.handlePaperToggle(asset, e.target.checked));
+            }
+            
+            // Live trading toggle
+            const liveToggle = document.getElementById(`${asset}-live-toggle`);
+            if (liveToggle) {
+                liveToggle.addEventListener('change', (e) => this.handleLiveToggle(asset, e.target.checked));
+            }
+        });
     }
 
     initCharts() {
@@ -420,7 +435,16 @@ class MultiAssetDashboard {
         const chartKey = `${asset}-${type}`;
         const chart = this.charts[chartKey];
         
-        if (!chart || !walletData || !walletData.history) return;
+        console.log(`Updating chart for ${chartKey}:`, walletData);
+        console.log(`Chart exists: ${!!chart}`);
+        console.log(`Wallet data exists: ${!!walletData}`);
+        console.log(`History exists: ${!!walletData?.history}`);
+        console.log(`History length: ${walletData?.history?.length || 0}`);
+        
+        if (!chart || !walletData || !walletData.history) {
+            console.log(`Chart update skipped for ${chartKey}: chart=${!!chart}, walletData=${!!walletData}, history=${walletData?.history?.length || 0}`);
+            return;
+        }
 
         const history = walletData.history.slice(-20); // Last 20 data points
         const data = history.map(point => point.balance);
@@ -463,12 +487,17 @@ class MultiAssetDashboard {
     }
 
     updatePositions(asset, positionsData) {
-        // Handle the nested position data structure
-        const paperData = positionsData.paper || {};
-        const liveData = positionsData.live || {};
+        console.log(`Updating positions for ${asset}:`, positionsData);
+        
+        // Handle the nested position data structure - API returns paper_trading/live_trading
+        const paperData = positionsData.paper_trading || positionsData.paper || {};
+        const liveData = positionsData.live_trading || positionsData.live || {};
         
         const paperPositions = paperData.positions || [];
         const livePositions = liveData.positions || [];
+        
+        console.log(`Paper positions count: ${paperPositions.length}`, paperPositions);
+        console.log(`Live positions count: ${livePositions.length}`, livePositions);
         
         // Update paper trading metrics
         const paperPositionElement = document.getElementById(`${asset}-paper-positions`);
@@ -502,114 +531,279 @@ class MultiAssetDashboard {
     }
     
     updatePositionsList(container, positions) {
-        // Check if container is a table
-        const isTable = container.tagName === 'TABLE';
-        const tbody = isTable ? container.querySelector('tbody') : null;
+        // First check if we're dealing with the new table format
+        const isTable = container.id && container.id.includes('-positions-table');
+        const tbody = isTable ? document.getElementById(container.id.replace('-table', '-tbody')) : null;
         
-        if (!positions || positions.length === 0) {
-            if (isTable && tbody) {
-                tbody.innerHTML = '<tr class="no-positions"><td colspan="7">No active positions</td></tr>';
-            } else {
-                container.innerHTML = '<div class="no-positions">No active positions</div>';
-            }
+        if (isTable && tbody) {
+            // New table format
+            this.updatePositionsTable(container.id.split('-')[0], container.id.split('-')[1], positions);
             return;
         }
         
-        if (isTable && tbody) {
-            // Render as table rows
-            tbody.innerHTML = '';
+        // Old format handling (for backwards compatibility)
+        const section = container.closest('.positions-section');
+        
+        if (!positions || positions.length === 0) {
+            if (section) section.style.display = 'none';
+            container.innerHTML = '<div class="no-positions" style="color: #6c757d; font-size: 12px;">No active positions</div>';
+            return;
+        }
+        
+        if (section) section.style.display = 'block';
+        
+        container.innerHTML = '';
+        
+        positions.forEach(position => {
+            const pnl = position.pnl || 0;
+            const pnlPct = position.pnl_pct || 0;
+            const pnlClass = pnl >= 0 ? 'positive' : 'negative';
+            const sideClass = position.side ? position.side.toLowerCase() : '';
             
-            positions.forEach(position => {
-                const pnl = position.pnl || 0;
-                const pnlPct = position.pnl_pct || 0;
-                const pnlClass = pnl >= 0 ? 'positive' : 'negative';
-                const sideClass = position.side ? position.side.toLowerCase() : '';
-                
-                // Calculate position value in USD
-                const size = position.size || 0;
-                const entryPrice = position.entry_price || 0;
-                const positionValue = size * entryPrice;
-                
-                // Calculate duration using timestamp
-                const duration = position.duration || this.calculateDurationFromNow(position.timestamp);
-                
-                // TP/SL values
-                const takeProfit = position.take_profit || 0;
-                const stopLoss = position.stop_loss || 0;
-                
-                const row = document.createElement('tr');
-                row.innerHTML = `
-                    <td class="position-symbol">${position.symbol || 'N/A'}</td>
-                    <td class="position-side ${sideClass}">${(position.side || 'N/A').toUpperCase()}</td>
-                    <td class="position-size">${this.formatCurrency(positionValue)}</td>
-                    <td class="entry-price">${this.formatPrice(position.entry_price || 0)}</td>
-                    <td class="current-price">${this.formatPrice(position.current_price || 0)}</td>
-                    <td class="position-pnl ${pnlClass}">${pnl >= 0 ? '+' : ''}${this.formatCurrency(pnl)} (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%)</td>
-                    <td class="take-profit">${this.formatPrice(takeProfit)}</td>
-                    <td class="stop-loss">${this.formatPrice(stopLoss)}</td>
-                    <td class="position-duration">${duration}</td>
-                `;
-                
-                // Store position data for sorting
-                row.positionData = {
-                    symbol: position.symbol || '',
-                    side: position.side || '',
-                    size: positionValue,
-                    entry_price: parseFloat(position.entry_price) || 0,
-                    current_price: parseFloat(position.current_price) || 0,
-                    pnl: pnl,
-                    take_profit: parseFloat(takeProfit) || 0,
-                    stop_loss: parseFloat(stopLoss) || 0,
-                    duration: duration
-                };
-                
-                tbody.appendChild(row);
-            });
-            
-            // Setup sorting for positions table
-            this.setupPositionsTableSorting(container);
-            
-        } else {
-            // Fallback to original card-based layout
-            const positionsHtml = positions.map(position => {
-                const pnl = position.pnl || 0;
-                const pnlPct = position.pnl_pct || 0;
-                const pnlClass = pnl >= 0 ? 'positive' : 'negative';
-                
-                return `
-                    <div class="position-item">
-                        <div class="position-header">
-                            <span class="position-symbol">${position.symbol}</span>
-                            <span class="position-side ${position.side}">${position.side.toUpperCase()}</span>
+            const positionDiv = document.createElement('div');
+            positionDiv.style.cssText = 'padding: 8px; border-bottom: 1px solid #2d3748; font-size: 12px;';
+            positionDiv.innerHTML = `
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <span style="font-weight: 600; color: #e2e8f0;">${position.symbol || 'N/A'}</span>
+                        <span class="position-side ${sideClass}" style="margin-left: 8px; font-size: 11px; text-transform: uppercase;">${position.side || 'N/A'}</span>
+                    </div>
+                    <div style="text-align: right;">
+                        <div class="position-pnl ${pnlClass}" style="font-weight: 600;">
+                            ${pnl >= 0 ? '+' : ''}${this.formatCurrency(pnl)} (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%)
                         </div>
-                        <div class="position-details">
-                            <div class="position-detail">
-                                <span class="position-label">Entry Price</span>
-                                <span class="position-value">${this.formatCurrency(position.entry_price || 0)}</span>
-                            </div>
-                            <div class="position-detail">
-                                <span class="position-label">Current Price</span>
-                                <span class="position-value">${this.formatCurrency(position.current_price || 0)}</span>
-                            </div>
-                            <div class="position-detail">
-                                <span class="position-label">P&L USD</span>
-                                <span class="position-value position-pnl ${pnlClass}">
-                                    ${pnl >= 0 ? '+' : ''}${this.formatCurrency(pnl)}
-                                </span>
-                            </div>
-                            <div class="position-detail">
-                                <span class="position-label">P&L %</span>
-                                <span class="position-value position-pnl ${pnlClass}">
-                                    ${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%
-                                </span>
-                            </div>
+                        <div style="font-size: 11px; color: #8892b0;">
+                            Entry: ${this.formatPrice(position.entry_price || 0)}
                         </div>
                     </div>
-                `;
-            }).join('');
+                </div>
+            `;
             
-            container.innerHTML = positionsHtml;
+            container.appendChild(positionDiv);
+        });
+    }
+    
+    // New function for updating positions table
+    updatePositionsTable(asset, mode, positions) {
+        const tbody = document.getElementById(`${asset}-${mode}-positions-tbody`);
+        if (!tbody) return;
+        
+        if (!positions || positions.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; padding: 20px; color: #6c757d;">No active positions</td></tr>';
+            const section = document.getElementById(`${asset}-${mode}-positions-section`);
+            if (section) section.style.display = 'block';
+            return;
         }
+        
+        const section = document.getElementById(`${asset}-${mode}-positions-section`);
+        if (section) section.style.display = 'block';
+        
+        tbody.innerHTML = '';
+        
+        positions.forEach(position => {
+            const row = document.createElement('tr');
+            const pnl = position.pnl || 0;
+            const pnlPct = position.pnl_pct || 0;
+            const pnlClass = pnl >= 0 ? 'positive' : 'negative';
+            const sideClass = position.side ? position.side.toLowerCase() : '';
+            
+            row.innerHTML = `
+                <td style="font-weight: 600;">${position.symbol}</td>
+                <td class="${sideClass}">${position.side}</td>
+                <td>$${(position.size * position.entry_price).toFixed(2)}</td>
+                <td>$${position.entry_price.toFixed(position.entry_price < 1 ? 6 : 2)}</td>
+                <td>$${position.current_price.toFixed(position.current_price < 1 ? 6 : 2)}</td>
+                <td class="${pnlClass}" style="font-weight: 600;">
+                    ${pnl >= 0 ? '+' : ''}$${Math.abs(pnl).toFixed(2)} (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%)
+                </td>
+                <td style="font-size: 11px;">
+                    TP: ${position.take_profit ? '$' + position.take_profit.toFixed(2) : '-'}<br>
+                    SL: ${position.stop_loss ? '$' + position.stop_loss.toFixed(2) : '-'}
+                </td>
+            `;
+            
+            // Store data for sorting
+            row.dataset.symbol = position.symbol;
+            row.dataset.side = position.side;
+            row.dataset.size = position.size * position.entry_price;
+            row.dataset.pnl = pnl;
+            
+            tbody.appendChild(row);
+        });
+        
+        // Log activity for positions
+        this.updateAssetActivity(asset, mode, {
+            type: 'position',
+            message: `${positions.length} active position(s)`,
+            timestamp: new Date().toISOString()
+        });
+    }
+
+    updateActivityLog(asset, mode, activities) {
+        const listId = `${asset}-${mode}-activity-list`;
+        const list = document.getElementById(listId);
+        if (!list) return;
+        
+        // Clear current content
+        list.innerHTML = '';
+        
+        if (!activities || activities.length === 0) {
+            list.innerHTML = '<div class="no-activity" style="text-align: center; color: #6c757d; padding: 20px; font-size: 12px;">No activity yet</div>';
+            return;
+        }
+        
+        // Add each activity
+        activities.forEach(activity => {
+            const item = document.createElement('div');
+            item.className = `activity-item ${activity.type}`;
+            item.style.cssText = 'padding: 8px 12px; border-bottom: 1px solid #2d3748; font-size: 12px;';
+            
+            const time = new Date(activity.timestamp).toLocaleTimeString();
+            const icon = activity.type === 'trade' ? '📊' : 
+                        activity.type === 'error' ? '⚠️' : 
+                        activity.type === 'position' ? '📈' : '📝';
+            
+            item.innerHTML = `
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span>${icon} ${activity.message}</span>
+                    <span style="color: #6c757d; font-size: 11px;">${time}</span>
+                </div>
+            `;
+            
+            list.appendChild(item);
+        });
+    }
+
+    updateTradeHistory(asset, mode, trades) {
+        const tbodyId = `${asset}-${mode}-history-tbody`;
+        const tbody = document.getElementById(tbodyId);
+        if (!tbody) return;
+        
+        // Clear current content
+        tbody.innerHTML = '';
+        
+        if (!trades || trades.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; padding: 20px; color: #6c757d;">No completed trades yet</td></tr>';
+            return;
+        }
+        
+        // Add each trade
+        trades.forEach(trade => {
+            const row = document.createElement('tr');
+            const pnlClass = trade.pnl >= 0 ? 'positive' : 'negative';
+            
+            row.innerHTML = `
+                <td style="padding: 8px; color: #e2e8f0;">${mode.toUpperCase()}</td>
+                <td style="padding: 8px; color: #e2e8f0;">${trade.side}</td>
+                <td style="padding: 8px; color: #e2e8f0;">${new Date(trade.open_time).toLocaleString()}</td>
+                <td style="padding: 8px; color: #e2e8f0;">$${trade.size_usd.toFixed(2)}</td>
+                <td style="padding: 8px; color: #e2e8f0;">$${trade.open_price.toFixed(4)}</td>
+                <td style="padding: 8px; color: #e2e8f0;">${new Date(trade.close_time).toLocaleString()}</td>
+                <td style="padding: 8px; color: #e2e8f0;">$${trade.close_price.toFixed(4)}</td>
+                <td style="padding: 8px;" class="${pnlClass}">$${trade.pnl.toFixed(2)}</td>
+                <td style="padding: 8px;" class="${pnlClass}">${trade.pnl_pct.toFixed(2)}%</td>
+                <td style="padding: 8px; color: #e2e8f0;">$${trade.balance.toFixed(2)}</td>
+            `;
+            
+            tbody.appendChild(row);
+        });
+    }
+
+    
+    // Function to update asset activity log
+    updateAssetActivity(asset, mode, activity) {
+        const activityList = document.getElementById(`${asset}-${mode}-activity-list`);
+        if (!activityList) return;
+        
+        // Remove "no activity" message if present
+        const noActivity = activityList.querySelector('.no-activity');
+        if (noActivity) {
+            noActivity.remove();
+        }
+        
+        // Create activity item
+        const activityItem = document.createElement('div');
+        activityItem.className = `activity-item ${activity.type}`;
+        activityItem.style.cssText = 'padding: 6px 10px; border-left: 3px solid #4a5568; margin-bottom: 8px; background: #2d3748; border-radius: 4px; font-size: 12px; color: #e2e8f0;';
+        
+        if (activity.type === 'trade') activityItem.style.borderLeftColor = '#48bb78';
+        else if (activity.type === 'error') activityItem.style.borderLeftColor = '#f56565';
+        else if (activity.type === 'position') activityItem.style.borderLeftColor = '#4299e1';
+        
+        const timeDiv = document.createElement('div');
+        timeDiv.className = 'activity-time';
+        timeDiv.style.cssText = 'font-size: 11px; color: #718096; margin-bottom: 2px;';
+        timeDiv.textContent = new Date(activity.timestamp).toLocaleTimeString();
+        
+        const messageDiv = document.createElement('div');
+        messageDiv.className = 'activity-message';
+        messageDiv.innerHTML = `<strong>[${mode.toUpperCase()}]</strong> ${activity.message}`;
+        
+        activityItem.appendChild(timeDiv);
+        activityItem.appendChild(messageDiv);
+        
+        // Add to top of list
+        activityList.insertBefore(activityItem, activityList.firstChild);
+        
+        // Keep only last 50 activities
+        while (activityList.children.length > 50) {
+            activityList.removeChild(activityList.lastChild);
+        }
+    }
+    
+    // Function to update history table
+    updateHistoryTable(asset, mode, trades) {
+        const tbody = document.getElementById(`${asset}-${mode}-history-tbody`);
+        if (!tbody) return;
+        
+        if (!trades || trades.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; padding: 20px; color: #6c757d;">No completed trades yet</td></tr>';
+            return;
+        }
+        
+        tbody.innerHTML = '';
+        
+        trades.forEach(trade => {
+            const row = document.createElement('tr');
+            const pnl = trade.pnl || 0;
+            const pnlPct = trade.pnl_pct || 0;
+            const pnlClass = pnl >= 0 ? 'positive' : 'negative';
+            
+            row.innerHTML = `
+                <td><span class="badge ${mode}" style="padding: 2px 6px; border-radius: 3px; font-size: 10px; background: ${mode === 'paper' ? '#3b82f6' : '#f59e0b'}; color: white;">${mode.toUpperCase()}</span></td>
+                <td class="${trade.side.toLowerCase()}">${trade.side}</td>
+                <td>${new Date(trade.open_time).toLocaleString()}</td>
+                <td>$${trade.size_usd.toFixed(2)}</td>
+                <td>$${trade.open_price.toFixed(trade.open_price < 1 ? 6 : 2)}</td>
+                <td>${new Date(trade.close_time).toLocaleString()}</td>
+                <td>$${trade.close_price.toFixed(trade.close_price < 1 ? 6 : 2)}</td>
+                <td class="${pnlClass}" style="font-weight: 600;">${pnl >= 0 ? '+' : ''}$${Math.abs(pnl).toFixed(2)}</td>
+                <td class="${pnlClass}">${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%</td>
+                <td>$${trade.balance_after.toFixed(2)}</td>
+            `;
+            
+            tbody.appendChild(row);
+        });
+    }
+    
+    formatPrice(price) {
+        if (!price || price === 0) return '-';
+        return price < 1 ? price.toFixed(6) : price.toFixed(2);
+    }
+    
+    calculateDurationFromNow(timestamp) {
+        if (!timestamp) return '-';
+        const start = new Date(timestamp);
+        const now = new Date();
+        const diff = now - start;
+        
+        const hours = Math.floor(diff / (1000 * 60 * 60));
+        const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+        
+        if (hours > 0) {
+            return `${hours}h ${minutes}m`;
+        }
+        return `${minutes}m`;
     }
 
     updateStrategyStatus(asset, strategyData) {
@@ -1006,6 +1200,93 @@ class MultiAssetDashboard {
             this.logActivity('SYSTEM', 'Emergency stop failed', 'error');
         }
     }
+    
+    async handlePaperToggle(asset, isEnabled) {
+        const action = isEnabled ? 'start' : 'stop';
+        const assetUpper = asset.toUpperCase();
+        
+        console.log(`${action}ing paper trading for ${assetUpper}...`);
+        this.logActivity(assetUpper, `${action === 'start' ? 'Starting' : 'Stopping'} paper trading...`);
+        
+        try {
+            const response = await fetch(`${this.baseUrl}/asset/${asset}/${action}/paper`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            const data = await response.json();
+            this.logActivity(assetUpper, data.message || `Paper trading ${action}ed`, 'success');
+            
+            // Update asset status
+            await this.updateAsset(asset);
+
+        } catch (error) {
+            console.error(`Failed to ${action} paper trading for ${asset}:`, error);
+            this.logActivity(assetUpper, `Failed to ${action} paper trading`, 'error');
+            
+            // Reset toggle on failure
+            const toggle = document.getElementById(`${asset}-paper-toggle`);
+            if (toggle) toggle.checked = !isEnabled;
+        }
+    }
+    
+    async handleLiveToggle(asset, isEnabled) {
+        if (isEnabled) {
+            // Double confirmation for live trading
+            const confirmed = confirm(`⚠️ LIVE TRADING CONFIRMATION ⚠️\n\nYou are about to enable LIVE TRADING for ${asset.toUpperCase()}.\n\nThis will use REAL MONEY and execute REAL trades.\n\nAre you absolutely sure?`);
+            
+            if (!confirmed) {
+                // Reset toggle
+                const toggle = document.getElementById(`${asset}-live-toggle`);
+                if (toggle) toggle.checked = false;
+                return;
+            }
+            
+            const doubleConfirmed = confirm(`⚠️ FINAL CONFIRMATION ⚠️\n\nLAST CHANCE: This will enable LIVE TRADING with REAL MONEY for ${asset.toUpperCase()}.\n\nClick OK to proceed with LIVE trading.`);
+            
+            if (!doubleConfirmed) {
+                // Reset toggle
+                const toggle = document.getElementById(`${asset}-live-toggle`);
+                if (toggle) toggle.checked = false;
+                return;
+            }
+        }
+        
+        const action = isEnabled ? 'start' : 'stop';
+        const assetUpper = asset.toUpperCase();
+        
+        console.log(`${action}ing live trading for ${assetUpper}...`);
+        this.logActivity(assetUpper, `${action === 'start' ? 'Starting' : 'Stopping'} live trading...`, 'warning');
+        
+        try {
+            const response = await fetch(`${this.baseUrl}/asset/${asset}/${action}/live`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            const data = await response.json();
+            this.logActivity(assetUpper, data.message || `Live trading ${action}ed`, isEnabled ? 'warning' : 'success');
+            
+            // Update asset status
+            await this.updateAsset(asset);
+
+        } catch (error) {
+            console.error(`Failed to ${action} live trading for ${asset}:`, error);
+            this.logActivity(assetUpper, `Failed to ${action} live trading`, 'error');
+            
+            // Reset toggle on failure
+            const toggle = document.getElementById(`${asset}-live-toggle`);
+            if (toggle) toggle.checked = !isEnabled;
+        }
+    }
 
     logActivity(asset, message, type = 'info') {
         const activityList = document.getElementById('activityList');
@@ -1073,6 +1354,147 @@ class MultiAssetDashboard {
         Object.values(this.charts).forEach(chart => {
             if (chart) chart.destroy();
         });
+    }
+    
+    // Add sorting functions for positions table
+    sortPositions(asset, mode, column) {
+        const tbody = document.getElementById(`${asset}-${mode}-positions-tbody`);
+        if (!tbody) return;
+        
+        const rows = Array.from(tbody.querySelectorAll('tr'));
+        if (rows.length === 0 || rows[0].querySelector('td[colspan]')) return;
+        
+        rows.sort((a, b) => {
+            const aVal = a.dataset[column];
+            const bVal = b.dataset[column];
+            
+            if (column === 'symbol' || column === 'side') {
+                return aVal.localeCompare(bVal);
+            } else {
+                return parseFloat(bVal) - parseFloat(aVal);
+            }
+        });
+        
+        tbody.innerHTML = '';
+        rows.forEach(row => tbody.appendChild(row));
+    }
+    
+    // Setup filters and event handlers
+    setupFilters() {
+        // Position search
+        document.querySelectorAll('[id$="-positions-search"]').forEach(input => {
+            input.addEventListener('input', (e) => {
+                const parts = e.target.id.split('-');
+                const asset = parts[0];
+                const mode = parts[1];
+                const searchTerm = e.target.value.toLowerCase();
+                const tbody = document.getElementById(`${asset}-${mode}-positions-tbody`);
+                
+                tbody.querySelectorAll('tr').forEach(row => {
+                    const symbol = row.dataset.symbol;
+                    if (symbol && symbol.toLowerCase().includes(searchTerm)) {
+                        row.style.display = '';
+                    } else if (!row.querySelector('td[colspan]')) {
+                        row.style.display = 'none';
+                    }
+                });
+            });
+        });
+        
+        // Position sort dropdown
+        document.querySelectorAll('[id$="-positions-sort"]').forEach(select => {
+            select.addEventListener('change', (e) => {
+                const parts = e.target.id.split('-');
+                const asset = parts[0];
+                const mode = parts[1];
+                const sortBy = e.target.value;
+                
+                let column = 'symbol';
+                if (sortBy === 'pnl-desc' || sortBy === 'pnl-asc') column = 'pnl';
+                else if (sortBy === 'size-desc') column = 'size';
+                
+                this.sortPositions(asset, mode, column);
+            });
+        });
+        
+        // Activity filter
+        document.querySelectorAll('[id$="-activity-filter"]').forEach(select => {
+            select.addEventListener('change', (e) => {
+                const parts = e.target.id.split('-');
+                const asset = parts[0];
+                const mode = parts[1];
+                const filterType = e.target.value;
+                const activityList = document.getElementById(`${asset}-${mode}-activity-list`);
+                
+                activityList.querySelectorAll('.activity-item').forEach(item => {
+                    if (filterType === 'all' || item.classList.contains(filterType)) {
+                        item.style.display = '';
+                    } else {
+                        item.style.display = 'none';
+                    }
+                });
+            });
+        });
+        
+        // History search
+        document.querySelectorAll('[id$="-history-search"]').forEach(input => {
+            input.addEventListener('input', (e) => {
+                const parts = e.target.id.split('-');
+                const asset = parts[0];
+                const mode = parts[1];
+                const searchTerm = e.target.value.toLowerCase();
+                const tbody = document.getElementById(`${asset}-${mode}-history-tbody`);
+                
+                tbody.querySelectorAll('tr').forEach(row => {
+                    const text = row.textContent.toLowerCase();
+                    if (text.includes(searchTerm)) {
+                        row.style.display = '';
+                    } else if (!row.querySelector('td[colspan]')) {
+                        row.style.display = 'none';
+                    }
+                });
+            });
+        });
+        
+        // History sort dropdown
+        document.querySelectorAll('[id$="-history-sort"]').forEach(select => {
+            select.addEventListener('change', (e) => {
+                const parts = e.target.id.split('-');
+                const asset = parts[0];
+                const mode = parts[1];
+                const sortBy = e.target.value;
+                
+                // Implement history sorting based on the selected option
+                this.sortHistoryTable(asset, mode, sortBy);
+            });
+        });
+    }
+    
+    // Sort history table
+    sortHistoryTable(asset, mode, sortBy) {
+        const tbody = document.getElementById(`${asset}-${mode}-history-tbody`);
+        if (!tbody) return;
+        
+        const rows = Array.from(tbody.querySelectorAll('tr'));
+        if (rows.length === 0 || rows[0].querySelector('td[colspan]')) return;
+        
+        rows.sort((a, b) => {
+            switch(sortBy) {
+                case 'time-desc':
+                    return new Date(b.cells[2].textContent) - new Date(a.cells[2].textContent);
+                case 'time-asc':
+                    return new Date(a.cells[2].textContent) - new Date(b.cells[2].textContent);
+                case 'pnl-desc':
+                    return parseFloat(b.cells[7].textContent.replace(/[$,+]/g, '')) - parseFloat(a.cells[7].textContent.replace(/[$,+]/g, ''));
+                case 'pnl-asc':
+                    return parseFloat(a.cells[7].textContent.replace(/[$,+]/g, '')) - parseFloat(b.cells[7].textContent.replace(/[$,+]/g, ''));
+                default:
+                    return 0;
+            }
+        });
+        
+        tbody.innerHTML = '';
+        rows.forEach(row => tbody.appendChild(row));
     }
 
     // Analytics Methods
@@ -1923,6 +2345,12 @@ document.addEventListener('DOMContentLoaded', () => {
             dashboard.checkBrokerConnections();
         }
     }, 1000);
+    
+    // Setup filters for new UI components
+    dashboard.setupFilters();
+    
+    // Make sortPositions available globally for onclick handlers
+    window.sortPositions = (asset, mode, column) => dashboard.sortPositions(asset, mode, column);
 });
 
 // Handle page visibility changes to pause/resume updates

@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Multi-Asset Trading Dashboard</title>
-    <link rel="stylesheet" href="/static/dashboard.css">
+    <link rel="stylesheet" href="/static/dashboard-dark.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -101,7 +101,7 @@
                 </div>
 
                 <!-- Paper Trading Section -->
-                <div class="trading-section paper">
+                <div class="trading-section paper" id="crypto-paper-section">
                     <div class="section-header">
                         <h4><i class="fas fa-flask"></i> Strategy Development</h4>
                         <div class="status-controls">
@@ -137,182 +137,124 @@
                                 <span class="metric-value" id="crypto-paper-positions">0</span>
                             </div>
                             <div class="metric">
-                                <span class="metric-label">Developing</span>
-                                <span class="metric-value" id="crypto-paper-strategies">0</span>
+                                <span class="metric-label">Trades</span>
+                                <span class="metric-value" id="crypto-paper-trades">0</span>
                             </div>
                             <div class="metric">
                                 <span class="metric-label">Win Rate</span>
                                 <span class="metric-value" id="crypto-paper-winrate">0%</span>
                             </div>
                             <div class="metric">
-                                <span class="metric-label">Daily P&L</span>
-                                <span class="metric-value" id="crypto-paper-dailypnl">$0.00</span>
+                                <span class="metric-label">Avg P&L</span>
+                                <span class="metric-value" id="crypto-paper-avgpnl">$0</span>
                             </div>
                         </div>
-                        <div class="positions-section" id="crypto-paper-positions-section">
-                            <h5>Active Positions</h5>
-                            <div class="table-container">
-                                <table class="positions-table" id="crypto-paper-positions-list">
-                                    <thead>
+                        
+                        <!-- Active Positions -->
+                        <div class="positions-section" id="crypto-paper-positions-section" style="margin-top: 10px;">
+                            <div class="section-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                <h5 style="margin: 0; font-size: 14px; color: #e2e8f0;">
+                                    <i class="fas fa-chart-line"></i> Active Positions
+                                </h5>
+                                <div class="positions-controls" style="display: flex; gap: 10px;">
+                                    <input type="text" id="crypto-paper-positions-search" placeholder="Search symbol..." style="font-size: 12px; padding: 4px 8px; background: #1a202c; color: #e2e8f0; border: 1px solid #2d3748; border-radius: 4px; width: 120px;">
+                                    <select id="crypto-paper-positions-sort" class="positions-sort" style="font-size: 12px; padding: 4px 8px; background: #1a202c; color: #e2e8f0; border: 1px solid #2d3748; border-radius: 4px;">
+                                        <option value="symbol">Symbol</option>
+                                        <option value="pnl-desc">P&L High to Low</option>
+                                        <option value="pnl-asc">P&L Low to High</option>
+                                        <option value="size-desc">Size Large to Small</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="table-wrapper" style="max-height: 120px; overflow-y: auto; background: #1a202c; border-radius: 6px;">
+                                <table class="positions-table" id="crypto-paper-positions-table" style="width: 100%; font-size: 12px;">
+                                    <thead style="position: sticky; top: 0; background: #2d3748; z-index: 10;">
                                         <tr>
-                                            <th class="sortable" data-column="symbol">Symbol <i class="fas fa-sort"></i></th>
-                                            <th class="sortable" data-column="side">Side <i class="fas fa-sort"></i></th>
-                                            <th class="sortable" data-column="size">Size <i class="fas fa-sort"></i></th>
-                                            <th class="sortable" data-column="entry_price">Entry <i class="fas fa-sort"></i></th>
-                                            <th class="sortable" data-column="current_price">Current <i class="fas fa-sort"></i></th>
-                                            <th class="sortable" data-column="pnl">PnL <i class="fas fa-sort"></i></th>
-                                            <th class="sortable" data-column="take_profit">TP <i class="fas fa-sort"></i></th>
-                                            <th class="sortable" data-column="stop_loss">SL <i class="fas fa-sort"></i></th>
-                                            <th class="sortable" data-column="duration">Duration <i class="fas fa-sort"></i></th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Symbol</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Side</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Size</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Entry</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Current</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">P&L</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">TP/SL</th>
                                         </tr>
                                     </thead>
-                                    <tbody>
-                                        <tr class="no-positions"><td colspan="9">No active positions</td></tr>
+                                    <tbody id="crypto-paper-positions-tbody">
+                                        <tr>
+                                            <td colspan="7" style="text-align: center; padding: 20px; color: #6c757d;">No active positions</td>
+                                        </tr>
                                     </tbody>
                                 </table>
                             </div>
                         </div>
                         
-                        <!-- Analytics Section -->
-                        <div class="analytics-section" id="crypto-paper-analytics">
-                            <div class="analytics-header">
-                                <h5><i class="fas fa-chart-bar"></i> Analytics & Trade History</h5>
-                                <button class="btn btn-analytics" onclick="toggleAnalytics('crypto', 'paper')">
-                                    <i class="fas fa-chevron-down"></i>
-                                </button>
+                        <!-- Activity Log -->
+                        <div class="activity-log-section" id="crypto-paper-activity-section" style="margin-top: 15px;">
+                            <div class="section-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                <h5 style="margin: 0; font-size: 14px; color: #e2e8f0;">
+                                    <i class="fas fa-history"></i> Activity Log
+                                </h5>
+                                <div class="activity-controls" style="display: flex; gap: 10px;">
+                                    <select id="crypto-paper-activity-filter" class="activity-filter" style="font-size: 12px; padding: 4px 8px; background: #1a202c; color: #e2e8f0; border: 1px solid #2d3748; border-radius: 4px;">
+                                        <option value="all">All Activities</option>
+                                        <option value="trade">Trades Only</option>
+                                        <option value="position">Position Changes</option>
+                                        <option value="error">Errors Only</option>
+                                    </select>
+                                </div>
                             </div>
-                            <div class="analytics-content" id="crypto-paper-analytics-content" style="display: none;">
-                                <div class="analytics-tabs">
-                                    <button class="tab-btn active" onclick="switchTab('crypto-paper', 'overview')">Overview</button>
-                                    <button class="tab-btn" onclick="switchTab('crypto-paper', 'trades')">Trade History</button>
-                                    <button class="tab-btn" onclick="switchTab('crypto-paper', 'symbols')">By Symbol</button>
+                            <div class="activity-list" id="crypto-paper-activity-list" style="max-height: 150px; overflow-y: auto; background: #1a202c; border-radius: 6px; padding: 8px;">
+                                <div class="no-activity" style="text-align: center; color: #6c757d; padding: 20px; font-size: 12px;">No activity yet</div>
+                            </div>
+                        </div>
+                        
+                        <!-- Trade History -->
+                        <div class="history-section" id="crypto-paper-history-section" style="margin-top: 15px;">
+                            <div class="section-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                <h5 style="margin: 0; font-size: 14px; color: #e2e8f0;">
+                                    <i class="fas fa-table"></i> Trade History
+                                </h5>
+                                <div class="history-controls" style="display: flex; gap: 10px;">
+                                    <input type="text" id="crypto-paper-history-search" placeholder="Search..." style="font-size: 12px; padding: 4px 8px; background: #1a202c; color: #e2e8f0; border: 1px solid #2d3748; border-radius: 4px; width: 120px;">
+                                    <select id="crypto-paper-history-sort" class="history-sort" style="font-size: 12px; padding: 4px 8px; background: #1a202c; color: #e2e8f0; border: 1px solid #2d3748; border-radius: 4px;">
+                                        <option value="time-desc">Newest First</option>
+                                        <option value="time-asc">Oldest First</option>
+                                        <option value="pnl-desc">Highest P&L</option>
+                                        <option value="pnl-asc">Lowest P&L</option>
+                                    </select>
                                 </div>
-                                
-                                <!-- Overview Tab -->
-                                <div class="tab-content active" id="crypto-paper-overview-tab">
-                                    <div class="performance-metrics">
-                                        <div class="metric-row">
-                                            <div class="metric-item">
-                                                <span class="metric-label">Total Trades</span>
-                                                <span class="metric-value" id="crypto-paper-total-trades">0</span>
-                                            </div>
-                                            <div class="metric-item">
-                                                <span class="metric-label">Win Rate</span>
-                                                <span class="metric-value" id="crypto-paper-win-rate">0%</span>
-                                            </div>
-                                            <div class="metric-item">
-                                                <span class="metric-label">Profit Factor</span>
-                                                <span class="metric-value" id="crypto-paper-profit-factor">0.00</span>
-                                            </div>
-                                            <div class="metric-item">
-                                                <span class="metric-label">ROI</span>
-                                                <span class="metric-value" id="crypto-paper-roi">0%</span>
-                                            </div>
-                                        </div>
-                                        <div class="metric-row">
-                                            <div class="metric-item">
-                                                <span class="metric-label">Avg Win</span>
-                                                <span class="metric-value" id="crypto-paper-avg-win">$0.00</span>
-                                            </div>
-                                            <div class="metric-item">
-                                                <span class="metric-label">Avg Loss</span>
-                                                <span class="metric-value" id="crypto-paper-avg-loss">$0.00</span>
-                                            </div>
-                                            <div class="metric-item">
-                                                <span class="metric-label">Max Win</span>
-                                                <span class="metric-value" id="crypto-paper-max-win">$0.00</span>
-                                            </div>
-                                            <div class="metric-item">
-                                                <span class="metric-label">Max Loss</span>
-                                                <span class="metric-value" id="crypto-paper-max-loss">$0.00</span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    
-                                    <!-- Reward System Metrics -->
-                                    <div id="crypto-paper-reward-section" class="reward-metrics">
-                                        <h6 class="metrics-section-title">
-                                            <i class="fas fa-trophy"></i> Reward System Metrics
-                                        </h6>
-                                        <div class="metric-row">
-                                            <div class="metric-item">
-                                                <span class="metric-label">Total Reward Points</span>
-                                                <span class="metric-value reward-positive" id="crypto-paper-reward-points">0.0</span>
-                                            </div>
-                                            <div class="metric-item">
-                                                <span class="metric-label">Avg Reward/Trade</span>
-                                                <span class="metric-value" id="crypto-paper-avg-reward">0.00</span>
-                                            </div>
-                                            <div class="metric-item">
-                                                <span class="metric-label">Consecutive SL Hits</span>
-                                                <span class="metric-value" id="crypto-paper-consecutive-sl">0</span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                                
-                                <!-- Trade History Tab -->
-                                <div class="tab-content" id="crypto-paper-trades-tab">
-                                    <div class="trade-history-controls">
-                                        <div style="display: flex; gap: 8px; align-items: center;">
-                                            <input type="text" id="crypto-paper-search" placeholder="Search symbol..." style="width: 120px;">
-                                            <select id="crypto-paper-trade-filter">
-                                                <option value="all">All Trades</option>
-                                                <option value="wins">Winning Trades</option>
-                                                <option value="losses">Losing Trades</option>
-                                            </select>
-                                        </div>
-                                        <div style="display: flex; gap: 8px;">
-                                            <button class="btn btn-refresh" onclick="refreshTradeHistory('crypto', 'paper')">
-                                                <i class="fas fa-refresh"></i> Refresh
-                                            </button>
-                                            <button class="btn btn-danger" onclick="clearPaperTradingHistory('crypto')" title="Clear all paper trading history and positions">
-                                                <i class="fas fa-trash"></i> Clear History
-                                            </button>
-                                        </div>
-                                    </div>
-                                    <div class="trade-history-container">
-                                        <div class="table-container">
-                                            <table class="trade-history-table" id="crypto-paper-trade-history">
-                                                <thead>
-                                                    <tr>
-                                                        <th class="sortable" data-column="symbol">Symbol <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="side">Side <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="size">Size <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="entry">Entry <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="entry_time">Open Time <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="exit">Exit <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="timestamp">Close Time <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="duration">Duration <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="pnl_pct">PnL % <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="pnl_usd">PnL USD <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="rewards">Rewards <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="balance">Balance <i class="fas fa-sort"></i></th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody>
-                                                    <tr class="no-trades"><td colspan="12">No completed trades yet</td></tr>
-                                                </tbody>
-                                            </table>
-                                        </div>
-                                    </div>
-                                </div>
-                                
-                                <!-- Symbol Performance Tab -->
-                                <div class="tab-content" id="crypto-paper-symbols-tab">
-                                    <div class="symbol-performance-list" id="crypto-paper-symbol-performance">
-                                        <div class="no-data">No symbol data available</div>
-                                    </div>
-                                </div>
+                            </div>
+                            <div class="table-wrapper" style="max-height: 200px; overflow-y: auto; background: #1a202c; border-radius: 6px;">
+                                <table class="history-table" id="crypto-paper-history-table" style="width: 100%; font-size: 12px;">
+                                    <thead style="position: sticky; top: 0; background: #2d3748;">
+                                        <tr>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Mode</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Side</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Time Open</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Size USD</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Open Price</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Time Closed</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Close Price</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">P&L USD</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">P&L %</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Balance</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="crypto-paper-history-tbody">
+                                        <tr>
+                                            <td colspan="10" style="text-align: center; padding: 20px; color: #6c757d;">No completed trades yet</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
                             </div>
                         </div>
                     </div>
                 </div>
 
                 <!-- Live Trading Section -->
-                <div class="trading-section live">
+                <div class="trading-section live" id="crypto-live-section">
                     <div class="section-header">
-                        <h4><i class="fas fa-rocket"></i> Live Trading</h4>
+                        <h4><i class="fas fa-fire"></i> Live Trading</h4>
                         <div class="status-controls">
                             <div class="trading-status" id="crypto-live-status">
                                 <span class="status-indicator idle"></span>
@@ -321,7 +263,7 @@
                             <div class="controls">
                                 <div class="trading-toggle">
                                     <label class="toggle-switch">
-                                        <input type="checkbox" id="crypto-live-toggle" onchange="handleTradingToggle('crypto', 'live', this.checked)" disabled>
+                                        <input type="checkbox" id="crypto-live-toggle" onchange="handleTradingToggle('crypto', 'live', this.checked)">
                                         <span class="toggle-slider"></span>
                                     </label>
                                     <span class="toggle-label">Live Trading</span>
@@ -346,124 +288,115 @@
                                 <span class="metric-value" id="crypto-live-positions">0</span>
                             </div>
                             <div class="metric">
-                                <span class="metric-label">Approved</span>
-                                <span class="metric-value" id="crypto-live-strategies">0</span>
+                                <span class="metric-label">Trades</span>
+                                <span class="metric-value" id="crypto-live-trades">0</span>
                             </div>
                             <div class="metric">
                                 <span class="metric-label">Win Rate</span>
-                                <span class="metric-value">0%</span>
+                                <span class="metric-value" id="crypto-live-winrate">0%</span>
                             </div>
                             <div class="metric">
-                                <span class="metric-label">Daily P&L</span>
-                                <span class="metric-value">$0.00</span>
+                                <span class="metric-label">Avg P&L</span>
+                                <span class="metric-value" id="crypto-live-avgpnl">$0</span>
                             </div>
                         </div>
                         
-                        <!-- Analytics Section for Live Trading -->
-                        <div class="analytics-section" id="crypto-live-analytics">
-                            <div class="analytics-header">
-                                <h5><i class="fas fa-chart-bar"></i> Analytics & Trade History</h5>
-                                <button class="btn btn-analytics" onclick="toggleAnalytics('crypto', 'live')">
-                                    <i class="fas fa-chevron-down"></i>
-                                </button>
+                        <!-- Active Positions -->
+                        <div class="positions-section" id="crypto-live-positions-section" style="margin-top: 10px;">
+                            <div class="section-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                <h5 style="margin: 0; font-size: 14px; color: #e2e8f0;">
+                                    <i class="fas fa-chart-line"></i> Active Positions
+                                </h5>
+                                <div class="positions-controls" style="display: flex; gap: 10px;">
+                                    <input type="text" id="crypto-live-positions-search" placeholder="Search symbol..." style="font-size: 12px; padding: 4px 8px; background: #1a202c; color: #e2e8f0; border: 1px solid #2d3748; border-radius: 4px; width: 120px;">
+                                    <select id="crypto-live-positions-sort" class="positions-sort" style="font-size: 12px; padding: 4px 8px; background: #1a202c; color: #e2e8f0; border: 1px solid #2d3748; border-radius: 4px;">
+                                        <option value="symbol">Symbol</option>
+                                        <option value="pnl-desc">P&L High to Low</option>
+                                        <option value="pnl-asc">P&L Low to High</option>
+                                        <option value="size-desc">Size Large to Small</option>
+                                    </select>
+                                </div>
                             </div>
-                            <div class="analytics-content" id="crypto-live-analytics-content" style="display: none;">
-                                <div class="analytics-tabs">
-                                    <button class="tab-btn active" onclick="switchTab('crypto-live', 'overview')">Overview</button>
-                                    <button class="tab-btn" onclick="switchTab('crypto-live', 'trades')">Trade History</button>
-                                    <button class="tab-btn" onclick="switchTab('crypto-live', 'symbols')">By Symbol</button>
+                            <div class="table-wrapper" style="max-height: 120px; overflow-y: auto; background: #1a202c; border-radius: 6px;">
+                                <table class="positions-table" id="crypto-live-positions-table" style="width: 100%; font-size: 12px;">
+                                    <thead style="position: sticky; top: 0; background: #2d3748; z-index: 10;">
+                                        <tr>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Symbol</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Side</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Size</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Entry</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Current</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">P&L</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">TP/SL</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="crypto-live-positions-tbody">
+                                        <tr>
+                                            <td colspan="7" style="text-align: center; padding: 20px; color: #6c757d;">No active positions</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                        
+                        <!-- Activity Log -->
+                        <div class="activity-log-section" id="crypto-live-activity-section" style="margin-top: 15px;">
+                            <div class="section-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                <h5 style="margin: 0; font-size: 14px; color: #e2e8f0;">
+                                    <i class="fas fa-history"></i> Activity Log
+                                </h5>
+                                <div class="activity-controls" style="display: flex; gap: 10px;">
+                                    <select id="crypto-live-activity-filter" class="activity-filter" style="font-size: 12px; padding: 4px 8px; background: #1a202c; color: #e2e8f0; border: 1px solid #2d3748; border-radius: 4px;">
+                                        <option value="all">All Activities</option>
+                                        <option value="trade">Trades Only</option>
+                                        <option value="position">Position Changes</option>
+                                        <option value="error">Errors Only</option>
+                                    </select>
                                 </div>
-                                
-                                <!-- Overview Tab -->
-                                <div class="tab-content active" id="crypto-live-overview-tab">
-                                    <div class="performance-metrics">
-                                        <div class="metric-row">
-                                            <div class="metric-item">
-                                                <span class="metric-label">Total Trades</span>
-                                                <span class="metric-value" id="crypto-live-total-trades">0</span>
-                                            </div>
-                                            <div class="metric-item">
-                                                <span class="metric-label">Win Rate</span>
-                                                <span class="metric-value" id="crypto-live-win-rate">0%</span>
-                                            </div>
-                                            <div class="metric-item">
-                                                <span class="metric-label">Profit Factor</span>
-                                                <span class="metric-value" id="crypto-live-profit-factor">0.00</span>
-                                            </div>
-                                            <div class="metric-item">
-                                                <span class="metric-label">ROI</span>
-                                                <span class="metric-value" id="crypto-live-roi">0%</span>
-                                            </div>
-                                        </div>
-                                        <div class="metric-row">
-                                            <div class="metric-item">
-                                                <span class="metric-label">Avg Win</span>
-                                                <span class="metric-value" id="crypto-live-avg-win">$0.00</span>
-                                            </div>
-                                            <div class="metric-item">
-                                                <span class="metric-label">Avg Loss</span>
-                                                <span class="metric-value" id="crypto-live-avg-loss">$0.00</span>
-                                            </div>
-                                            <div class="metric-item">
-                                                <span class="metric-label">Max Win</span>
-                                                <span class="metric-value" id="crypto-live-max-win">$0.00</span>
-                                            </div>
-                                            <div class="metric-item">
-                                                <span class="metric-label">Max Loss</span>
-                                                <span class="metric-value" id="crypto-live-max-loss">$0.00</span>
-                                            </div>
-                                        </div>
-                                    </div>
+                            </div>
+                            <div class="activity-list" id="crypto-live-activity-list" style="max-height: 150px; overflow-y: auto; background: #1a202c; border-radius: 6px; padding: 8px;">
+                                <div class="no-activity" style="text-align: center; color: #6c757d; padding: 20px; font-size: 12px;">No activity yet</div>
+                            </div>
+                        </div>
+                        
+                        <!-- Trade History -->
+                        <div class="history-section" id="crypto-live-history-section" style="margin-top: 15px;">
+                            <div class="section-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                <h5 style="margin: 0; font-size: 14px; color: #e2e8f0;">
+                                    <i class="fas fa-table"></i> Trade History
+                                </h5>
+                                <div class="history-controls" style="display: flex; gap: 10px;">
+                                    <input type="text" id="crypto-live-history-search" placeholder="Search..." style="font-size: 12px; padding: 4px 8px; background: #1a202c; color: #e2e8f0; border: 1px solid #2d3748; border-radius: 4px; width: 120px;">
+                                    <select id="crypto-live-history-sort" class="history-sort" style="font-size: 12px; padding: 4px 8px; background: #1a202c; color: #e2e8f0; border: 1px solid #2d3748; border-radius: 4px;">
+                                        <option value="time-desc">Newest First</option>
+                                        <option value="time-asc">Oldest First</option>
+                                        <option value="pnl-desc">Highest P&L</option>
+                                        <option value="pnl-asc">Lowest P&L</option>
+                                    </select>
                                 </div>
-                                
-                                <!-- Trade History Tab -->
-                                <div class="tab-content" id="crypto-live-trades-tab">
-                                    <div class="trade-history-controls">
-                                        <div style="display: flex; gap: 8px; align-items: center;">
-                                            <input type="text" id="crypto-live-search" placeholder="Search symbol..." style="width: 120px;">
-                                            <select id="crypto-live-trade-filter">
-                                                <option value="all">All Trades</option>
-                                                <option value="wins">Winning Trades</option>
-                                                <option value="losses">Losing Trades</option>
-                                            </select>
-                                        </div>
-                                        <button class="btn btn-refresh" onclick="refreshTradeHistory('crypto', 'live')">
-                                            <i class="fas fa-refresh"></i> Refresh
-                                        </button>
-                                    </div>
-                                    <div class="trade-history-container">
-                                        <div class="table-container">
-                                            <table class="trade-history-table" id="crypto-live-trade-history">
-                                                <thead>
-                                                    <tr>
-                                                        <th class="sortable" data-column="symbol">Symbol <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="side">Side <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="size">Size <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="entry">Entry <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="entry_time">Open Time <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="exit">Exit <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="timestamp">Close Time <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="duration">Duration <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="pnl_pct">PnL % <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="pnl_usd">PnL USD <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="rewards">Rewards <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="balance">Balance <i class="fas fa-sort"></i></th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody>
-                                                    <tr class="no-trades"><td colspan="12">No completed trades yet</td></tr>
-                                                </tbody>
-                                            </table>
-                                        </div>
-                                    </div>
-                                </div>
-                                
-                                <!-- Symbol Performance Tab -->
-                                <div class="tab-content" id="crypto-live-symbols-tab">
-                                    <div class="symbol-performance-list" id="crypto-live-symbol-performance">
-                                        <div class="no-data">No symbol data available</div>
-                                    </div>
-                                </div>
+                            </div>
+                            <div class="table-wrapper" style="max-height: 200px; overflow-y: auto; background: #1a202c; border-radius: 6px;">
+                                <table class="history-table" id="crypto-live-history-table" style="width: 100%; font-size: 12px;">
+                                    <thead style="position: sticky; top: 0; background: #2d3748;">
+                                        <tr>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Mode</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Side</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Time Open</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Size USD</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Open Price</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Time Closed</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Close Price</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">P&L USD</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">P&L %</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Balance</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="crypto-live-history-tbody">
+                                        <tr>
+                                            <td colspan="10" style="text-align: center; padding: 20px; color: #6c757d;">No completed trades yet</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
                             </div>
                         </div>
                     </div>
@@ -475,7 +408,7 @@
                 <div class="asset-header">
                     <div class="asset-info">
                         <div class="asset-icon futures">
-                            <i class="fas fa-chart-line"></i>
+                            <i class="fas fa-chart-area"></i>
                         </div>
                         <div class="asset-details">
                             <h3>Crypto Futures</h3>
@@ -489,18 +422,24 @@
                 </div>
 
                 <!-- Paper Trading Section -->
-                <div class="trading-section paper">
+                <div class="trading-section paper" id="futures-paper-section">
                     <div class="section-header">
                         <h4><i class="fas fa-flask"></i> Strategy Development</h4>
-                        <div class="controls">
-                            <div class="trading-toggle">
-                                <label class="toggle-switch">
-                                    <input type="checkbox" id="futures-paper-toggle" onchange="handleTradingToggle('futures', 'paper', this.checked)">
-                                    <span class="toggle-slider"></span>
-                                </label>
-                                <span class="toggle-label">Paper Trading</span>
+                        <div class="status-controls">
+                            <div class="trading-status" id="futures-paper-status">
+                                <span class="status-indicator idle"></span>
+                                <span class="status-text">Idle</span>
                             </div>
-                            <button class="btn btn-kill" onclick="killAsset('futures')">Kill</button>
+                            <div class="controls">
+                                <div class="trading-toggle">
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" id="futures-paper-toggle" onchange="handleTradingToggle('futures', 'paper', this.checked)">
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                    <span class="toggle-label">Paper Trading</span>
+                                </div>
+                                <button class="btn btn-kill" onclick="killAsset('futures')">Kill</button>
+                            </div>
                         </div>
                     </div>
                     <div class="trading-content">
@@ -519,168 +458,139 @@
                                 <span class="metric-value" id="futures-paper-positions">0</span>
                             </div>
                             <div class="metric">
-                                <span class="metric-label">Strategies</span>
-                                <span class="metric-value" id="futures-paper-strategies">0</span>
+                                <span class="metric-label">Trades</span>
+                                <span class="metric-value" id="futures-paper-trades">0</span>
                             </div>
                             <div class="metric">
                                 <span class="metric-label">Win Rate</span>
                                 <span class="metric-value" id="futures-paper-winrate">0%</span>
                             </div>
                             <div class="metric">
-                                <span class="metric-label">Daily P&L</span>
-                                <span class="metric-value" id="futures-paper-dailypnl">$0.00</span>
+                                <span class="metric-label">Avg P&L</span>
+                                <span class="metric-value" id="futures-paper-avgpnl">$0</span>
                             </div>
                         </div>
-                        <div class="positions-section" id="futures-paper-positions-section">
-                            <h5>Active Positions</h5>
-                            <div class="table-container">
-                                <table class="positions-table" id="futures-paper-positions-list">
-                                    <thead>
+                        
+                        <!-- Active Positions -->
+                        <div class="positions-section" id="futures-paper-positions-section" style="margin-top: 10px;">
+                            <div class="section-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                <h5 style="margin: 0; font-size: 14px; color: #e2e8f0;">
+                                    <i class="fas fa-chart-line"></i> Active Positions
+                                </h5>
+                                <div class="positions-controls" style="display: flex; gap: 10px;">
+                                    <input type="text" id="futures-paper-positions-search" placeholder="Search symbol..." style="font-size: 12px; padding: 4px 8px; background: #1a202c; color: #e2e8f0; border: 1px solid #2d3748; border-radius: 4px; width: 120px;">
+                                    <select id="futures-paper-positions-sort" class="positions-sort" style="font-size: 12px; padding: 4px 8px; background: #1a202c; color: #e2e8f0; border: 1px solid #2d3748; border-radius: 4px;">
+                                        <option value="symbol">Symbol</option>
+                                        <option value="pnl-desc">P&L High to Low</option>
+                                        <option value="pnl-asc">P&L Low to High</option>
+                                        <option value="size-desc">Size Large to Small</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="table-wrapper" style="max-height: 120px; overflow-y: auto; background: #1a202c; border-radius: 6px;">
+                                <table class="positions-table" id="futures-paper-positions-table" style="width: 100%; font-size: 12px;">
+                                    <thead style="position: sticky; top: 0; background: #2d3748; z-index: 10;">
                                         <tr>
-                                            <th class="sortable" data-column="symbol">Symbol <i class="fas fa-sort"></i></th>
-                                            <th class="sortable" data-column="side">Side <i class="fas fa-sort"></i></th>
-                                            <th class="sortable" data-column="size">Size <i class="fas fa-sort"></i></th>
-                                            <th class="sortable" data-column="entry_price">Entry <i class="fas fa-sort"></i></th>
-                                            <th class="sortable" data-column="current_price">Current <i class="fas fa-sort"></i></th>
-                                            <th class="sortable" data-column="pnl">PnL <i class="fas fa-sort"></i></th>
-                                            <th class="sortable" data-column="take_profit">TP <i class="fas fa-sort"></i></th>
-                                            <th class="sortable" data-column="stop_loss">SL <i class="fas fa-sort"></i></th>
-                                            <th class="sortable" data-column="duration">Duration <i class="fas fa-sort"></i></th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Symbol</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Side</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Size</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Entry</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Current</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">P&L</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">TP/SL</th>
                                         </tr>
                                     </thead>
-                                    <tbody>
-                                        <tr class="no-positions"><td colspan="9">No active positions</td></tr>
+                                    <tbody id="futures-paper-positions-tbody">
+                                        <tr>
+                                            <td colspan="7" style="text-align: center; padding: 20px; color: #6c757d;">No active positions</td>
+                                        </tr>
                                     </tbody>
                                 </table>
                             </div>
                         </div>
                         
-                        <!-- Analytics Section -->
-                        <div class="analytics-section" id="futures-paper-analytics">
-                            <div class="analytics-header">
-                                <h5><i class="fas fa-chart-bar"></i> Analytics & Trade History</h5>
-                                <button class="btn btn-analytics" onclick="toggleAnalytics('futures', 'paper')">
-                                    <i class="fas fa-chevron-down"></i>
-                                </button>
+                        <!-- Activity Log -->
+                        <div class="activity-log-section" id="futures-paper-activity-section" style="margin-top: 15px;">
+                            <div class="section-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                <h5 style="margin: 0; font-size: 14px; color: #e2e8f0;">
+                                    <i class="fas fa-history"></i> Activity Log
+                                </h5>
+                                <div class="activity-controls" style="display: flex; gap: 10px;">
+                                    <select id="futures-paper-activity-filter" class="activity-filter" style="font-size: 12px; padding: 4px 8px; background: #1a202c; color: #e2e8f0; border: 1px solid #2d3748; border-radius: 4px;">
+                                        <option value="all">All Activities</option>
+                                        <option value="trade">Trades Only</option>
+                                        <option value="position">Position Changes</option>
+                                        <option value="error">Errors Only</option>
+                                    </select>
+                                </div>
                             </div>
-                            <div class="analytics-content" id="futures-paper-analytics-content" style="display: none;">
-                                <div class="analytics-tabs">
-                                    <button class="tab-btn active" onclick="switchTab('futures-paper', 'overview')">Overview</button>
-                                    <button class="tab-btn" onclick="switchTab('futures-paper', 'trades')">Trade History</button>
-                                    <button class="tab-btn" onclick="switchTab('futures-paper', 'symbols')">By Symbol</button>
+                            <div class="activity-list" id="futures-paper-activity-list" style="max-height: 150px; overflow-y: auto; background: #1a202c; border-radius: 6px; padding: 8px;">
+                                <div class="no-activity" style="text-align: center; color: #6c757d; padding: 20px; font-size: 12px;">No activity yet</div>
+                            </div>
+                        </div>
+                        
+                        <!-- Trade History -->
+                        <div class="history-section" id="futures-paper-history-section" style="margin-top: 15px;">
+                            <div class="section-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                <h5 style="margin: 0; font-size: 14px; color: #e2e8f0;">
+                                    <i class="fas fa-table"></i> Trade History
+                                </h5>
+                                <div class="history-controls" style="display: flex; gap: 10px;">
+                                    <input type="text" id="futures-paper-history-search" placeholder="Search..." style="font-size: 12px; padding: 4px 8px; background: #1a202c; color: #e2e8f0; border: 1px solid #2d3748; border-radius: 4px; width: 120px;">
+                                    <select id="futures-paper-history-sort" class="history-sort" style="font-size: 12px; padding: 4px 8px; background: #1a202c; color: #e2e8f0; border: 1px solid #2d3748; border-radius: 4px;">
+                                        <option value="time-desc">Newest First</option>
+                                        <option value="time-asc">Oldest First</option>
+                                        <option value="pnl-desc">Highest P&L</option>
+                                        <option value="pnl-asc">Lowest P&L</option>
+                                    </select>
                                 </div>
-                                
-                                <!-- Overview Tab -->
-                                <div class="tab-content active" id="futures-paper-overview-tab">
-                                    <div class="overview-stats">
-                                        <div class="stat-card">
-                                            <div class="stat-value" id="futures-paper-total-trades">0</div>
-                                            <div class="stat-label">Total Trades</div>
-                                        </div>
-                                        <div class="stat-card">
-                                            <div class="stat-value" id="futures-paper-win-rate-detailed">0%</div>
-                                            <div class="stat-label">Win Rate</div>
-                                        </div>
-                                        <div class="stat-card">
-                                            <div class="stat-value" id="futures-paper-profit-factor">0.00</div>
-                                            <div class="stat-label">Profit Factor</div>
-                                        </div>
-                                        <div class="stat-card">
-                                            <div class="stat-value" id="futures-paper-max-drawdown">0%</div>
-                                            <div class="stat-label">Max Drawdown</div>
-                                        </div>
-                                    </div>
-                                </div>
-                                
-                                <!-- Trade History Tab -->
-                                <div class="tab-content" id="futures-paper-trades-tab">
-                                    <div class="trade-history-controls">
-                                        <div style="display: flex; gap: 8px; align-items: center;">
-                                            <input type="text" id="futures-paper-search" placeholder="Search symbol..." style="width: 120px;">
-                                            <select id="futures-paper-trade-filter">
-                                                <option value="all">All Trades</option>
-                                                <option value="wins">Winning Trades</option>
-                                                <option value="losses">Losing Trades</option>
-                                            </select>
-                                        </div>
-                                        <div style="display: flex; gap: 8px;">
-                                            <button class="btn btn-refresh" onclick="refreshTradeHistory('futures', 'paper')">
-                                                <i class="fas fa-refresh"></i> Refresh
-                                            </button>
-                                            <button class="btn btn-danger" onclick="clearPaperTradingHistory('futures')" title="Clear all futures paper trading history and positions">
-                                                <i class="fas fa-trash"></i> Clear History
-                                            </button>
-                                        </div>
-                                    </div>
-                                    <div class="trade-history-container">
-                                        <div class="table-container">
-                                            <table class="trade-history-table" id="futures-paper-trade-history">
-                                                <thead>
-                                                    <tr>
-                                                        <th class="sortable" data-column="symbol">Symbol <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="side">Side <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="size">Size <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="entry_price">Entry <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="exit_price">Exit <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="leverage">Leverage <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="pnl_usd">P&L ($) <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="pnl_pct">P&L (%) <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="duration">Duration <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="exit_reason">Exit Reason <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="funding_cost">Funding <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="entry_time">Entry Time <i class="fas fa-sort"></i></th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody>
-                                                    <tr class="no-trades"><td colspan="12">No completed trades yet</td></tr>
-                                                </tbody>
-                                            </table>
-                                        </div>
-                                    </div>
-                                </div>
-                                
-                                <!-- By Symbol Tab -->
-                                <div class="tab-content" id="futures-paper-symbols-tab">
-                                    <div class="symbol-performance-container">
-                                        <div class="table-container">
-                                            <table class="symbol-performance-table" id="futures-paper-symbol-performance">
-                                                <thead>
-                                                    <tr>
-                                                        <th class="sortable" data-column="symbol">Symbol <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="trades">Trades <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="win_rate">Win Rate <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="total_pnl">Total P&L <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="avg_pnl">Avg P&L <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="best_trade">Best Trade <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="worst_trade">Worst Trade <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="avg_leverage">Avg Leverage <i class="fas fa-sort"></i></th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody>
-                                                    <tr class="no-data"><td colspan="8">No trade data available</td></tr>
-                                                </tbody>
-                                            </table>
-                                        </div>
-                                    </div>
-                                </div>
+                            </div>
+                            <div class="table-wrapper" style="max-height: 200px; overflow-y: auto; background: #1a202c; border-radius: 6px;">
+                                <table class="history-table" id="futures-paper-history-table" style="width: 100%; font-size: 12px;">
+                                    <thead style="position: sticky; top: 0; background: #2d3748;">
+                                        <tr>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Mode</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Side</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Time Open</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Size USD</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Open Price</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Time Closed</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Close Price</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">P&L USD</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">P&L %</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Balance</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="futures-paper-history-tbody">
+                                        <tr>
+                                            <td colspan="10" style="text-align: center; padding: 20px; color: #6c757d;">No completed trades yet</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
                             </div>
                         </div>
                     </div>
                 </div>
 
                 <!-- Live Trading Section -->
-                <div class="trading-section live">
+                <div class="trading-section live" id="futures-live-section">
                     <div class="section-header">
-                        <h4><i class="fas fa-rocket"></i> Live Trading</h4>
-                        <div class="controls">
-                            <div class="trading-toggle">
-                                <label class="toggle-switch">
-                                    <input type="checkbox" id="futures-live-toggle" onchange="handleTradingToggle('futures', 'live', this.checked)" disabled>
-                                    <span class="toggle-slider"></span>
-                                </label>
-                                <span class="toggle-label">Live Trading</span>
+                        <h4><i class="fas fa-fire"></i> Live Trading</h4>
+                        <div class="status-controls">
+                            <div class="trading-status" id="futures-live-status">
+                                <span class="status-indicator idle"></span>
+                                <span class="status-text">Idle</span>
                             </div>
-                            <button class="btn btn-kill" onclick="killAsset('futures')">Kill</button>
+                            <div class="controls">
+                                <div class="trading-toggle">
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" id="futures-live-toggle" onchange="handleTradingToggle('futures', 'live', this.checked)">
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                    <span class="toggle-label">Live Trading</span>
+                                </div>
+                                <button class="btn btn-kill" onclick="killAsset('futures')">Kill</button>
+                            </div>
                         </div>
                     </div>
                     <div class="trading-content">
@@ -699,31 +609,130 @@
                                 <span class="metric-value" id="futures-live-positions">0</span>
                             </div>
                             <div class="metric">
-                                <span class="metric-label">Strategies</span>
-                                <span class="metric-value" id="futures-live-strategies">0</span>
+                                <span class="metric-label">Trades</span>
+                                <span class="metric-value" id="futures-live-trades">0</span>
                             </div>
                             <div class="metric">
                                 <span class="metric-label">Win Rate</span>
-                                <span class="metric-value">0%</span>
+                                <span class="metric-value" id="futures-live-winrate">0%</span>
                             </div>
                             <div class="metric">
-                                <span class="metric-label">Daily P&L</span>
-                                <span class="metric-value">$0.00</span>
+                                <span class="metric-label">Avg P&L</span>
+                                <span class="metric-value" id="futures-live-avgpnl">$0</span>
+                            </div>
+                        </div>
+                        
+                        <!-- Active Positions -->
+                        <div class="positions-section" id="futures-live-positions-section" style="margin-top: 10px;">
+                            <div class="section-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                <h5 style="margin: 0; font-size: 14px; color: #e2e8f0;">
+                                    <i class="fas fa-chart-line"></i> Active Positions
+                                </h5>
+                                <div class="positions-controls" style="display: flex; gap: 10px;">
+                                    <input type="text" id="futures-live-positions-search" placeholder="Search symbol..." style="font-size: 12px; padding: 4px 8px; background: #1a202c; color: #e2e8f0; border: 1px solid #2d3748; border-radius: 4px; width: 120px;">
+                                    <select id="futures-live-positions-sort" class="positions-sort" style="font-size: 12px; padding: 4px 8px; background: #1a202c; color: #e2e8f0; border: 1px solid #2d3748; border-radius: 4px;">
+                                        <option value="symbol">Symbol</option>
+                                        <option value="pnl-desc">P&L High to Low</option>
+                                        <option value="pnl-asc">P&L Low to High</option>
+                                        <option value="size-desc">Size Large to Small</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="table-wrapper" style="max-height: 120px; overflow-y: auto; background: #1a202c; border-radius: 6px;">
+                                <table class="positions-table" id="futures-live-positions-table" style="width: 100%; font-size: 12px;">
+                                    <thead style="position: sticky; top: 0; background: #2d3748; z-index: 10;">
+                                        <tr>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Symbol</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Side</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Size</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Entry</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Current</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">P&L</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">TP/SL</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="futures-live-positions-tbody">
+                                        <tr>
+                                            <td colspan="7" style="text-align: center; padding: 20px; color: #6c757d;">No active positions</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                        
+                        <!-- Activity Log -->
+                        <div class="activity-log-section" id="futures-live-activity-section" style="margin-top: 15px;">
+                            <div class="section-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                <h5 style="margin: 0; font-size: 14px; color: #e2e8f0;">
+                                    <i class="fas fa-history"></i> Activity Log
+                                </h5>
+                                <div class="activity-controls" style="display: flex; gap: 10px;">
+                                    <select id="futures-live-activity-filter" class="activity-filter" style="font-size: 12px; padding: 4px 8px; background: #1a202c; color: #e2e8f0; border: 1px solid #2d3748; border-radius: 4px;">
+                                        <option value="all">All Activities</option>
+                                        <option value="trade">Trades Only</option>
+                                        <option value="position">Position Changes</option>
+                                        <option value="error">Errors Only</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="activity-list" id="futures-live-activity-list" style="max-height: 150px; overflow-y: auto; background: #1a202c; border-radius: 6px; padding: 8px;">
+                                <div class="no-activity" style="text-align: center; color: #6c757d; padding: 20px; font-size: 12px;">No activity yet</div>
+                            </div>
+                        </div>
+                        
+                        <!-- Trade History -->
+                        <div class="history-section" id="futures-live-history-section" style="margin-top: 15px;">
+                            <div class="section-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                <h5 style="margin: 0; font-size: 14px; color: #e2e8f0;">
+                                    <i class="fas fa-table"></i> Trade History
+                                </h5>
+                                <div class="history-controls" style="display: flex; gap: 10px;">
+                                    <input type="text" id="futures-live-history-search" placeholder="Search..." style="font-size: 12px; padding: 4px 8px; background: #1a202c; color: #e2e8f0; border: 1px solid #2d3748; border-radius: 4px; width: 120px;">
+                                    <select id="futures-live-history-sort" class="history-sort" style="font-size: 12px; padding: 4px 8px; background: #1a202c; color: #e2e8f0; border: 1px solid #2d3748; border-radius: 4px;">
+                                        <option value="time-desc">Newest First</option>
+                                        <option value="time-asc">Oldest First</option>
+                                        <option value="pnl-desc">Highest P&L</option>
+                                        <option value="pnl-asc">Lowest P&L</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="table-wrapper" style="max-height: 200px; overflow-y: auto; background: #1a202c; border-radius: 6px;">
+                                <table class="history-table" id="futures-live-history-table" style="width: 100%; font-size: 12px;">
+                                    <thead style="position: sticky; top: 0; background: #2d3748;">
+                                        <tr>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Mode</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Side</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Time Open</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Size USD</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Open Price</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Time Closed</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Close Price</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">P&L USD</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">P&L %</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Balance</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="futures-live-history-tbody">
+                                        <tr>
+                                            <td colspan="10" style="text-align: center; padding: 20px; color: #6c757d;">No completed trades yet</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
                             </div>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <!-- Forex Spot -->
+            <!-- Forex -->
             <div class="asset-card" data-asset="forex">
                 <div class="asset-header">
                     <div class="asset-info">
                         <div class="asset-icon forex">
-                            <i class="fas fa-globe"></i>
+                            <i class="fas fa-dollar-sign"></i>
                         </div>
                         <div class="asset-details">
-                            <h3>Forex Spot</h3>
+                            <h3>Forex</h3>
                             <span class="broker">IBKR</span>
                         </div>
                     </div>
@@ -734,18 +743,24 @@
                 </div>
 
                 <!-- Paper Trading Section -->
-                <div class="trading-section paper">
+                <div class="trading-section paper" id="forex-paper-section">
                     <div class="section-header">
                         <h4><i class="fas fa-flask"></i> Strategy Development</h4>
-                        <div class="controls">
-                            <div class="trading-toggle">
-                                <label class="toggle-switch">
-                                    <input type="checkbox" id="forex-paper-toggle" onchange="handleTradingToggle('forex', 'paper', this.checked)">
-                                    <span class="toggle-slider"></span>
-                                </label>
-                                <span class="toggle-label">Paper Trading</span>
+                        <div class="status-controls">
+                            <div class="trading-status" id="forex-paper-status">
+                                <span class="status-indicator idle"></span>
+                                <span class="status-text">Idle</span>
                             </div>
-                            <button class="btn btn-kill" onclick="killAsset('forex')">Kill</button>
+                            <div class="controls">
+                                <div class="trading-toggle">
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" id="forex-paper-toggle" onchange="handleTradingToggle('forex', 'paper', this.checked)">
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                    <span class="toggle-label">Paper Trading</span>
+                                </div>
+                                <button class="btn btn-kill" onclick="killAsset('forex')">Kill</button>
+                            </div>
                         </div>
                     </div>
                     <div class="trading-content">
@@ -764,167 +779,139 @@
                                 <span class="metric-value" id="forex-paper-positions">0</span>
                             </div>
                             <div class="metric">
-                                <span class="metric-label">Strategies</span>
-                                <span class="metric-value" id="forex-paper-strategies">0</span>
+                                <span class="metric-label">Trades</span>
+                                <span class="metric-value" id="forex-paper-trades">0</span>
                             </div>
                             <div class="metric">
                                 <span class="metric-label">Win Rate</span>
-                                <span class="metric-value">0%</span>
+                                <span class="metric-value" id="forex-paper-winrate">0%</span>
                             </div>
                             <div class="metric">
-                                <span class="metric-label">Daily P&L</span>
-                                <span class="metric-value">$0.00</span>
+                                <span class="metric-label">Avg P&L</span>
+                                <span class="metric-value" id="forex-paper-avgpnl">$0</span>
                             </div>
                         </div>
-                        <div class="positions-section" id="forex-paper-positions-section">
-                            <h5>Active Positions</h5>
-                            <div class="table-container">
-                                <table class="positions-table" id="forex-paper-positions-list">
-                                    <thead>
+                        
+                        <!-- Active Positions -->
+                        <div class="positions-section" id="forex-paper-positions-section" style="margin-top: 10px;">
+                            <div class="section-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                <h5 style="margin: 0; font-size: 14px; color: #e2e8f0;">
+                                    <i class="fas fa-chart-line"></i> Active Positions
+                                </h5>
+                                <div class="positions-controls" style="display: flex; gap: 10px;">
+                                    <input type="text" id="forex-paper-positions-search" placeholder="Search symbol..." style="font-size: 12px; padding: 4px 8px; background: #1a202c; color: #e2e8f0; border: 1px solid #2d3748; border-radius: 4px; width: 120px;">
+                                    <select id="forex-paper-positions-sort" class="positions-sort" style="font-size: 12px; padding: 4px 8px; background: #1a202c; color: #e2e8f0; border: 1px solid #2d3748; border-radius: 4px;">
+                                        <option value="symbol">Symbol</option>
+                                        <option value="pnl-desc">P&L High to Low</option>
+                                        <option value="pnl-asc">P&L Low to High</option>
+                                        <option value="size-desc">Size Large to Small</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="table-wrapper" style="max-height: 120px; overflow-y: auto; background: #1a202c; border-radius: 6px;">
+                                <table class="positions-table" id="forex-paper-positions-table" style="width: 100%; font-size: 12px;">
+                                    <thead style="position: sticky; top: 0; background: #2d3748; z-index: 10;">
                                         <tr>
-                                            <th class="sortable" data-column="symbol">Symbol <i class="fas fa-sort"></i></th>
-                                            <th class="sortable" data-column="side">Side <i class="fas fa-sort"></i></th>
-                                            <th class="sortable" data-column="size">Size <i class="fas fa-sort"></i></th>
-                                            <th class="sortable" data-column="entry_price">Entry <i class="fas fa-sort"></i></th>
-                                            <th class="sortable" data-column="current_price">Current <i class="fas fa-sort"></i></th>
-                                            <th class="sortable" data-column="pnl">PnL <i class="fas fa-sort"></i></th>
-                                            <th class="sortable" data-column="take_profit">TP <i class="fas fa-sort"></i></th>
-                                            <th class="sortable" data-column="stop_loss">SL <i class="fas fa-sort"></i></th>
-                                            <th class="sortable" data-column="duration">Duration <i class="fas fa-sort"></i></th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Symbol</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Side</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Size</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Entry</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Current</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">P&L</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">TP/SL</th>
                                         </tr>
                                     </thead>
-                                    <tbody>
-                                        <tr class="no-positions"><td colspan="9">No active positions</td></tr>
+                                    <tbody id="forex-paper-positions-tbody">
+                                        <tr>
+                                            <td colspan="7" style="text-align: center; padding: 20px; color: #6c757d;">No active positions</td>
+                                        </tr>
                                     </tbody>
                                 </table>
                             </div>
                         </div>
                         
-                        <!-- Analytics Section -->
-                        <div class="analytics-section" id="forex-paper-analytics">
-                            <div class="analytics-header">
-                                <h5><i class="fas fa-chart-bar"></i> Analytics & Trade History</h5>
-                                <button class="btn btn-analytics" onclick="toggleAnalytics('forex', 'paper')">
-                                    <i class="fas fa-chevron-down"></i>
-                                </button>
+                        <!-- Activity Log -->
+                        <div class="activity-log-section" id="forex-paper-activity-section" style="margin-top: 15px;">
+                            <div class="section-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                <h5 style="margin: 0; font-size: 14px; color: #e2e8f0;">
+                                    <i class="fas fa-history"></i> Activity Log
+                                </h5>
+                                <div class="activity-controls" style="display: flex; gap: 10px;">
+                                    <select id="forex-paper-activity-filter" class="activity-filter" style="font-size: 12px; padding: 4px 8px; background: #1a202c; color: #e2e8f0; border: 1px solid #2d3748; border-radius: 4px;">
+                                        <option value="all">All Activities</option>
+                                        <option value="trade">Trades Only</option>
+                                        <option value="position">Position Changes</option>
+                                        <option value="error">Errors Only</option>
+                                    </select>
+                                </div>
                             </div>
-                            <div class="analytics-content" id="forex-paper-analytics-content" style="display: none;">
-                                <div class="analytics-tabs">
-                                    <button class="tab-btn active" onclick="switchTab('forex-paper', 'overview')">Overview</button>
-                                    <button class="tab-btn" onclick="switchTab('forex-paper', 'trades')">Trade History</button>
-                                    <button class="tab-btn" onclick="switchTab('forex-paper', 'symbols')">By Symbol</button>
+                            <div class="activity-list" id="forex-paper-activity-list" style="max-height: 150px; overflow-y: auto; background: #1a202c; border-radius: 6px; padding: 8px;">
+                                <div class="no-activity" style="text-align: center; color: #6c757d; padding: 20px; font-size: 12px;">No activity yet</div>
+                            </div>
+                        </div>
+                        
+                        <!-- Trade History -->
+                        <div class="history-section" id="forex-paper-history-section" style="margin-top: 15px;">
+                            <div class="section-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                <h5 style="margin: 0; font-size: 14px; color: #e2e8f0;">
+                                    <i class="fas fa-table"></i> Trade History
+                                </h5>
+                                <div class="history-controls" style="display: flex; gap: 10px;">
+                                    <input type="text" id="forex-paper-history-search" placeholder="Search..." style="font-size: 12px; padding: 4px 8px; background: #1a202c; color: #e2e8f0; border: 1px solid #2d3748; border-radius: 4px; width: 120px;">
+                                    <select id="forex-paper-history-sort" class="history-sort" style="font-size: 12px; padding: 4px 8px; background: #1a202c; color: #e2e8f0; border: 1px solid #2d3748; border-radius: 4px;">
+                                        <option value="time-desc">Newest First</option>
+                                        <option value="time-asc">Oldest First</option>
+                                        <option value="pnl-desc">Highest P&L</option>
+                                        <option value="pnl-asc">Lowest P&L</option>
+                                    </select>
                                 </div>
-                                
-                                <!-- Overview Tab -->
-                                <div class="tab-content active" id="forex-paper-overview-tab">
-                                    <div class="overview-stats">
-                                        <div class="stat-card">
-                                            <div class="stat-value" id="forex-paper-total-trades">0</div>
-                                            <div class="stat-label">Total Trades</div>
-                                        </div>
-                                        <div class="stat-card">
-                                            <div class="stat-value" id="forex-paper-win-rate-detailed">0%</div>
-                                            <div class="stat-label">Win Rate</div>
-                                        </div>
-                                        <div class="stat-card">
-                                            <div class="stat-value" id="forex-paper-profit-factor">0.00</div>
-                                            <div class="stat-label">Profit Factor</div>
-                                        </div>
-                                        <div class="stat-card">
-                                            <div class="stat-value" id="forex-paper-max-drawdown">0%</div>
-                                            <div class="stat-label">Max Drawdown</div>
-                                        </div>
-                                    </div>
-                                </div>
-                                
-                                <!-- Trade History Tab -->
-                                <div class="tab-content" id="forex-paper-trades-tab">
-                                    <div class="trade-history-controls">
-                                        <div style="display: flex; gap: 8px; align-items: center;">
-                                            <input type="text" id="forex-paper-search" placeholder="Search symbol..." style="width: 120px;">
-                                            <select id="forex-paper-trade-filter">
-                                                <option value="all">All Trades</option>
-                                                <option value="wins">Winning Trades</option>
-                                                <option value="losses">Losing Trades</option>
-                                            </select>
-                                        </div>
-                                        <div style="display: flex; gap: 8px;">
-                                            <button class="btn btn-refresh" onclick="refreshTradeHistory('forex', 'paper')">
-                                                <i class="fas fa-refresh"></i> Refresh
-                                            </button>
-                                            <button class="btn btn-danger" onclick="clearPaperTradingHistory('forex')" title="Clear all forex paper trading history and positions">
-                                                <i class="fas fa-trash"></i> Clear History
-                                            </button>
-                                        </div>
-                                    </div>
-                                    <div class="trade-history-container">
-                                        <div class="table-container">
-                                            <table class="trade-history-table" id="forex-paper-trade-history">
-                                                <thead>
-                                                    <tr>
-                                                        <th class="sortable" data-column="symbol">Symbol <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="side">Side <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="size">Size <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="entry_price">Entry <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="exit_price">Exit <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="pnl_usd">P&L ($) <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="pnl_pct">P&L (%) <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="duration">Duration <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="exit_reason">Exit Reason <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="swap_cost">Swap <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="entry_time">Entry Time <i class="fas fa-sort"></i></th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody>
-                                                    <tr class="no-trades"><td colspan="11">No completed trades yet</td></tr>
-                                                </tbody>
-                                            </table>
-                                        </div>
-                                    </div>
-                                </div>
-                                
-                                <!-- By Symbol Tab -->
-                                <div class="tab-content" id="forex-paper-symbols-tab">
-                                    <div class="symbol-performance-container">
-                                        <div class="table-container">
-                                            <table class="symbol-performance-table" id="forex-paper-symbol-performance">
-                                                <thead>
-                                                    <tr>
-                                                        <th class="sortable" data-column="symbol">Symbol <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="trades">Trades <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="win_rate">Win Rate <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="total_pnl">Total P&L <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="avg_pnl">Avg P&L <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="best_trade">Best Trade <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="worst_trade">Worst Trade <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="avg_spread">Avg Spread <i class="fas fa-sort"></i></th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody>
-                                                    <tr class="no-data"><td colspan="8">No trade data available</td></tr>
-                                                </tbody>
-                                            </table>
-                                        </div>
-                                    </div>
-                                </div>
+                            </div>
+                            <div class="table-wrapper" style="max-height: 200px; overflow-y: auto; background: #1a202c; border-radius: 6px;">
+                                <table class="history-table" id="forex-paper-history-table" style="width: 100%; font-size: 12px;">
+                                    <thead style="position: sticky; top: 0; background: #2d3748;">
+                                        <tr>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Mode</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Side</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Time Open</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Size USD</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Open Price</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Time Closed</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Close Price</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">P&L USD</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">P&L %</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Balance</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="forex-paper-history-tbody">
+                                        <tr>
+                                            <td colspan="10" style="text-align: center; padding: 20px; color: #6c757d;">No completed trades yet</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
                             </div>
                         </div>
                     </div>
                 </div>
 
                 <!-- Live Trading Section -->
-                <div class="trading-section live">
+                <div class="trading-section live" id="forex-live-section">
                     <div class="section-header">
-                        <h4><i class="fas fa-rocket"></i> Live Trading</h4>
-                        <div class="controls">
-                            <div class="trading-toggle">
-                                <label class="toggle-switch">
-                                    <input type="checkbox" id="forex-live-toggle" onchange="handleTradingToggle('forex', 'live', this.checked)" disabled>
-                                    <span class="toggle-slider"></span>
-                                </label>
-                                <span class="toggle-label">Live Trading</span>
+                        <h4><i class="fas fa-fire"></i> Live Trading</h4>
+                        <div class="status-controls">
+                            <div class="trading-status" id="forex-live-status">
+                                <span class="status-indicator idle"></span>
+                                <span class="status-text">Idle</span>
                             </div>
-                            <button class="btn btn-kill" onclick="killAsset('forex')">Kill</button>
+                            <div class="controls">
+                                <div class="trading-toggle">
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" id="forex-live-toggle" onchange="handleTradingToggle('forex', 'live', this.checked)">
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                    <span class="toggle-label">Live Trading</span>
+                                </div>
+                                <button class="btn btn-kill" onclick="killAsset('forex')">Kill</button>
+                            </div>
                         </div>
                     </div>
                     <div class="trading-content">
@@ -943,16 +930,115 @@
                                 <span class="metric-value" id="forex-live-positions">0</span>
                             </div>
                             <div class="metric">
-                                <span class="metric-label">Strategies</span>
-                                <span class="metric-value" id="forex-live-strategies">0</span>
+                                <span class="metric-label">Trades</span>
+                                <span class="metric-value" id="forex-live-trades">0</span>
                             </div>
                             <div class="metric">
                                 <span class="metric-label">Win Rate</span>
-                                <span class="metric-value">0%</span>
+                                <span class="metric-value" id="forex-live-winrate">0%</span>
                             </div>
                             <div class="metric">
-                                <span class="metric-label">Daily P&L</span>
-                                <span class="metric-value">$0.00</span>
+                                <span class="metric-label">Avg P&L</span>
+                                <span class="metric-value" id="forex-live-avgpnl">$0</span>
+                            </div>
+                        </div>
+                        
+                        <!-- Active Positions -->
+                        <div class="positions-section" id="forex-live-positions-section" style="margin-top: 10px;">
+                            <div class="section-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                <h5 style="margin: 0; font-size: 14px; color: #e2e8f0;">
+                                    <i class="fas fa-chart-line"></i> Active Positions
+                                </h5>
+                                <div class="positions-controls" style="display: flex; gap: 10px;">
+                                    <input type="text" id="forex-live-positions-search" placeholder="Search symbol..." style="font-size: 12px; padding: 4px 8px; background: #1a202c; color: #e2e8f0; border: 1px solid #2d3748; border-radius: 4px; width: 120px;">
+                                    <select id="forex-live-positions-sort" class="positions-sort" style="font-size: 12px; padding: 4px 8px; background: #1a202c; color: #e2e8f0; border: 1px solid #2d3748; border-radius: 4px;">
+                                        <option value="symbol">Symbol</option>
+                                        <option value="pnl-desc">P&L High to Low</option>
+                                        <option value="pnl-asc">P&L Low to High</option>
+                                        <option value="size-desc">Size Large to Small</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="table-wrapper" style="max-height: 120px; overflow-y: auto; background: #1a202c; border-radius: 6px;">
+                                <table class="positions-table" id="forex-live-positions-table" style="width: 100%; font-size: 12px;">
+                                    <thead style="position: sticky; top: 0; background: #2d3748; z-index: 10;">
+                                        <tr>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Symbol</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Side</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Size</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Entry</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Current</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">P&L</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">TP/SL</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="forex-live-positions-tbody">
+                                        <tr>
+                                            <td colspan="7" style="text-align: center; padding: 20px; color: #6c757d;">No active positions</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                        
+                        <!-- Activity Log -->
+                        <div class="activity-log-section" id="forex-live-activity-section" style="margin-top: 15px;">
+                            <div class="section-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                <h5 style="margin: 0; font-size: 14px; color: #e2e8f0;">
+                                    <i class="fas fa-history"></i> Activity Log
+                                </h5>
+                                <div class="activity-controls" style="display: flex; gap: 10px;">
+                                    <select id="forex-live-activity-filter" class="activity-filter" style="font-size: 12px; padding: 4px 8px; background: #1a202c; color: #e2e8f0; border: 1px solid #2d3748; border-radius: 4px;">
+                                        <option value="all">All Activities</option>
+                                        <option value="trade">Trades Only</option>
+                                        <option value="position">Position Changes</option>
+                                        <option value="error">Errors Only</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="activity-list" id="forex-live-activity-list" style="max-height: 150px; overflow-y: auto; background: #1a202c; border-radius: 6px; padding: 8px;">
+                                <div class="no-activity" style="text-align: center; color: #6c757d; padding: 20px; font-size: 12px;">No activity yet</div>
+                            </div>
+                        </div>
+                        
+                        <!-- Trade History -->
+                        <div class="history-section" id="forex-live-history-section" style="margin-top: 15px;">
+                            <div class="section-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                <h5 style="margin: 0; font-size: 14px; color: #e2e8f0;">
+                                    <i class="fas fa-table"></i> Trade History
+                                </h5>
+                                <div class="history-controls" style="display: flex; gap: 10px;">
+                                    <input type="text" id="forex-live-history-search" placeholder="Search..." style="font-size: 12px; padding: 4px 8px; background: #1a202c; color: #e2e8f0; border: 1px solid #2d3748; border-radius: 4px; width: 120px;">
+                                    <select id="forex-live-history-sort" class="history-sort" style="font-size: 12px; padding: 4px 8px; background: #1a202c; color: #e2e8f0; border: 1px solid #2d3748; border-radius: 4px;">
+                                        <option value="time-desc">Newest First</option>
+                                        <option value="time-asc">Oldest First</option>
+                                        <option value="pnl-desc">Highest P&L</option>
+                                        <option value="pnl-asc">Lowest P&L</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="table-wrapper" style="max-height: 200px; overflow-y: auto; background: #1a202c; border-radius: 6px;">
+                                <table class="history-table" id="forex-live-history-table" style="width: 100%; font-size: 12px;">
+                                    <thead style="position: sticky; top: 0; background: #2d3748;">
+                                        <tr>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Mode</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Side</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Time Open</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Size USD</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Open Price</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Time Closed</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Close Price</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">P&L USD</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">P&L %</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Balance</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="forex-live-history-tbody">
+                                        <tr>
+                                            <td colspan="10" style="text-align: center; padding: 20px; color: #6c757d;">No completed trades yet</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
                             </div>
                         </div>
                     </div>
@@ -963,7 +1049,7 @@
             <div class="asset-card" data-asset="forex_options">
                 <div class="asset-header">
                     <div class="asset-info">
-                        <div class="asset-icon options">
+                        <div class="asset-icon forex_options">
                             <i class="fas fa-coins"></i>
                         </div>
                         <div class="asset-details">
@@ -978,18 +1064,24 @@
                 </div>
 
                 <!-- Paper Trading Section -->
-                <div class="trading-section paper">
+                <div class="trading-section paper" id="forex_options-paper-section">
                     <div class="section-header">
                         <h4><i class="fas fa-flask"></i> Strategy Development</h4>
-                        <div class="controls">
-                            <div class="trading-toggle">
-                                <label class="toggle-switch">
-                                    <input type="checkbox" id="forex_options-paper-toggle" onchange="handleTradingToggle('forex_options', 'paper', this.checked)">
-                                    <span class="toggle-slider"></span>
-                                </label>
-                                <span class="toggle-label">Paper Trading</span>
+                        <div class="status-controls">
+                            <div class="trading-status" id="forex_options-paper-status">
+                                <span class="status-indicator idle"></span>
+                                <span class="status-text">Idle</span>
                             </div>
-                            <button class="btn btn-kill" onclick="killAsset('forex_options')">Kill</button>
+                            <div class="controls">
+                                <div class="trading-toggle">
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" id="forex_options-paper-toggle" onchange="handleTradingToggle('forex_options', 'paper', this.checked)">
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                    <span class="toggle-label">Paper Trading</span>
+                                </div>
+                                <button class="btn btn-kill" onclick="killAsset('forex_options')">Kill</button>
+                            </div>
                         </div>
                     </div>
                     <div class="trading-content">
@@ -1008,211 +1100,139 @@
                                 <span class="metric-value" id="forex_options-paper-positions">0</span>
                             </div>
                             <div class="metric">
-                                <span class="metric-label">Strategies</span>
-                                <span class="metric-value" id="forex_options-paper-strategies">0</span>
+                                <span class="metric-label">Trades</span>
+                                <span class="metric-value" id="forex_options-paper-trades">0</span>
                             </div>
                             <div class="metric">
                                 <span class="metric-label">Win Rate</span>
-                                <span class="metric-value">0%</span>
+                                <span class="metric-value" id="forex_options-paper-winrate">0%</span>
                             </div>
                             <div class="metric">
-                                <span class="metric-label">Daily P&L</span>
-                                <span class="metric-value">$0.00</span>
+                                <span class="metric-label">Avg P&L</span>
+                                <span class="metric-value" id="forex_options-paper-avgpnl">$0</span>
                             </div>
                         </div>
-                        <div class="positions-section" id="forex_options-paper-positions-section">
-                            <h5>Active Positions</h5>
-                            <div class="table-container">
-                                <table class="positions-table" id="forex_options-paper-positions-list">
-                                    <thead>
+                        
+                        <!-- Active Positions -->
+                        <div class="positions-section" id="forex_options-paper-positions-section" style="margin-top: 10px;">
+                            <div class="section-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                <h5 style="margin: 0; font-size: 14px; color: #e2e8f0;">
+                                    <i class="fas fa-chart-line"></i> Active Positions
+                                </h5>
+                                <div class="positions-controls" style="display: flex; gap: 10px;">
+                                    <input type="text" id="forex_options-paper-positions-search" placeholder="Search symbol..." style="font-size: 12px; padding: 4px 8px; background: #1a202c; color: #e2e8f0; border: 1px solid #2d3748; border-radius: 4px; width: 120px;">
+                                    <select id="forex_options-paper-positions-sort" class="positions-sort" style="font-size: 12px; padding: 4px 8px; background: #1a202c; color: #e2e8f0; border: 1px solid #2d3748; border-radius: 4px;">
+                                        <option value="symbol">Symbol</option>
+                                        <option value="pnl-desc">P&L High to Low</option>
+                                        <option value="pnl-asc">P&L Low to High</option>
+                                        <option value="size-desc">Size Large to Small</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="table-wrapper" style="max-height: 120px; overflow-y: auto; background: #1a202c; border-radius: 6px;">
+                                <table class="positions-table" id="forex_options-paper-positions-table" style="width: 100%; font-size: 12px;">
+                                    <thead style="position: sticky; top: 0; background: #2d3748; z-index: 10;">
                                         <tr>
-                                            <th class="sortable" data-column="symbol">Symbol <i class="fas fa-sort"></i></th>
-                                            <th class="sortable" data-column="side">Side <i class="fas fa-sort"></i></th>
-                                            <th class="sortable" data-column="option_type">Type <i class="fas fa-sort"></i></th>
-                                            <th class="sortable" data-column="strike">Strike <i class="fas fa-sort"></i></th>
-                                            <th class="sortable" data-column="expiry">Expiry <i class="fas fa-sort"></i></th>
-                                            <th class="sortable" data-column="size">Size <i class="fas fa-sort"></i></th>
-                                            <th class="sortable" data-column="entry_price">Entry <i class="fas fa-sort"></i></th>
-                                            <th class="sortable" data-column="current_price">Current <i class="fas fa-sort"></i></th>
-                                            <th class="sortable" data-column="pnl">PnL <i class="fas fa-sort"></i></th>
-                                            <th class="sortable" data-column="delta">Delta <i class="fas fa-sort"></i></th>
-                                            <th class="sortable" data-column="gamma">Gamma <i class="fas fa-sort"></i></th>
-                                            <th class="sortable" data-column="theta">Theta <i class="fas fa-sort"></i></th>
-                                            <th class="sortable" data-column="vega">Vega <i class="fas fa-sort"></i></th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Symbol</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Side</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Size</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Entry</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Current</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">P&L</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">TP/SL</th>
                                         </tr>
                                     </thead>
-                                    <tbody>
-                                        <tr class="no-positions"><td colspan="13">No active positions</td></tr>
+                                    <tbody id="forex_options-paper-positions-tbody">
+                                        <tr>
+                                            <td colspan="7" style="text-align: center; padding: 20px; color: #6c757d;">No active positions</td>
+                                        </tr>
                                     </tbody>
                                 </table>
                             </div>
                         </div>
                         
-                        <!-- Analytics Section -->
-                        <div class="analytics-section" id="forex_options-paper-analytics">
-                            <div class="analytics-header">
-                                <h5><i class="fas fa-chart-bar"></i> Analytics & Trade History</h5>
-                                <button class="btn btn-analytics" onclick="toggleAnalytics('forex_options', 'paper')">
-                                    <i class="fas fa-chevron-down"></i>
-                                </button>
+                        <!-- Activity Log -->
+                        <div class="activity-log-section" id="forex_options-paper-activity-section" style="margin-top: 15px;">
+                            <div class="section-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                <h5 style="margin: 0; font-size: 14px; color: #e2e8f0;">
+                                    <i class="fas fa-history"></i> Activity Log
+                                </h5>
+                                <div class="activity-controls" style="display: flex; gap: 10px;">
+                                    <select id="forex_options-paper-activity-filter" class="activity-filter" style="font-size: 12px; padding: 4px 8px; background: #1a202c; color: #e2e8f0; border: 1px solid #2d3748; border-radius: 4px;">
+                                        <option value="all">All Activities</option>
+                                        <option value="trade">Trades Only</option>
+                                        <option value="position">Position Changes</option>
+                                        <option value="error">Errors Only</option>
+                                    </select>
+                                </div>
                             </div>
-                            <div class="analytics-content" id="forex_options-paper-analytics-content" style="display: none;">
-                                <div class="analytics-tabs">
-                                    <button class="tab-btn active" onclick="switchTab('forex_options-paper', 'overview')">Overview</button>
-                                    <button class="tab-btn" onclick="switchTab('forex_options-paper', 'trades')">Trade History</button>
-                                    <button class="tab-btn" onclick="switchTab('forex_options-paper', 'symbols')">By Symbol</button>
-                                    <button class="tab-btn" onclick="switchTab('forex_options-paper', 'greeks')">Greeks Analysis</button>
+                            <div class="activity-list" id="forex_options-paper-activity-list" style="max-height: 150px; overflow-y: auto; background: #1a202c; border-radius: 6px; padding: 8px;">
+                                <div class="no-activity" style="text-align: center; color: #6c757d; padding: 20px; font-size: 12px;">No activity yet</div>
+                            </div>
+                        </div>
+                        
+                        <!-- Trade History -->
+                        <div class="history-section" id="forex_options-paper-history-section" style="margin-top: 15px;">
+                            <div class="section-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                <h5 style="margin: 0; font-size: 14px; color: #e2e8f0;">
+                                    <i class="fas fa-table"></i> Trade History
+                                </h5>
+                                <div class="history-controls" style="display: flex; gap: 10px;">
+                                    <input type="text" id="forex_options-paper-history-search" placeholder="Search..." style="font-size: 12px; padding: 4px 8px; background: #1a202c; color: #e2e8f0; border: 1px solid #2d3748; border-radius: 4px; width: 120px;">
+                                    <select id="forex_options-paper-history-sort" class="history-sort" style="font-size: 12px; padding: 4px 8px; background: #1a202c; color: #e2e8f0; border: 1px solid #2d3748; border-radius: 4px;">
+                                        <option value="time-desc">Newest First</option>
+                                        <option value="time-asc">Oldest First</option>
+                                        <option value="pnl-desc">Highest P&L</option>
+                                        <option value="pnl-asc">Lowest P&L</option>
+                                    </select>
                                 </div>
-                                
-                                <!-- Overview Tab -->
-                                <div class="tab-content active" id="forex_options-paper-overview-tab">
-                                    <div class="overview-stats">
-                                        <div class="stat-card">
-                                            <div class="stat-value" id="forex_options-paper-total-trades">0</div>
-                                            <div class="stat-label">Total Trades</div>
-                                        </div>
-                                        <div class="stat-card">
-                                            <div class="stat-value" id="forex_options-paper-win-rate-detailed">0%</div>
-                                            <div class="stat-label">Win Rate</div>
-                                        </div>
-                                        <div class="stat-card">
-                                            <div class="stat-value" id="forex_options-paper-profit-factor">0.00</div>
-                                            <div class="stat-label">Profit Factor</div>
-                                        </div>
-                                        <div class="stat-card">
-                                            <div class="stat-value" id="forex_options-paper-max-drawdown">0%</div>
-                                            <div class="stat-label">Max Drawdown</div>
-                                        </div>
-                                        <div class="stat-card">
-                                            <div class="stat-value" id="forex_options-paper-theta-pnl">$0.00</div>
-                                            <div class="stat-label">Theta P&L</div>
-                                        </div>
-                                        <div class="stat-card">
-                                            <div class="stat-value" id="forex_options-paper-implied-vol">0%</div>
-                                            <div class="stat-label">Avg IV</div>
-                                        </div>
-                                    </div>
-                                </div>
-                                
-                                <!-- Trade History Tab -->
-                                <div class="tab-content" id="forex_options-paper-trades-tab">
-                                    <div class="trade-history-controls">
-                                        <div style="display: flex; gap: 8px; align-items: center;">
-                                            <input type="text" id="forex_options-paper-search" placeholder="Search symbol..." style="width: 120px;">
-                                            <select id="forex_options-paper-trade-filter">
-                                                <option value="all">All Trades</option>
-                                                <option value="wins">Winning Trades</option>
-                                                <option value="losses">Losing Trades</option>
-                                                <option value="calls">Call Options</option>
-                                                <option value="puts">Put Options</option>
-                                                <option value="spreads">Spreads</option>
-                                            </select>
-                                        </div>
-                                        <div style="display: flex; gap: 8px;">
-                                            <button class="btn btn-refresh" onclick="refreshTradeHistory('forex_options', 'paper')">
-                                                <i class="fas fa-refresh"></i> Refresh
-                                            </button>
-                                            <button class="btn btn-danger" onclick="clearPaperTradingHistory('forex_options')" title="Clear all forex options paper trading history and positions">
-                                                <i class="fas fa-trash"></i> Clear History
-                                            </button>
-                                        </div>
-                                    </div>
-                                    <div class="trade-history-container">
-                                        <div class="table-container">
-                                            <table class="trade-history-table" id="forex_options-paper-trade-history">
-                                                <thead>
-                                                    <tr>
-                                                        <th class="sortable" data-column="symbol">Symbol <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="option_type">Type <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="strike">Strike <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="expiry">Expiry <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="side">Side <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="size">Size <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="entry_price">Entry <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="exit_price">Exit <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="pnl_usd">P&L ($) <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="pnl_pct">P&L (%) <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="implied_vol">IV <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="duration">Duration <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="exit_reason">Exit Reason <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="entry_time">Entry Time <i class="fas fa-sort"></i></th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody>
-                                                    <tr class="no-trades"><td colspan="14">No completed trades yet</td></tr>
-                                                </tbody>
-                                            </table>
-                                        </div>
-                                    </div>
-                                </div>
-                                
-                                <!-- By Symbol Tab -->
-                                <div class="tab-content" id="forex_options-paper-symbols-tab">
-                                    <div class="symbol-performance-container">
-                                        <div class="table-container">
-                                            <table class="symbol-performance-table" id="forex_options-paper-symbol-performance">
-                                                <thead>
-                                                    <tr>
-                                                        <th class="sortable" data-column="symbol">Symbol <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="trades">Trades <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="win_rate">Win Rate <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="total_pnl">Total P&L <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="avg_pnl">Avg P&L <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="best_trade">Best Trade <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="worst_trade">Worst Trade <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="avg_iv">Avg IV <i class="fas fa-sort"></i></th>
-                                                        <th class="sortable" data-column="theta_pnl">Theta P&L <i class="fas fa-sort"></i></th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody>
-                                                    <tr class="no-data"><td colspan="9">No trade data available</td></tr>
-                                                </tbody>
-                                            </table>
-                                        </div>
-                                    </div>
-                                </div>
-                                
-                                <!-- Greeks Analysis Tab -->
-                                <div class="tab-content" id="forex_options-paper-greeks-tab">
-                                    <div class="greeks-analysis-container">
-                                        <div class="greeks-summary">
-                                            <div class="greeks-card">
-                                                <div class="greeks-value" id="forex_options-paper-portfolio-delta">0.00</div>
-                                                <div class="greeks-label">Portfolio Delta</div>
-                                            </div>
-                                            <div class="greeks-card">
-                                                <div class="greeks-value" id="forex_options-paper-portfolio-gamma">0.00</div>
-                                                <div class="greeks-label">Portfolio Gamma</div>
-                                            </div>
-                                            <div class="greeks-card">
-                                                <div class="greeks-value" id="forex_options-paper-portfolio-theta">$0.00</div>
-                                                <div class="greeks-label">Daily Theta</div>
-                                            </div>
-                                            <div class="greeks-card">
-                                                <div class="greeks-value" id="forex_options-paper-portfolio-vega">$0.00</div>
-                                                <div class="greeks-label">Portfolio Vega</div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
+                            </div>
+                            <div class="table-wrapper" style="max-height: 200px; overflow-y: auto; background: #1a202c; border-radius: 6px;">
+                                <table class="history-table" id="forex_options-paper-history-table" style="width: 100%; font-size: 12px;">
+                                    <thead style="position: sticky; top: 0; background: #2d3748;">
+                                        <tr>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Mode</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Side</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Time Open</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Size USD</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Open Price</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Time Closed</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Close Price</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">P&L USD</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">P&L %</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Balance</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="forex_options-paper-history-tbody">
+                                        <tr>
+                                            <td colspan="10" style="text-align: center; padding: 20px; color: #6c757d;">No completed trades yet</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
                             </div>
                         </div>
                     </div>
                 </div>
 
                 <!-- Live Trading Section -->
-                <div class="trading-section live">
+                <div class="trading-section live" id="forex_options-live-section">
                     <div class="section-header">
-                        <h4><i class="fas fa-rocket"></i> Live Trading</h4>
-                        <div class="controls">
-                            <div class="trading-toggle">
-                                <label class="toggle-switch">
-                                    <input type="checkbox" id="forex_options-live-toggle" onchange="handleTradingToggle('forex_options', 'live', this.checked)" disabled>
-                                    <span class="toggle-slider"></span>
-                                </label>
-                                <span class="toggle-label">Live Trading</span>
+                        <h4><i class="fas fa-fire"></i> Live Trading</h4>
+                        <div class="status-controls">
+                            <div class="trading-status" id="forex_options-live-status">
+                                <span class="status-indicator idle"></span>
+                                <span class="status-text">Idle</span>
                             </div>
-                            <button class="btn btn-kill" onclick="killAsset('forex_options')">Kill</button>
+                            <div class="controls">
+                                <div class="trading-toggle">
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" id="forex_options-live-toggle" onchange="handleTradingToggle('forex_options', 'live', this.checked)">
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                    <span class="toggle-label">Live Trading</span>
+                                </div>
+                                <button class="btn btn-kill" onclick="killAsset('forex_options')">Kill</button>
+                            </div>
                         </div>
                     </div>
                     <div class="trading-content">
@@ -1231,154 +1251,118 @@
                                 <span class="metric-value" id="forex_options-live-positions">0</span>
                             </div>
                             <div class="metric">
-                                <span class="metric-label">Strategies</span>
-                                <span class="metric-value" id="forex_options-live-strategies">0</span>
+                                <span class="metric-label">Trades</span>
+                                <span class="metric-value" id="forex_options-live-trades">0</span>
                             </div>
                             <div class="metric">
                                 <span class="metric-label">Win Rate</span>
-                                <span class="metric-value">0%</span>
+                                <span class="metric-value" id="forex_options-live-winrate">0%</span>
                             </div>
                             <div class="metric">
-                                <span class="metric-label">Daily P&L</span>
-                                <span class="metric-value">$0.00</span>
+                                <span class="metric-label">Avg P&L</span>
+                                <span class="metric-value" id="forex_options-live-avgpnl">$0</span>
+                            </div>
+                        </div>
+                        
+                        <!-- Active Positions -->
+                        <div class="positions-section" id="forex_options-live-positions-section" style="margin-top: 10px;">
+                            <div class="section-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                <h5 style="margin: 0; font-size: 14px; color: #e2e8f0;">
+                                    <i class="fas fa-chart-line"></i> Active Positions
+                                </h5>
+                                <div class="positions-controls" style="display: flex; gap: 10px;">
+                                    <input type="text" id="forex_options-live-positions-search" placeholder="Search symbol..." style="font-size: 12px; padding: 4px 8px; background: #1a202c; color: #e2e8f0; border: 1px solid #2d3748; border-radius: 4px; width: 120px;">
+                                    <select id="forex_options-live-positions-sort" class="positions-sort" style="font-size: 12px; padding: 4px 8px; background: #1a202c; color: #e2e8f0; border: 1px solid #2d3748; border-radius: 4px;">
+                                        <option value="symbol">Symbol</option>
+                                        <option value="pnl-desc">P&L High to Low</option>
+                                        <option value="pnl-asc">P&L Low to High</option>
+                                        <option value="size-desc">Size Large to Small</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="table-wrapper" style="max-height: 120px; overflow-y: auto; background: #1a202c; border-radius: 6px;">
+                                <table class="positions-table" id="forex_options-live-positions-table" style="width: 100%; font-size: 12px;">
+                                    <thead style="position: sticky; top: 0; background: #2d3748; z-index: 10;">
+                                        <tr>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Symbol</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Side</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Size</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Entry</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Current</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">P&L</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">TP/SL</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="forex_options-live-positions-tbody">
+                                        <tr>
+                                            <td colspan="7" style="text-align: center; padding: 20px; color: #6c757d;">No active positions</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                        
+                        <!-- Activity Log -->
+                        <div class="activity-log-section" id="forex_options-live-activity-section" style="margin-top: 15px;">
+                            <div class="section-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                <h5 style="margin: 0; font-size: 14px; color: #e2e8f0;">
+                                    <i class="fas fa-history"></i> Activity Log
+                                </h5>
+                                <div class="activity-controls" style="display: flex; gap: 10px;">
+                                    <select id="forex_options-live-activity-filter" class="activity-filter" style="font-size: 12px; padding: 4px 8px; background: #1a202c; color: #e2e8f0; border: 1px solid #2d3748; border-radius: 4px;">
+                                        <option value="all">All Activities</option>
+                                        <option value="trade">Trades Only</option>
+                                        <option value="position">Position Changes</option>
+                                        <option value="error">Errors Only</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="activity-list" id="forex_options-live-activity-list" style="max-height: 150px; overflow-y: auto; background: #1a202c; border-radius: 6px; padding: 8px;">
+                                <div class="no-activity" style="text-align: center; color: #6c757d; padding: 20px; font-size: 12px;">No activity yet</div>
+                            </div>
+                        </div>
+                        
+                        <!-- Trade History -->
+                        <div class="history-section" id="forex_options-live-history-section" style="margin-top: 15px;">
+                            <div class="section-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                <h5 style="margin: 0; font-size: 14px; color: #e2e8f0;">
+                                    <i class="fas fa-table"></i> Trade History
+                                </h5>
+                                <div class="history-controls" style="display: flex; gap: 10px;">
+                                    <input type="text" id="forex_options-live-history-search" placeholder="Search..." style="font-size: 12px; padding: 4px 8px; background: #1a202c; color: #e2e8f0; border: 1px solid #2d3748; border-radius: 4px; width: 120px;">
+                                    <select id="forex_options-live-history-sort" class="history-sort" style="font-size: 12px; padding: 4px 8px; background: #1a202c; color: #e2e8f0; border: 1px solid #2d3748; border-radius: 4px;">
+                                        <option value="time-desc">Newest First</option>
+                                        <option value="time-asc">Oldest First</option>
+                                        <option value="pnl-desc">Highest P&L</option>
+                                        <option value="pnl-asc">Lowest P&L</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="table-wrapper" style="max-height: 200px; overflow-y: auto; background: #1a202c; border-radius: 6px;">
+                                <table class="history-table" id="forex_options-live-history-table" style="width: 100%; font-size: 12px;">
+                                    <thead style="position: sticky; top: 0; background: #2d3748;">
+                                        <tr>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Mode</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Side</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Time Open</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Size USD</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Open Price</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Time Closed</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Close Price</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">P&L USD</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">P&L %</th>
+                                            <th style="padding: 8px; text-align: left; color: #a0aec0;">Balance</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="forex_options-live-history-tbody">
+                                        <tr>
+                                            <td colspan="10" style="text-align: center; padding: 20px; color: #6c757d;">No completed trades yet</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
                             </div>
                         </div>
                     </div>
                 </div>
             </div>
-        </div>
 
-        <!-- Activity Footer -->
-        <footer class="activity-footer">
-            <div class="activity-header">
-                <h4>System Activity</h4>
-                <div class="activity-time" id="lastUpdate">Never</div>
-            </div>
-            <div class="activity-list" id="activityList">
-                <div class="activity-item">
-                    <span class="activity-time">00:00:00</span>
-                    <span class="activity-message">Dashboard initialized</span>
-                </div>
-            </div>
-        </footer>
-    </div>
-
-    <!-- Reward Display Modal -->
-    <div class="reward-modal" id="rewardModal">
-        <div class="reward-modal-content">
-            <div class="reward-modal-header">
-                <h3>Trade Reward Analysis</h3>
-                <button class="reward-modal-close" onclick="closeRewardModal()">&times;</button>
-            </div>
-            <div class="reward-modal-body">
-                <div class="reward-summary">
-                    <div class="reward-total">
-                        <span class="reward-label">Total Reward</span>
-                        <span class="reward-value" id="rewardTotalValue">+0.00</span>
-                    </div>
-                    <div class="trade-info">
-                        <span class="trade-symbol" id="rewardTradeSymbol">-</span>
-                        <span class="trade-side" id="rewardTradeSide">-</span>
-                        <span class="trade-profit" id="rewardTradeProfit">0.00%</span>
-                    </div>
-                </div>
-                
-                <div class="reward-breakdown">
-                    <div class="breakdown-section positive-rewards">
-                        <h4>Positive Rewards</h4>
-                        <div class="reward-components" id="positiveComponents">
-                        </div>
-                    </div>
-                    
-                    <div class="breakdown-section penalties">
-                        <h4>Penalties</h4>
-                        <div class="reward-components" id="penaltyComponents">
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="reward-warnings" id="rewardWarnings" style="display: none;">
-                    <div class="warning-item">
-                        <i class="fas fa-exclamation-triangle"></i>
-                        <span class="warning-text" id="warningText"></span>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Reward History Sidebar -->
-    <div class="reward-history-sidebar" id="rewardSidebar">
-        <div class="reward-history-header">
-            <h3>Recent Rewards</h3>
-            <button class="sidebar-toggle" onclick="toggleRewardSidebar()">
-                <i class="fas fa-chevron-right"></i>
-            </button>
-        </div>
-        <div class="reward-history-content">
-            <div class="reward-history-list" id="rewardHistoryList">
-                <div class="no-rewards">No recent rewards</div>
-            </div>
-        </div>
-        <div class="reward-history-stats">
-            <div class="stat-item">
-                <span class="stat-label">Avg Reward</span>
-                <span class="stat-value" id="avgReward">0.00</span>
-            </div>
-            <div class="stat-item">
-                <span class="stat-label">Total Points</span>
-                <span class="stat-value" id="totalPoints">0</span>
-            </div>
-        </div>
-    </div>
-
-    <script>
-        // Shutdown server function
-        async function shutdownServer() {
-            const confirmed = confirm(
-                '⚠️ SHUTDOWN CONFIRMATION ⚠️\n\n' +
-                'Are you sure you want to shutdown the trading bot server?\n\n' +
-                'This will:\n' +
-                '• Stop all active trading\n' +
-                '• Close all connections\n' +
-                '• Terminate the server process\n\n' +
-                'Click OK to shutdown or Cancel to abort.'
-            );
-            
-            if (!confirmed) return;
-            
-            try {
-                const response = await fetch('/shutdown', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    }
-                });
-                
-                if (response.ok) {
-                    const data = await response.json();
-                    alert('Server is shutting down...\n\nThe dashboard will stop responding shortly.');
-                    
-                    // Update UI to show shutdown state
-                    document.getElementById('server-status').querySelector('span').textContent = 'Shutting Down';
-                    document.getElementById('server-status').classList.add('offline');
-                    document.getElementById('systemStatus').querySelector('span').textContent = 'System Offline';
-                    document.getElementById('systemStatus').classList.remove('online');
-                    document.getElementById('systemStatus').classList.add('offline');
-                    
-                    // Disable all controls
-                    document.querySelectorAll('button, input[type="checkbox"]').forEach(el => {
-                        el.disabled = true;
-                    });
-                } else {
-                    alert('Failed to shutdown server. Please try again or stop it manually.');
-                }
-            } catch (error) {
-                console.error('Shutdown error:', error);
-                alert('Error shutting down server: ' + error.message);
-            }
-        }
-    </script>
-    <script src="/static/dashboard.js?v=2025082704"></script>
-</body>
-</html>
