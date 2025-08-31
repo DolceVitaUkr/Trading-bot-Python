@@ -1,0 +1,29 @@
+{
+  "per_asset": {
+    "spot": {
+      "active_candidates": 6,
+      "min_trades_to_validate": 100,
+      "priority_boost_under_trades": 40
+    },
+    "futures": {
+      "active_candidates": 6,
+      "min_trades_to_validate": 100,
+      "priority_boost_under_trades": 40
+    },
+    "forex": {
+      "active_candidates": 4,
+      "min_trades_to_validate": 100,
+      "priority_boost_under_trades": 40
+    },
+    "options": {
+      "active_candidates": 4,
+      "min_trades_to_validate": 100,
+      "priority_boost_under_trades": 40
+    }
+  },
+  "opportunity_allocation": {
+    "rotation": "round_robin_with_boost",
+    "max_trades_per_hour_per_candidate": 12,
+    "cooldown_seconds_after_trade": 30
+  }
+}

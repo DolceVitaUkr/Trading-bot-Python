@@ -1,18 +1,26 @@
 {
   "trading": {
     "CRYPTO": {
-      "status": "running",
+      "status": "stopped",
       "mode": "paper"
     },
     "FUTURES": {
-      "status": "running",
+      "status": "stopped",
       "mode": "paper"
     },
     "FOREX": {
-      "status": "running",
+      "status": "stopped",
       "mode": "paper"
     },
     "FOREX_OPTIONS": {
+      "status": "stopped",
+      "mode": "paper"
+    },
+    "crypto": {
+      "status": "running",
+      "mode": "paper"
+    },
+    "futures": {
       "status": "running",
       "mode": "paper"
     }

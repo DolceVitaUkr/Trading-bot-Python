@@ -233,10 +233,21 @@ body {
     box-shadow: var(--shadow-md);
 }
 
-/* Assets Container */
+/* Assets Container - 2 Column Layout */
 .assets-container {
     display: grid;
-    gap: 20px;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 24px;
+    padding: 24px;
+    max-width: 1600px;
+    margin: 0 auto;
+}
+
+/* Responsive - Single column on smaller screens */
+@media (max-width: 1200px) {
+    .assets-container {
+        grid-template-columns: 1fr;
+    }
 }
 
 .asset-card {

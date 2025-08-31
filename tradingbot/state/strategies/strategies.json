@@ -15,12 +15,12 @@
       "avg_win": 0.0,
       "avg_loss": 0.0,
       "development_days": 0,
-      "created_at": "2025-08-30T15:53:52.698286",
-      "last_updated": "2025-08-30T15:53:52.698286"
+      "created_at": "2025-08-31T15:15:06.749749",
+      "last_updated": "2025-08-31T15:15:06.749749"
     },
     "validation_results": null,
     "validation_reasons": null,
-    "paper_trading_start": "2025-08-30T15:53:52.698286",
+    "paper_trading_start": "2025-08-31T15:15:06.749749",
     "validation_date": null,
     "live_deployment_date": null
   },
@@ -40,12 +40,12 @@
       "avg_win": 0.0,
       "avg_loss": 0.0,
       "development_days": 0,
-      "created_at": "2025-08-30T15:53:53.863812",
-      "last_updated": "2025-08-30T15:53:53.863812"
+      "created_at": "2025-08-31T15:15:06.750802",
+      "last_updated": "2025-08-31T15:15:06.750802"
     },
     "validation_results": null,
     "validation_reasons": null,
-    "paper_trading_start": "2025-08-30T15:53:53.863812",
+    "paper_trading_start": "2025-08-31T15:15:06.750802",
     "validation_date": null,
     "live_deployment_date": null
   },
@@ -65,12 +65,12 @@
       "avg_win": 0.0,
       "avg_loss": 0.0,
       "development_days": 0,
-      "created_at": "2025-08-30T15:53:50.845809",
-      "last_updated": "2025-08-30T15:53:50.845809"
+      "created_at": "2025-08-31T15:15:06.745382",
+      "last_updated": "2025-08-31T15:15:06.745382"
     },
     "validation_results": null,
     "validation_reasons": null,
-    "paper_trading_start": "2025-08-30T15:53:50.845809",
+    "paper_trading_start": "2025-08-31T15:15:06.745382",
     "validation_date": null,
     "live_deployment_date": null
   },
@@ -90,12 +90,12 @@
       "avg_win": 0.0,
       "avg_loss": 0.0,
       "development_days": 0,
-      "created_at": "2025-08-30T15:53:53.866981",
-      "last_updated": "2025-08-30T15:53:53.866981"
+      "created_at": "2025-08-31T15:15:06.751801",
+      "last_updated": "2025-08-31T15:15:06.751801"
     },
     "validation_results": null,
     "validation_reasons": null,
-    "paper_trading_start": "2025-08-30T15:53:53.866981",
+    "paper_trading_start": "2025-08-31T15:15:06.751801",
     "validation_date": null,
     "live_deployment_date": null
   },

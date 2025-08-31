@@ -1,7 +1,22 @@
 {
   "balance": 1000.0,
   "starting_balance": 1000.0,
-  "positions": [],
+  "positions": [
+    {
+      "id": "BTCUSDT_SELL_1756622333",
+      "symbol": "BTCUSDT",
+      "side": "SELL",
+      "size_usd": 10.0,
+      "entry_price": 65515.07530555247,
+      "current_price": 65515.07530555247,
+      "stop_loss": 66170.226058608,
+      "take_profit": 64204.77379944142,
+      "status": "open",
+      "open_time": "2025-08-31T08:38:53.972123",
+      "pnl": 0.0,
+      "pnl_pct": 0.0
+    }
+  ],
   "trades": [],
   "pnl_history": [
     {
@@ -85,5 +100,8 @@
       "balance": 1000.0
     }
   ],
-  "violations_log": []
+  "violations_log": [],
+  "violation_count": 0,
+  "strict_enforcement": true,
+  "last_update": "2025-08-31T08:38:53.972123"
 }

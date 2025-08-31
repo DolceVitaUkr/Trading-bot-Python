@@ -362,14 +362,29 @@ class MultiAssetDashboard {
             this.updateChart(asset, 'paper', status.paper_wallet);
             this.updateChart(asset, 'live', status.live_wallet);
 
-            // Update positions
+            // Update positions - now handles both positions table and activity log
             this.updatePositions(asset, positions);
+            this.updatePositionsTable(asset, 'paper', positions.paper?.positions || []);
+            this.updatePositionsTable(asset, 'live', positions.live?.positions || []);
+
+            // Update trade history
+            if (positions.paper?.positions?.length > 0 || positions.live?.positions?.length > 0) {
+                // Load detailed trades for history table
+                this.loadTradeHistory(asset, 'paper');
+                this.loadTradeHistory(asset, 'live');
+            }
 
             // Update strategy status
             this.updateStrategyStatus(asset, strategies);
 
             // Update control buttons based on status
             this.updateAssetControls(asset, status);
+            
+            // Update training status display
+            this.updateTrainingStatus(asset, status);
+            
+            // Update asset-specific activity logs
+            this.updateAssetActivityLogs(asset);
 
         } catch (error) {
             console.error(`Failed to update asset ${asset}:`, error);
@@ -407,6 +422,124 @@ class MultiAssetDashboard {
         if (statusTextElement) {
             statusTextElement.textContent = statusText;
         }
+    }
+    
+    async updateAssetActivityLogs(asset) {
+        try {
+            // Get recent activities from the global activity feed filtered by asset
+            const response = await fetch(`${this.baseUrl}/activity/recent`);
+            const data = await response.json();
+            
+            if (data.activities && data.activities.length > 0) {
+                // Filter activities for this specific asset
+                const assetActivities = data.activities.filter(activity => {
+                    return activity.source && activity.source.toLowerCase() === asset.toLowerCase();
+                });
+                
+                // Update both paper and live activity logs
+                this.updateActivityLog(asset, 'paper', assetActivities.filter(a => a.message && a.message.toLowerCase().includes('paper')));
+                this.updateActivityLog(asset, 'live', assetActivities.filter(a => a.message && a.message.toLowerCase().includes('live')));
+            }
+        } catch (error) {
+            console.error(`Failed to update activity logs for ${asset}:`, error);
+        }
+    }
+    
+    updateActivityLog(asset, mode, activities) {
+        const listId = `${asset}-${mode}-activity-list`;
+        const list = document.getElementById(listId);
+        if (!list) return;
+        
+        // Clear current content
+        list.innerHTML = '';
+        
+        if (!activities || activities.length === 0) {
+            list.innerHTML = '<div class="no-activity" style="text-align: center; color: #6c757d; padding: 20px; font-size: 12px;">No activity yet</div>';
+            return;
+        }
+        
+        // Add each activity (most recent first, limited to 10)
+        activities.slice(0, 10).forEach(activity => {
+            const item = document.createElement('div');
+            item.className = `activity-item ${activity.type || 'info'}`;
+            item.style.cssText = 'padding: 8px 12px; border-bottom: 1px solid #2d3748; font-size: 12px;';
+            
+            const time = activity.timestamp ? new Date(activity.timestamp).toLocaleTimeString('en-US', { 
+                hour: '2-digit', 
+                minute: '2-digit' 
+            }) : '';
+            
+            const icon = activity.type === 'trade' ? '📊' : 
+                        activity.type === 'error' ? '❌' : 
+                        activity.type === 'warning' ? '⚠️' :
+                        activity.type === 'success' ? '✅' : 'ℹ️';
+            
+            item.innerHTML = `
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 14px;">${icon}</span>
+                    <span style="color: #a0aec0; font-size: 11px;">${time}</span>
+                    <span style="color: #e2e8f0; flex: 1;">${activity.message || 'No message'}</span>
+                </div>
+            `;
+            
+            list.appendChild(item);
+        });
+    }
+    
+    async loadTradeHistory(asset, mode) {
+        try {
+            const response = await fetch(`${this.baseUrl}/asset/${asset}/positions`);
+            const data = await response.json();
+            
+            const modeData = mode === 'paper' ? data.paper : data.live;
+            const positions = modeData?.positions || [];
+            
+            // Update the trade history table
+            const tbody = document.getElementById(`${asset}-${mode}-history-tbody`);
+            if (!tbody) return;
+            
+            if (positions.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; padding: 20px; color: #6c757d;">No completed trades yet</td></tr>';
+                return;
+            }
+            
+            tbody.innerHTML = '';
+            
+            // Add closed positions to history
+            positions.filter(p => p.status === 'closed').forEach(position => {
+                const row = document.createElement('tr');
+                const pnlClass = position.pnl >= 0 ? 'positive' : 'negative';
+                
+                row.innerHTML = `
+                    <td>${mode.toUpperCase()}</td>
+                    <td>${position.side || 'N/A'}</td>
+                    <td>${this.formatTimestamp(position.entry_time)}</td>
+                    <td>${this.formatCurrency(position.size_usd || 0)}</td>
+                    <td>${this.formatPrice(position.entry_price || 0)}</td>
+                    <td>${this.formatTimestamp(position.exit_time)}</td>
+                    <td>${this.formatPrice(position.exit_price || 0)}</td>
+                    <td class="${pnlClass}">${this.formatCurrency(position.pnl || 0)}</td>
+                    <td class="${pnlClass}">${position.pnl_pct?.toFixed(2) || '0.00'}%</td>
+                    <td>${this.formatCurrency(position.balance_after || 0)}</td>
+                `;
+                
+                tbody.appendChild(row);
+            });
+            
+        } catch (error) {
+            console.error(`Failed to load trade history for ${asset} ${mode}:`, error);
+        }
+    }
+    
+    formatTimestamp(timestamp) {
+        if (!timestamp) return 'N/A';
+        const date = new Date(timestamp);
+        return date.toLocaleString('en-US', { 
+            month: 'short', 
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
     }
 
     updateWallet(asset, type, walletData) {
@@ -2285,6 +2418,8 @@ function toggleTrading(asset, mode) {
 // Handle toggle switch changes
 async function handleTradingToggle(asset, mode, isChecked) {
     console.log(`Trading toggle changed: ${asset} ${mode} ${isChecked}`);
+    console.log('Dashboard object:', dashboard);
+    console.log('Toggle element ID:', `${asset}-${mode}-toggle`);
     const toggleElement = document.getElementById(`${asset}-${mode}-toggle`);
     
     if (isChecked) {
@@ -2337,6 +2472,7 @@ document.addEventListener('DOMContentLoaded', () => {
     console.log('DOM loaded, initializing dashboard...');
     dashboard = new MultiAssetDashboard();
     window.dashboard = dashboard; // Make it globally accessible
+    window.handleTradingToggle = handleTradingToggle; // Make toggle handler globally accessible
     
     // Force an immediate connection check
     setTimeout(() => {
@@ -2798,3 +2934,198 @@ function clearPaperTradingHistory(asset) {
         }
     });
 }
+
+// Add missing updateWallet function
+Dashboard.prototype.updateWallet = function(asset, mode, walletData) {
+    if (!walletData) return;
+    
+    // Update balance display
+    const balanceElement = document.getElementById(`${asset}-${mode}-balance`);
+    if (balanceElement) {
+        const balance = walletData.balance || 0;
+        balanceElement.textContent = `$${balance.toFixed(2)}`;
+        
+        // Add color based on P&L
+        if (walletData.pnl > 0) {
+            balanceElement.style.color = 'var(--success)';
+        } else if (walletData.pnl < 0) {
+            balanceElement.style.color = 'var(--error)';
+        } else {
+            balanceElement.style.color = 'var(--text)';
+        }
+    }
+    
+    // Update P&L display if exists
+    const pnlElement = document.getElementById(`${asset}-${mode}-pnl`);
+    if (pnlElement && walletData.pnl !== undefined) {
+        const pnl = walletData.pnl || 0;
+        const pnlPercent = walletData.pnl_percent || 0;
+        pnlElement.textContent = `${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPercent.toFixed(2)}%)`;
+        pnlElement.style.color = pnl >= 0 ? 'var(--success)' : 'var(--error)';
+    }
+};
+
+// Add missing updateChart function for balance history
+Dashboard.prototype.updateChart = function(asset, mode, walletData) {
+    if (!walletData) return;
+    
+    const chartId = `${asset}-${mode}-chart`;
+    const chartElement = document.getElementById(chartId);
+    if (!chartElement) return;
+    
+    // Get or create chart instance
+    let chart = this.charts[chartId];
+    if (!chart) {
+        const ctx = chartElement.getContext('2d');
+        const isPositive = walletData.pnl >= 0;
+        
+        chart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Balance',
+                    data: [],
+                    borderColor: isPositive ? 'rgb(34, 197, 94)' : 'rgb(239, 68, 68)',
+                    backgroundColor: isPositive ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                    borderWidth: 2,
+                    tension: 0.1,
+                    pointRadius: 0,
+                    pointHoverRadius: 4,
+                    fill: true
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: {
+                    mode: 'index',
+                    intersect: false
+                },
+                plugins: {
+                    legend: {
+                        display: false
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                return 'Balance: $' + context.parsed.y.toFixed(2);
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        display: true,
+                        grid: {
+                            display: false
+                        },
+                        ticks: {
+                            color: '#9ca3af',
+                            font: {
+                                size: 10
+                            },
+                            maxRotation: 0,
+                            autoSkip: true,
+                            maxTicksLimit: 8
+                        }
+                    },
+                    y: {
+                        display: true,
+                        beginAtZero: false,
+                        grid: {
+                            color: 'rgba(75, 85, 99, 0.2)'
+                        },
+                        ticks: {
+                            color: '#9ca3af',
+                            font: {
+                                size: 10
+                            },
+                            callback: function(value) {
+                                return '$' + value.toFixed(0);
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        this.charts[chartId] = chart;
+    }
+    
+    // Update chart data
+    const history = walletData.history || [];
+    
+    // If no history, create one from current balance
+    if (history.length === 0 && walletData.balance !== undefined) {
+        history.push({balance: walletData.balance, timestamp: new Date().toISOString()});
+    }
+    
+    // Format labels based on time period
+    chart.data.labels = history.map((h, i) => {
+        if (h.timestamp) {
+            const date = new Date(h.timestamp);
+            const now = new Date();
+            const diffMs = now - date;
+            const diffHours = diffMs / (1000 * 60 * 60);
+            
+            if (diffHours < 24) {
+                return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+            } else {
+                return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            }
+        }
+        return i === 0 ? 'Start' : `T+${i}`;
+    });
+    
+    chart.data.datasets[0].data = history.map(h => h.balance || 0);
+    
+    // Update colors based on current P&L
+    const isPositive = walletData.pnl >= 0;
+    chart.data.datasets[0].borderColor = isPositive ? 'rgb(34, 197, 94)' : 'rgb(239, 68, 68)';
+    chart.data.datasets[0].backgroundColor = isPositive ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)';
+    
+    chart.update();
+};
+
+// Fix updateAssetControls to properly update toggle states
+Dashboard.prototype.updateAssetControls = function(asset, status) {
+    // Update paper trading toggle
+    const paperToggle = document.getElementById(`${asset}-paper-toggle`);
+    if (paperToggle) {
+        paperToggle.checked = status.paper_trading_active || false;
+    }
+    
+    // Update live trading toggle
+    const liveToggle = document.getElementById(`${asset}-live-toggle`);
+    if (liveToggle) {
+        liveToggle.checked = status.live_trading_active || false;
+    }
+};
+
+// Add training status display
+Dashboard.prototype.updateTrainingStatus = function(asset, status) {
+    // Update metrics if training is active
+    if (status.paper_trading_active) {
+        // Show training indicator
+        const strategySection = document.querySelector(`#${asset}-paper-section .strategy-development`);
+        if (strategySection) {
+            const indicator = strategySection.querySelector('.training-indicator') || 
+                            document.createElement('div');
+            indicator.className = 'training-indicator';
+            indicator.innerHTML = `
+                <i class="fas fa-robot"></i> Training Active
+                <span class="pulse"></span>
+            `;
+            if (!strategySection.querySelector('.training-indicator')) {
+                strategySection.prepend(indicator);
+            }
+        }
+        
+        // Update trade count
+        const tradesElement = document.getElementById(`${asset}-paper-trades`);
+        if (tradesElement && status.paper_wallet) {
+            const trades = status.paper_wallet.total_trades || 0;
+            tradesElement.textContent = trades;
+        }
+    }
+};

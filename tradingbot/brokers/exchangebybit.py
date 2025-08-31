@@ -218,6 +218,16 @@ class ExchangeBybit:
             return {"retCode": -1, "retMsg": str(e)}
 
     @bybit_RateLimiter.limit
+    async def fetch_ticker(self, symbol: str) -> Dict[str, Any]:
+        """Fetch current ticker data for a symbol."""
+        try:
+            ticker = await asyncio.to_thread(self.client.fetch_ticker, symbol)
+            return ticker
+        except Exception as e:
+            self.log.error(f"Error fetching ticker for {symbol}: {e}")
+            raise
+    
+    @bybit_RateLimiter.limit
     async def fetch_ohlcv(
         self, symbol: str, interval: str = "1m", limit: int = 200
     ) -> List[Dict[str, Any]]:

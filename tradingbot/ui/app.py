@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -37,6 +38,13 @@ try:
     from tradingbot.core.paper_trader import get_paper_trader
 except ImportError:
     get_paper_trader = None
+
+try:
+    from tradingbot.core.trading_engine import trading_engine
+except ImportError:
+    trading_engine = None
+    print("Trading engine not available")
+
 from .routes.validation import router as validation_router
 from .routes.diff import router as diff_router
 
@@ -79,25 +87,18 @@ runtime = RuntimeController()
 validator = ValidationManager()
 pair_manager = PairManager() if PairManager else None
 
-# Activity tracking
-from collections import deque
+# Activity tracking - Import from centralized logger
+from ..core.activity_logger import activity_log, log_activity as _log_activity
+from ..core.background_tasks import background_tasks
 from datetime import datetime
-activity_log = deque(maxlen=100)  # Keep last 100 activities
 
 def log_activity(source: str, message: str, activity_type: str = "info"):
     """Add activity to the log."""
     # Only log important activities
     if not should_log_activity(source, message):
         return
-        
-    activity = {
-        "timestamp": datetime.now().isoformat(),
-        "source": source,
-        "message": message,
-        "type": activity_type
-    }
-    activity_log.append(activity)
-    print(f"[ACTIVITY] {source}: {message}")
+    # Use centralized logger
+    _log_activity(source, message, activity_type)
 
 # Initialize exchange connectors
 bybit_crypto = None
@@ -1700,7 +1701,7 @@ def create_app() -> FastAPI:
         return {"status": "shutting down", "message": "Server is shutting down..."}
     
     @app.post("/asset/{asset}/start/{mode}")
-    def start_asset_trading_endpoint(asset: str, mode: str):
+    async def start_asset_trading_endpoint(asset: str, mode: str):
         """Start trading for specific asset and mode."""
         valid_assets = ['crypto', 'futures', 'forex', 'forex_options']
         valid_modes = ['paper', 'live']
@@ -1717,7 +1718,7 @@ def create_app() -> FastAPI:
             # Log activity
             log_activity(asset.upper(), f"Starting {mode} trading...", "info")
             
-            # If paper trading, initialize paper trader
+            # If paper trading, initialize paper trader and start trading engine
             if mode == "paper" and get_paper_trader:
                 paper_trader = get_paper_trader(asset)
                 print(f"\n[START] {asset.upper()} Paper Trading Started")
@@ -1726,6 +1727,20 @@ def create_app() -> FastAPI:
                 
                 # Log more detailed activity
                 log_activity(asset.upper(), f"Paper trading started - Balance: ${paper_trader.balance:.2f}", "success")
+                
+                # Start the trading engine in background
+                if trading_engine:
+                    # Use background task manager to start trading
+                    success = background_tasks.start_trading_task(
+                        asset,
+                        trading_engine.start_trading
+                    )
+                    if success:
+                        print(f"[ENGINE] Trading engine started for {asset.upper()}")
+                        log_activity(asset.upper(), "Paper trading engine started", "success")
+                    else:
+                        print(f"[ENGINE] Trading engine already running for {asset.upper()}")
+                        log_activity(asset.upper(), "Paper trading already active", "warning")
             
             return {
                 "asset": asset,
@@ -1740,7 +1755,7 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=500, detail=f"Failed to start {asset} {mode} trading: {str(exc)}")
 
     @app.post("/asset/{asset}/stop/{mode}")
-    def stop_asset_trading_endpoint(asset: str, mode: str):
+    async def stop_asset_trading_endpoint(asset: str, mode: str):
         """Stop trading for specific asset and mode."""
         valid_assets = ['crypto', 'futures', 'forex', 'forex_options']
         valid_modes = ['paper', 'live']
@@ -1752,6 +1767,13 @@ def create_app() -> FastAPI:
         
         try:
             runtime.stop_asset_trading(asset.upper(), mode)
+            
+            # Stop the trading engine
+            if mode == "paper" and trading_engine:
+                background_tasks.stop_trading_task(asset)
+                print(f"[ENGINE] Trading engine stopped for {asset.upper()}")
+                log_activity(asset.upper(), "Paper trading engine stopped", "info")
+                
             return {
                 "asset": asset,
                 "mode": mode,
@@ -1765,3 +1787,8 @@ def create_app() -> FastAPI:
 
 app = create_app()
 # reload server
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("tradingbot.ui.app:app", host="127.0.0.1", port=8000, reload=True)

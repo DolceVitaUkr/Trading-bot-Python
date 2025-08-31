@@ -32,6 +32,17 @@ MODULES.md — Responsibility Map & Extension Rules
 - validation/online_validator.py v1.00
 - validation/promotion_gate.py v1.00
 
+### v1.03 — 2025-08-31 (UI Enhancements & Cleanup)
+- ui/templates/dashboard.html: ENHANCED - Added performance charts (200px height), activity logs, positions tables
+- ui/static/dashboard.js: ENHANCED - Real-time updates, chart rendering, activity log integration
+- core/trading_engine.py: NEW - Centralized trading engine with indicator strategies
+- strategies/indicator_strategy.py: NEW - 8 technical indicator strategies (SMA, RSI, EMA, BB, MFI, ATR, Fib)
+- core/indicators.py: NEW - Technical indicators implementation (RSI, MFI, EMA, SMA, ATR, BB, Fibonacci)
+- core/background_tasks.py: NEW - Async task management for trading loops in FastAPI
+- run_trading_bot.py: NEW - Single entry point to start bot with UI auto-launch
+- Organized test scripts into test_scripts/ folder
+- Moved documentation files to docs/reports/
+
 ### v1.02 — 2025-08-29 (File Cleanup)
 - REMOVED: core/tradeexecutor.py (deprecated wrapper)
 - REMOVED: core/pairmanager.py (compatibility wrapper)
@@ -89,6 +100,42 @@ Learning → learning/* only.
 UI / API → ui/* only.
 
 Broker I/O → brokers/* only.
+
+## How to Start the Trading Bot
+
+### Single Command Startup
+```bash
+python run_trading_bot.py
+```
+
+This will:
+1. Kill any existing server processes on port 8000
+2. Start the FastAPI server (tradingbot.ui.app)
+3. Wait for server to be ready
+4. Open the dashboard in your default browser
+5. Show server logs in the console
+
+### Manual Startup (if needed)
+```bash
+# Start server only
+python -m tradingbot.ui.app
+
+# Then open browser to:
+http://127.0.0.1:8000
+```
+
+### UI Features
+- **Performance Charts**: 200px height charts for each asset (paper & live)
+- **Activity Logs**: Real-time trading activity for each asset
+- **Positions Tables**: Active positions with P&L tracking
+- **Trade History**: Completed trades with full details
+- **Auto-refresh**: Updates every 5 seconds
+
+### Important Notes
+- Always use `run_trading_bot.py` for consistent startup
+- Browser cache issues: Force refresh with Ctrl+F5 if you see old UI
+- Check console logs for trading activity
+- Paper trading starts with $1000 balance
 
 Who can place orders?
 

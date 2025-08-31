@@ -1,0 +1,8 @@
+{
+  "paper": {
+    "start_equity_usd": 1000,
+    "auto_topup_threshold_usd": 10,
+    "auto_topup_amount_usd": 1000,
+    "log_epoch": true
+  }
+}

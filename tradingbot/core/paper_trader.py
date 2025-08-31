@@ -1077,8 +1077,117 @@ class PaperTrader:
             self.log.debug(f"Strategy registration failed: {e}")
 
 
+    def open_position(self, symbol: str, side: str, size_usd: float, 
+                     entry_price: float, stop_loss_pct: float = None, 
+                     take_profit_pct: float = None) -> Dict[str, Any]:
+        """Open a new position."""
+        try:
+            # Validate inputs
+            if size_usd > self.balance * 0.5:  # Max 50% of balance per trade
+                return {"success": False, "error": "Position size too large"}
+                
+            # Create position
+            position_id = f"{symbol}_{side}_{int(time.time())}"
+            position = {
+                "id": position_id,
+                "symbol": symbol,
+                "side": side,
+                "size_usd": size_usd,
+                "entry_price": entry_price,
+                "current_price": entry_price,
+                "stop_loss": entry_price * (1 + stop_loss_pct) if side == "BUY" else entry_price * (1 - stop_loss_pct),
+                "take_profit": entry_price * (1 + take_profit_pct) if side == "BUY" else entry_price * (1 - take_profit_pct),
+                "status": "open",
+                "open_time": datetime.now().isoformat(),
+                "pnl": 0.0,
+                "pnl_pct": 0.0
+            }
+            
+            self.positions.append(position)
+            self._save_state()
+            
+            # Log activity
+            self.log.info(f"Opened {side} position: {symbol} @ ${entry_price:.2f}, Size: ${size_usd:.2f}")
+            
+            return {"success": True, "position": position}
+            
+        except Exception as e:
+            self.log.error(f"Failed to open position: {e}")
+            return {"success": False, "error": str(e)}
+            
+    def close_position(self, position_id: str, exit_price: float) -> Dict[str, Any]:
+        """Close an existing position."""
+        try:
+            # Find position
+            position = None
+            for pos in self.positions:
+                if pos["id"] == position_id and pos["status"] == "open":
+                    position = pos
+                    break
+                    
+            if not position:
+                return {"success": False, "error": "Position not found"}
+                
+            # Calculate P&L
+            if position["side"] == "BUY":
+                pnl_pct = (exit_price - position["entry_price"]) / position["entry_price"]
+            else:
+                pnl_pct = (position["entry_price"] - exit_price) / position["entry_price"]
+                
+            pnl = position["size_usd"] * pnl_pct
+            
+            # Update position
+            position["status"] = "closed"
+            position["exit_price"] = exit_price
+            position["close_time"] = datetime.now().isoformat()
+            position["pnl"] = pnl
+            position["pnl_pct"] = pnl_pct
+            
+            # Update balance
+            self.balance += pnl
+            
+            # Record trade
+            trade = {
+                "symbol": position["symbol"],
+                "side": position["side"],
+                "entry_price": position["entry_price"],
+                "exit_price": exit_price,
+                "size_usd": position["size_usd"],
+                "pnl": pnl,
+                "pnl_pct": pnl_pct,
+                "open_time": position["open_time"],
+                "close_time": position["close_time"],
+                "balance": self.balance
+            }
+            self.trades.append(trade)
+            
+            # Update P&L history
+            self.pnl_history.append({
+                "timestamp": datetime.now().isoformat(),
+                "balance": self.balance,
+                "trade_pnl": pnl
+            })
+            
+            self._save_state()
+            
+            # Log activity
+            self.log.info(f"Closed position: {position['symbol']} P&L: ${pnl:.2f} ({pnl_pct:.2%})")
+            
+            return {
+                "success": True, 
+                "pnl": pnl, 
+                "pnl_pct": pnl_pct,
+                "balance": self.balance
+            }
+            
+        except Exception as e:
+            self.log.error(f"Failed to close position: {e}")
+            return {"success": False, "error": str(e)}
+
+
 # Global paper trader instances
 _paper_traders = {}
+
 
 def get_paper_trader(asset_type: str) -> PaperTrader:
     """Get or create strict paper trader for asset type."""
