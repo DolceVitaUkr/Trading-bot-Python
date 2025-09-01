@@ -6,7 +6,10 @@
       "Bash(dir:*)",
       "Bash(del nul)",
       "Bash(rm:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(cmd /c:*)",
+      "Bash(powershell:*)",
+      "Bash(git apply:*)"
     ],
     "deny": [],
     "ask": [],

@@ -15,12 +15,12 @@
       "avg_win": 0.0,
       "avg_loss": 0.0,
       "development_days": 0,
-      "created_at": "2025-08-31T20:31:33.539668",
-      "last_updated": "2025-08-31T20:31:33.539668"
+      "created_at": "2025-09-01T10:37:24.414502",
+      "last_updated": "2025-09-01T10:37:24.414502"
     },
     "validation_results": null,
     "validation_reasons": null,
-    "paper_trading_start": "2025-08-31T20:31:33.539668",
+    "paper_trading_start": "2025-09-01T10:37:24.414502",
     "validation_date": null,
     "live_deployment_date": null
   },
@@ -40,12 +40,12 @@
       "avg_win": 0.0,
       "avg_loss": 0.0,
       "development_days": 0,
-      "created_at": "2025-08-31T20:31:33.540662",
-      "last_updated": "2025-08-31T20:31:33.540662"
+      "created_at": "2025-09-01T10:37:24.416533",
+      "last_updated": "2025-09-01T10:37:24.416533"
     },
     "validation_results": null,
     "validation_reasons": null,
-    "paper_trading_start": "2025-08-31T20:31:33.540662",
+    "paper_trading_start": "2025-09-01T10:37:24.416533",
     "validation_date": null,
     "live_deployment_date": null
   },
@@ -54,7 +54,7 @@
     "asset_type": "crypto",
     "status": "developing",
     "metrics": {
-      "total_trades": 0,
+      "total_trades": 1,
       "winning_trades": 0,
       "losing_trades": 0,
       "win_rate": 0.0,
@@ -65,12 +65,12 @@
       "avg_win": 0.0,
       "avg_loss": 0.0,
       "development_days": 0,
-      "created_at": "2025-09-01T01:06:40.942983",
-      "last_updated": "2025-09-01T01:06:40.942983"
+      "created_at": "2025-09-01T10:37:24.409632",
+      "last_updated": "2025-09-01T10:37:24.409632"
     },
     "validation_results": null,
     "validation_reasons": null,
-    "paper_trading_start": "2025-09-01T01:06:40.942983",
+    "paper_trading_start": "2025-09-01T10:37:24.409632",
     "validation_date": null,
     "live_deployment_date": null
   },
@@ -90,12 +90,12 @@
       "avg_win": 0.0,
       "avg_loss": 0.0,
       "development_days": 0,
-      "created_at": "2025-08-31T20:31:33.541663",
-      "last_updated": "2025-08-31T20:31:33.541663"
+      "created_at": "2025-09-01T10:37:24.417537",
+      "last_updated": "2025-09-01T10:37:24.417537"
     },
     "validation_results": null,
     "validation_reasons": null,
-    "paper_trading_start": "2025-08-31T20:31:33.541663",
+    "paper_trading_start": "2025-09-01T10:37:24.417537",
     "validation_date": null,
     "live_deployment_date": null
   },

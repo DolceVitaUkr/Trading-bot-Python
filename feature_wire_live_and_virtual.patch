@@ -1,0 +1,76 @@
+--- a/tradingbot/ui/app.py
++++ b/tradingbot/ui/app.py
+@@ -160,23 +160,35 @@
+     def status():
+         return runtime.get_state()
+ 
+-    @app.post("/live/{asset}/enable")
+-    def enable(asset: str):
+-        # Input validation
+-        if not asset or not asset.strip():
+-            raise HTTPException(status_code=400, detail="Asset symbol cannot be empty")
+-        if len(asset) > 20:
+-            raise HTTPException(status_code=400, detail="Asset symbol too long")
+-        if not asset.replace("/", "").replace("-", "").isalnum():
+-            raise HTTPException(status_code=400, detail="Invalid asset symbol format")
+-        
+-        try:
+-            runtime.enable_live(asset.upper().strip())
+-        except ValueError as exc:
+-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+-        return {"asset": asset.upper().strip(), "live": True}
+-
+-    @app.post("/live/{asset}/disable")
++    
++    @app.post("/live/{asset}/enable")
++    async def enable(asset: str, request: Request):
++        # Input validation
++        if not asset or not asset.strip():
++            raise HTTPException(status_code=400, detail="Asset symbol cannot be empty")
++        if len(asset) > 20:
++            raise HTTPException(status_code=400, detail="Asset symbol too long")
++        if not asset.replace("/", "").replace("-", "").isalnum():
++            raise HTTPException(status_code=400, detail="Invalid asset symbol format")
++        # Double confirmation for LIVE (server-side)
++        require = os.getenv("REQUIRE_LIVE_CONFIRM", "1") != "0"
++        confirm = None
++        try:
++            body = await request.json()
++            if isinstance(body, dict):
++                confirm = body.get("confirm")
++        except Exception:
++            pass
++        if not confirm:
++            confirm = request.headers.get("X-Live-Confirm") or request.query_params.get("confirm")
++        if require and confirm != "LIVE":
++            raise HTTPException(status_code=400, detail="Type LIVE to confirm")
++        try:
++            runtime.enable_live(asset.upper().strip())
++        except ValueError as exc:
++            raise HTTPException(status_code=400, detail=str(exc)) from exc
++        return {"asset": asset.upper().strip(), "live": True, "confirmed": confirm == "LIVE"}
++@app.post("/live/{asset}/disable")
+     def disable(asset: str):
+         # Input validation
+         if not asset or not asset.strip():
+@@ -329,7 +341,19 @@
+                 'change_4h': 0
+             }
+ 
+-    @app.get("/pairs/top")
++    
++    @app.post("/emergency-stop")
++    async def emergency_stop():
++        """
++        Immediate global kill switch; maps directly to runtime.set_global_kill(True).
++        Returns current kill state and timestamp.
++        """
++        try:
++            runtime.set_global_kill(True)
++            return {"kill": True, "ts": datetime.utcnow().isoformat() + "Z"}
++        except Exception as exc:
++            raise HTTPException(status_code=500, detail=f"Failed to activate emergency stop: {exc}")
++@app.get("/pairs/top")
+     async def get_top_pairs():
+         """Get top trading pairs from Bybit with real-time analysis."""
+         try:
