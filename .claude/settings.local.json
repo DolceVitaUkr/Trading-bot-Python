@@ -5,7 +5,8 @@
       "Bash(timeout:*)",
       "Bash(dir:*)",
       "Bash(del nul)",
-      "Bash(rm:*)"
+      "Bash(rm:*)",
+      "Bash(git add:*)"
     ],
     "deny": [],
     "ask": [],
