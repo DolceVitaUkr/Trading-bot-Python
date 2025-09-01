@@ -44,11 +44,6 @@ MODULES.md — Responsibility Map & Extension Rules
 - Moved documentation files to docs/reports/
 
 ### v1.02 — 2025-08-29 (File Cleanup)
-- REMOVED: core/tradeexecutor.py (deprecated wrapper)
-- REMOVED: core/pairmanager.py (compatibility wrapper)
-- REMOVED: core/runtimecontroller.py (compatibility wrapper) 
-- REMOVED: core/validationmanager.py (compatibility wrapper)
-- REMOVED: core/errorhandler.py (broken import, unused)
 - File naming standardized: Removed all duplicate wrapper files
 
 ### v1.01 — 2025-08-29
