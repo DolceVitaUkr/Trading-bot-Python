@@ -150,6 +150,10 @@ def create_app() -> FastAPI:
     
     @app.get("/", response_class=HTMLResponse)
     def dashboard(request: Request):
+        return templates.TemplateResponse("dashboard-v2.html", {"request": request})
+    
+    @app.get("/old", response_class=HTMLResponse)
+    def old_dashboard(request: Request):
         return templates.TemplateResponse("dashboard.html", {"request": request})
 
     @app.get("/status")
@@ -188,6 +192,68 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"asset": asset.upper().strip(), "live": False}
 
+    @app.post("/paper/{asset}/enable")
+    def enable_paper(asset: str):
+        """Enable paper trading for an asset."""
+        # Input validation
+        valid_assets = ['crypto', 'futures', 'forex', 'forex_options']
+        if asset not in valid_assets:
+            raise HTTPException(status_code=400, detail=f"Invalid asset. Must be one of: {valid_assets}")
+        
+        try:
+            # Get the paper trader for this asset
+            if get_paper_trader:
+                paper_trader = get_paper_trader(asset)
+                if paper_trader:
+                    # Start paper trading
+                    if hasattr(paper_trader, 'start_trading'):
+                        paper_trader.start_trading()
+                    paper_trader.is_active = True
+                    
+                    # Update runtime state
+                    state = runtime.get_state()
+                    if 'paper_trading' not in state:
+                        state['paper_trading'] = {}
+                    state['paper_trading'][asset] = {'enabled': True, 'status': 'running'}
+                    
+                    return {"asset": asset, "paper": True, "status": "enabled"}
+            
+            raise HTTPException(status_code=500, detail=f"Paper trader not available for {asset}")
+            
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Failed to enable paper trading: {str(exc)}")
+    
+    @app.post("/paper/{asset}/disable")
+    def disable_paper(asset: str):
+        """Disable paper trading for an asset."""
+        # Input validation
+        valid_assets = ['crypto', 'futures', 'forex', 'forex_options']
+        if asset not in valid_assets:
+            raise HTTPException(status_code=400, detail=f"Invalid asset. Must be one of: {valid_assets}")
+        
+        try:
+            # Get the paper trader for this asset
+            if get_paper_trader:
+                paper_trader = get_paper_trader(asset)
+                if paper_trader:
+                    # Stop paper trading
+                    if hasattr(paper_trader, 'stop_trading'):
+                        paper_trader.stop_trading()
+                    paper_trader.is_active = False
+                    
+                    # Update runtime state
+                    state = runtime.get_state()
+                    if 'paper_trading' not in state:
+                        state['paper_trading'] = {}
+                    state['paper_trading'][asset] = {'enabled': False, 'status': 'stopped'}
+                    
+                    return {"asset": asset, "paper": False, "status": "disabled"}
+            
+            raise HTTPException(status_code=500, detail=f"Paper trader not available for {asset}")
+            
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Failed to disable paper trading: {str(exc)}")
+
     @app.post("/kill/global/{onoff}")
     def kill(onoff: str):
         # Input validation for kill switch
@@ -204,73 +270,196 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=500, detail=f"Failed to set kill switch: {exc}") from exc
         return {"kill_switch": runtime.get_state()["global"]["kill_switch"]}
 
-    @app.get("/pairs/top")
-    async def get_top_pairs():
-        """Get top trading pairs using sophisticated multi-factor scoring."""
+    async def get_historical_changes(exchange, symbol, current_price):
+        """Get historical price changes for 1h and 4h intervals."""
         try:
-            # Mock market data - in production, fetch from exchange API
-            mock_market_data = {
-                "BTC/USDT": {
-                    "price": 43250.00, "volume_24h": 1250000000, "change_24h": 2.34,
-                    "spread_bps": 2.1, "atr_pct": 3.2, "trend_strength": 0.65,
-                    "change_1h": 0.45, "change_4h": 1.23, "change_1d": 2.34,
-                    "rsi": 58, "support_distance_pct": 2.1, "resistance_distance_pct": 3.4,
-                    "avg_volume_7d": 1100000000
-                },
-                "ETH/USDT": {
-                    "price": 2650.00, "volume_24h": 890000000, "change_24h": -1.23,
-                    "spread_bps": 2.8, "atr_pct": 4.1, "trend_strength": -0.32,
-                    "change_1h": -0.34, "change_4h": -0.87, "change_1d": -1.23,
-                    "rsi": 42, "support_distance_pct": 1.8, "resistance_distance_pct": 4.2,
-                    "avg_volume_7d": 820000000
-                },
-                "SOL/USDT": {
-                    "price": 98.50, "volume_24h": 560000000, "change_24h": 5.67,
-                    "spread_bps": 4.2, "atr_pct": 5.8, "trend_strength": 0.78,
-                    "change_1h": 1.23, "change_4h": 3.45, "change_1d": 5.67,
-                    "rsi": 68, "support_distance_pct": 3.2, "resistance_distance_pct": 2.1,
-                    "avg_volume_7d": 480000000
-                },
-                "XRP/USDT": {
-                    "price": 0.52, "volume_24h": 450000000, "change_24h": -0.89,
-                    "spread_bps": 3.1, "atr_pct": 2.9, "trend_strength": -0.21,
-                    "change_1h": -0.12, "change_4h": -0.45, "change_1d": -0.89,
-                    "rsi": 38, "support_distance_pct": 2.3, "resistance_distance_pct": 3.8,
-                    "avg_volume_7d": 420000000
-                },
-                "ADA/USDT": {
-                    "price": 0.38, "volume_24h": 320000000, "change_24h": 3.45,
-                    "spread_bps": 3.8, "atr_pct": 4.5, "trend_strength": 0.42,
-                    "change_1h": 0.67, "change_4h": 1.89, "change_1d": 3.45,
-                    "rsi": 62, "support_distance_pct": 1.9, "resistance_distance_pct": 2.7,
-                    "avg_volume_7d": 290000000
-                },
-                "DOGE/USDT": {
-                    "price": 0.078, "volume_24h": 280000000, "change_24h": 1.23,
-                    "spread_bps": 4.5, "atr_pct": 6.2, "trend_strength": 0.15,
-                    "change_1h": 0.23, "change_4h": 0.78, "change_1d": 1.23,
-                    "rsi": 55, "support_distance_pct": 2.8, "resistance_distance_pct": 3.1,
-                    "avg_volume_7d": 250000000
-                },
-                "MATIC/USDT": {
-                    "price": 0.85, "volume_24h": 180000000, "change_24h": -2.56,
-                    "spread_bps": 5.2, "atr_pct": 3.8, "trend_strength": -0.48,
-                    "change_1h": -0.45, "change_4h": -1.23, "change_1d": -2.56,
-                    "rsi": 34, "support_distance_pct": 3.1, "resistance_distance_pct": 4.5,
-                    "avg_volume_7d": 160000000
-                },
-                "DOT/USDT": {
-                    "price": 6.45, "volume_24h": 150000000, "change_24h": 4.12,
-                    "spread_bps": 4.8, "atr_pct": 4.9, "trend_strength": 0.56,
-                    "change_1h": 0.89, "change_4h": 2.34, "change_1d": 4.12,
-                    "rsi": 64, "support_distance_pct": 2.1, "resistance_distance_pct": 1.8,
-                    "avg_volume_7d": 140000000
-                }
+            from datetime import datetime, timedelta
+            
+            # Get current time
+            now = datetime.now()
+            
+            # Get 1h kline data
+            kline_1h = await exchange.client.get_kline(
+                category="spot",
+                symbol=symbol,
+                interval="60",  # 1 hour in minutes
+                start=int((now - timedelta(hours=2)).timestamp() * 1000),
+                end=int(now.timestamp() * 1000),
+                limit=2
+            )
+            
+            # Get 4h kline data  
+            kline_4h = await exchange.client.get_kline(
+                category="spot",
+                symbol=symbol,
+                interval="240",  # 4 hours in minutes
+                start=int((now - timedelta(hours=5)).timestamp() * 1000),
+                end=int(now.timestamp() * 1000),
+                limit=2
+            )
+            
+            # Calculate changes
+            change_1h = 0
+            change_4h = 0
+            
+            if kline_1h and kline_1h.get('result', {}).get('list'):
+                klines = kline_1h['result']['list']
+                if len(klines) >= 2:
+                    # Klines are in reverse order (newest first)
+                    open_price_1h = float(klines[-1][1])  # Open price of older candle
+                    if open_price_1h > 0:
+                        change_1h = ((current_price - open_price_1h) / open_price_1h) * 100
+            
+            if kline_4h and kline_4h.get('result', {}).get('list'):
+                klines = kline_4h['result']['list']
+                if len(klines) >= 2:
+                    open_price_4h = float(klines[-1][1])  # Open price of older candle
+                    if open_price_4h > 0:
+                        change_4h = ((current_price - open_price_4h) / open_price_4h) * 100
+            
+            return {
+                'change_1h': change_1h,
+                'change_4h': change_4h
             }
             
+        except Exception as e:
+            print(f"Error getting historical changes for {symbol}: {e}")
+            return {
+                'change_1h': 0,
+                'change_4h': 0
+            }
+
+    @app.get("/pairs/top")
+    async def get_top_pairs():
+        """Get top trading pairs from Bybit with real-time analysis."""
+        try:
+            if not bybit_crypto:
+                raise HTTPException(status_code=503, detail="Bybit connection not available")
+            
+            # Get tickers data from Bybit
+            from datetime import datetime, timedelta
+            import asyncio
+            
+            # Get all USDT perpetual tickers
+            tickers_response = await bybit_crypto.client.get_tickers(category="spot")
+            
+            if not tickers_response or tickers_response.get('retCode') != 0:
+                raise Exception("Failed to fetch tickers from Bybit")
+            
+            tickers = tickers_response.get('result', {}).get('list', [])
+            
+            # Filter for USDT pairs and calculate metrics
+            usdt_pairs = []
+            tasks = []
+            
+            # Top symbols to analyze (most liquid)
+            top_symbols = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 
+                          'ADAUSDT', 'DOGEUSDT', 'MATICUSDT', 'DOTUSDT', 'AVAXUSDT',
+                          'LINKUSDT', 'UNIUSDT', 'ATOMUSDT', 'LTCUSDT', 'NEARUSDT']
+            
+            for ticker in tickers:
+                symbol = ticker.get('symbol', '')
+                if symbol in top_symbols:
+                    # Collect current data
+                    current_price = float(ticker.get('lastPrice', 0))
+                    volume_24h = float(ticker.get('volume24h', 0)) * current_price  # Convert to USD
+                    change_24h = float(ticker.get('price24hPcnt', 0)) * 100  # Convert to percentage
+                    
+                    # Get kline data for 1h and 4h changes
+                    tasks.append(get_historical_changes(bybit_crypto, symbol, current_price))
+                    
+                    usdt_pairs.append({
+                        'symbol': symbol.replace('USDT', '/USDT'),
+                        'price': current_price,
+                        'volume24h': volume_24h,
+                        'change24h': change_24h,
+                        'bid': float(ticker.get('bid1Price', 0)),
+                        'ask': float(ticker.get('ask1Price', 0))
+                    })
+            
+            # Get historical changes for all pairs
+            if tasks:
+                historical_data = await asyncio.gather(*tasks)
+                for i, hist_data in enumerate(historical_data):
+                    usdt_pairs[i].update(hist_data)
+            
+            # Calculate scores and rank pairs
+            scored_pairs = []
+            for pair in usdt_pairs:
+                # Calculate spread in basis points
+                if pair['bid'] > 0 and pair['ask'] > 0:
+                    spread_bps = ((pair['ask'] - pair['bid']) / pair['price']) * 10000
+                else:
+                    spread_bps = 0
+                
+                # Calculate momentum score based on changes
+                momentum_score = (
+                    pair.get('change_1h', 0) * 0.5 +
+                    pair.get('change_4h', 0) * 0.3 +
+                    pair['change24h'] * 0.2
+                )
+                
+                # Volume score (normalized)
+                volume_score = min(100, (pair['volume24h'] / 1000000) * 0.1)  # Per million USD
+                
+                # Volatility score based on price changes
+                volatility = abs(pair.get('change_1h', 0)) + abs(pair.get('change_4h', 0)) + abs(pair['change24h'])
+                volatility_score = min(100, volatility * 10)
+                
+                # Trend strength
+                if pair.get('change_1h', 0) > 0 and pair.get('change_4h', 0) > 0 and pair['change24h'] > 0:
+                    trend_strength = min(1.0, (pair.get('change_1h', 0) + pair.get('change_4h', 0) + pair['change24h']) / 10)
+                elif pair.get('change_1h', 0) < 0 and pair.get('change_4h', 0) < 0 and pair['change24h'] < 0:
+                    trend_strength = max(-1.0, (pair.get('change_1h', 0) + pair.get('change_4h', 0) + pair['change24h']) / 10)
+                else:
+                    trend_strength = 0
+                
+                # Determine regime
+                if abs(trend_strength) > 0.5:
+                    regime = "trending"
+                elif volatility_score > 50:
+                    regime = "volatile"
+                elif spread_bps < 10 and volume_score > 50:
+                    regime = "liquid"
+                else:
+                    regime = "ranging"
+                
+                # Overall score
+                score = (
+                    volume_score * 0.3 +
+                    abs(momentum_score) * 0.3 +
+                    volatility_score * 0.2 +
+                    (100 - spread_bps) * 0.2
+                )
+                
+                scored_pairs.append({
+                    "symbol": pair['symbol'],
+                    "price": round(pair['price'], 8),
+                    "volume24h": round(pair['volume24h'], 2),
+                    "change24h": round(pair['change24h'], 2),
+                    "change_1h": round(pair.get('change_1h', 0), 2),
+                    "change_4h": round(pair.get('change_4h', 0), 2),
+                    "score": round(score, 1),
+                    "regime": regime,
+                    "spread_bps": round(spread_bps, 1),
+                    "momentum_score": round(abs(momentum_score), 1),
+                    "volume_score": round(volume_score, 1),
+                    "volatility_score": round(volatility_score, 1),
+                    "trend_strength": round(trend_strength, 2)
+                })
+            
+            # Sort by score
+            scored_pairs.sort(key=lambda x: x['score'], reverse=True)
+            
+            return {"pairs": scored_pairs[:10]}  # Return top 10
+            
+        except Exception as e:
+            print(f"Error fetching top pairs: {e}")
+        
+                        
             # Get ranked pairs from sophisticated pair manager
             if pair_manager:
-                ranked_pairs = await pair_manager.rank_pairs(mock_market_data)
+                ranked_pairs = await pair_manager.rank_pairs()
             else:
                 # Fallback to mock pairs if pair_manager not available
                 raise Exception("PairManager not available")
@@ -298,16 +487,8 @@ def create_app() -> FastAPI:
             return {"pairs": pairs_data}
             
         except Exception as e:
-            # Fallback to simple mock data
-            return {
-                "pairs": [
-                    {"symbol": "BTC/USDT", "price": 43250.00, "volume24h": 1250000000, "change24h": 2.34, "score": 85.5, "regime": "trending"},
-                    {"symbol": "ETH/USDT", "price": 2650.00, "volume24h": 890000000, "change24h": -1.23, "score": 82.3, "regime": "ranging"},
-                    {"symbol": "SOL/USDT", "price": 98.50, "volume24h": 560000000, "change24h": 5.67, "score": 79.1, "regime": "breakout"},
-                    {"symbol": "XRP/USDT", "price": 0.52, "volume24h": 450000000, "change24h": -0.89, "score": 75.8, "regime": "ranging"},
-                    {"symbol": "ADA/USDT", "price": 0.38, "volume24h": 320000000, "change24h": 3.45, "score": 73.4, "regime": "trending"}
-                ]
-            }
+            print(f"Error fetching top pairs: {e}")
+            raise HTTPException(status_code=503, detail=f"Failed to fetch market data: {str(e)}")
 
     @app.get("/config/trading-mode")
     def get_trading_mode():
@@ -506,31 +687,60 @@ def create_app() -> FastAPI:
         try:
             state = runtime.get_state()
             
-            # Count active assets
-            trading_state = state.get('trading', {})
-            active_assets = sum(1 for asset_state in trading_state.values() 
-                              if asset_state.get('status') == 'running')
-            
-            # Calculate total positions across all assets
+            # Initialize totals
+            total_paper_balance = 0.0
+            total_live_balance = 0.0
+            paper_pnl = 0.0
+            live_pnl = 0.0
+            paper_session_pnl = 0.0
+            live_session_pnl = 0.0
+            active_assets = 0
             total_positions = 0
-            total_pnl = 0.0
             
-            # In real implementation, aggregate from all asset managers
-            if hasattr(runtime, 'get_portfolio_stats'):
-                stats = runtime.get_portfolio_stats()
-                total_pnl = stats.get('total_pnl', 0.0)
-                total_positions = stats.get('active_trades', 0)
+            # Aggregate data from all paper traders
+            for asset in ['crypto', 'futures', 'forex', 'forex_options']:
+                try:
+                    if get_paper_trader:
+                        paper_trader = get_paper_trader(asset)
+                        if paper_trader:
+                            # Get paper trading data
+                            wallet_data = paper_trader.get_paper_wallet_data()
+                            total_paper_balance += wallet_data['balance']
+                            paper_pnl += wallet_data['pnl']
+                            
+                            # Count positions
+                            total_positions += len([p for p in paper_trader.positions if p.get('status') == 'open'])
+                            
+                            # Check if asset is active
+                            if hasattr(paper_trader, 'is_active') and paper_trader.is_active:
+                                active_assets += 1
+                except Exception as e:
+                    print(f"Error getting {asset} paper trader data: {e}")
+            
+            # Get live balances if available (this would need real broker connections)
+            # For now, using placeholder values
             
             return {
-                "total_pnl": total_pnl,
-                "active_assets": active_assets,
+                "total_paper_balance": total_paper_balance,
+                "total_live_balance": total_live_balance,
+                "paper_pnl": paper_pnl,
+                "live_pnl": live_pnl,
+                "paper_session_pnl": paper_session_pnl,
+                "live_session_pnl": live_session_pnl,
+                "active_assets": f"{active_assets}/4",
                 "total_positions": total_positions,
                 "system_online": True
             }
         except Exception as exc:
+            print(f"Error in global stats: {exc}")
             return {
-                "total_pnl": 0.0,
-                "active_assets": 0,
+                "total_paper_balance": 0.0,
+                "total_live_balance": 0.0,
+                "paper_pnl": 0.0,
+                "live_pnl": 0.0,
+                "paper_session_pnl": 0.0,
+                "live_session_pnl": 0.0,
+                "active_assets": "0/4",
                 "total_positions": 0,
                 "system_online": False
             }
@@ -886,6 +1096,81 @@ def create_app() -> FastAPI:
     def ping():
         """Simple ping endpoint to test if server is responding."""
         return {"status": "ok", "message": "Server is responding", "timestamp": datetime.now().isoformat()}
+    
+    @app.get("/price/{symbol}")
+    async def get_price(symbol: str):
+        """Get real-time price for a symbol."""
+        try:
+            # Check if it's a crypto symbol (ends with USDT or is a common crypto pair)
+            crypto_symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", 
+                            "ADAUSDT", "DOGEUSDT", "MATICUSDT", "DOTUSDT", "AVAXUSDT"]
+            
+            if symbol in crypto_symbols or symbol.endswith("USDT"):
+                if not bybit_crypto:
+                    raise HTTPException(status_code=503, detail="Bybit connection not available")
+                
+                # Get ticker data from Bybit
+                ticker_response = await bybit_crypto.client.get_tickers(
+                    category="spot",
+                    symbol=symbol
+                )
+                
+                if ticker_response and ticker_response.get('retCode') == 0:
+                    tickers = ticker_response.get('result', {}).get('list', [])
+                    if tickers:
+                        ticker = tickers[0]
+                        return {
+                            "symbol": symbol,
+                            "price": float(ticker.get('lastPrice', 0)),
+                            "change_24h": float(ticker.get('price24hPcnt', 0)) * 100,
+                            "volume_24h": float(ticker.get('volume24h', 0)) * float(ticker.get('lastPrice', 0)),
+                            "bid": float(ticker.get('bid1Price', 0)),
+                            "ask": float(ticker.get('ask1Price', 0)),
+                            "high_24h": float(ticker.get('highPrice24h', 0)),
+                            "low_24h": float(ticker.get('lowPrice24h', 0)),
+                            "timestamp": datetime.now().isoformat()
+                        }
+                
+            # Forex symbols
+            elif symbol in ["EURUSD", "GBPUSD", "USDJPY", "USDCHF", "AUDUSD", "NZDUSD", "USDCAD"]:
+                if ibkr_connection_manager and ibkr_connection_manager.ib.isConnected():
+                    from ib_insync import Forex
+                    contract = Forex(symbol[:3] + symbol[3:])
+                    ticker = ibkr_connection_manager.ib.reqMktData(contract)
+                    ibkr_connection_manager.ib.sleep(1)  # Wait for data
+                    
+                    if ticker.marketPrice() > 0:
+                        return {
+                            "symbol": symbol,
+                            "price": ticker.marketPrice(),
+                            "bid": ticker.bid if ticker.bid > 0 else ticker.marketPrice(),
+                            "ask": ticker.ask if ticker.ask > 0 else ticker.marketPrice(),
+                            "timestamp": datetime.now().isoformat()
+                        }
+            
+            # SPX for options
+            elif symbol == "SPX":
+                if ibkr_connection_manager and ibkr_connection_manager.ib.isConnected():
+                    from ib_insync import Index
+                    contract = Index('SPX', 'CBOE')
+                    ticker = ibkr_connection_manager.ib.reqMktData(contract)
+                    ibkr_connection_manager.ib.sleep(1)
+                    
+                    if ticker.marketPrice() > 0:
+                        return {
+                            "symbol": symbol,
+                            "price": ticker.marketPrice(),
+                            "bid": ticker.bid if ticker.bid > 0 else ticker.marketPrice(),
+                            "ask": ticker.ask if ticker.ask > 0 else ticker.marketPrice(),
+                            "timestamp": datetime.now().isoformat()
+                        }
+            
+            # If we reach here, we couldn't fetch the price
+            raise HTTPException(status_code=404, detail=f"Price data not available for {symbol}")
+            
+        except Exception as e:
+            print(f"Error fetching price for {symbol}: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to fetch price: {str(e)}")
     
     @app.post("/ibkr/connect")
     async def connect_ibkr():

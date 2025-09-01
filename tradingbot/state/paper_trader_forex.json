@@ -122,6 +122,6 @@
   "violations_log": [],
   "violation_count": 0,
   "strict_enforcement": true,
-  "last_update": "2025-08-30T08:45:30.343282",
-  "total_pnl": 3.0
+  "is_active": true,
+  "last_update": "2025-09-01T01:00:44.990093"
 }

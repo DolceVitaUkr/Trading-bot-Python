@@ -61,6 +61,10 @@ class PaperTrader:
         self.fake_data_detected = False
         self.violation_count = 0
         
+        # Trading state
+        self.is_active = False
+        self.trading_thread = None
+        
         # Set up persistence file
         self.state_file = Path(f"tradingbot/state/paper_trader_{asset_type.lower()}.json")
         self.state_file.parent.mkdir(parents=True, exist_ok=True)
@@ -78,7 +82,7 @@ class PaperTrader:
             self.starting_balance = paper_start_balance
             self.positions: List[Dict] = []
             self.trades: List[Dict] = []
-            self.pnl_history: List[Dict] = [{"timestamp": datetime.now().isoformat(), "balance": self.balance}]
+            self.pnl_history: List[Dict] = [{"timestamp": datetime.now().isoformat(), "balance": paper_start_balance}]
             self.violations_log: List[Dict] = []  # Track all violations
             self._save_state()
             self.log.info(f"STRICT Paper trader initialized for {asset_type} with starting balance ${self.balance}")
@@ -1001,6 +1005,18 @@ class PaperTrader:
         except:
             return False
     
+    def start_trading(self):
+        """Start paper trading for this asset."""
+        self.is_active = True
+        self.log.info(f"Paper trading started for {self.asset_type}")
+        self._save_state()
+        
+    def stop_trading(self):
+        """Stop paper trading for this asset."""
+        self.is_active = False
+        self.log.info(f"Paper trading stopped for {self.asset_type}")
+        self._save_state()
+    
     def _save_state(self):
         """Save paper trading state to file."""
         try:
@@ -1013,6 +1029,7 @@ class PaperTrader:
                 "violations_log": self.violations_log,
                 "violation_count": self.violation_count,
                 "strict_enforcement": True,
+                "is_active": self.is_active,
                 "last_update": datetime.now().isoformat()
             }
             
@@ -1035,6 +1052,7 @@ class PaperTrader:
             self.pnl_history = state.get("pnl_history", [])
             self.violations_log = state.get("violations_log", [])
             self.violation_count = state.get("violation_count", 0)
+            self.is_active = state.get("is_active", False)
             
         except Exception as e:
             self.log.warning(f"Failed to load state: {e}")

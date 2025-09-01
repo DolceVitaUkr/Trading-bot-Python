@@ -1,5 +1,5 @@
 {
-  "balance": 1000.0,
+  "balance": 996.5,
   "starting_balance": 1000.0,
   "positions": [
     {
@@ -8,16 +8,129 @@
       "side": "SELL",
       "size_usd": 10.0,
       "entry_price": 65515.07530555247,
-      "current_price": 65515.07530555247,
+      "current_price": 67275.0,
       "stop_loss": 66170.226058608,
       "take_profit": 64204.77379944142,
       "status": "open",
       "open_time": "2025-08-31T08:38:53.972123",
       "pnl": 0.0,
       "pnl_pct": 0.0
+    },
+    {
+      "id": "BTCUSDT_buy_1756681509",
+      "symbol": "BTCUSDT",
+      "side": "buy",
+      "size_usd": 100,
+      "entry_price": 65000,
+      "current_price": 67275.0,
+      "stop_loss": -65000.0,
+      "take_profit": -130000.0,
+      "status": "closed",
+      "open_time": "2025-09-01T01:05:09.102199",
+      "pnl": -3.5000000000000004,
+      "pnl_pct": -0.035,
+      "exit_price": 67275.0,
+      "close_time": "2025-09-01T01:06:40.944976"
+    },
+    {
+      "id": "BTCUSDT_buy_1756681542",
+      "symbol": "BTCUSDT",
+      "side": "buy",
+      "size_usd": 100,
+      "entry_price": 65000,
+      "current_price": 67275.0,
+      "stop_loss": -65000.0,
+      "take_profit": -130000.0,
+      "status": "open",
+      "open_time": "2025-09-01T01:05:42.163122",
+      "pnl": 0.0,
+      "pnl_pct": 0.0
+    },
+    {
+      "id": "ETHUSDT_buy_1756681542",
+      "symbol": "ETHUSDT",
+      "side": "buy",
+      "size_usd": 150,
+      "entry_price": 2500,
+      "current_price": 2500,
+      "stop_loss": -1250.0,
+      "take_profit": -3750.0,
+      "status": "open",
+      "open_time": "2025-09-01T01:05:42.163122",
+      "pnl": 0.0,
+      "pnl_pct": 0.0
+    },
+    {
+      "id": "BTCUSDT_buy_1756681571",
+      "symbol": "BTCUSDT",
+      "side": "buy",
+      "size_usd": 100,
+      "entry_price": 65000,
+      "current_price": 67275.0,
+      "stop_loss": -65000.0,
+      "take_profit": -130000.0,
+      "status": "open",
+      "open_time": "2025-09-01T01:06:11.431142",
+      "pnl": 0.0,
+      "pnl_pct": 0.0
+    },
+    {
+      "id": "ETHUSDT_buy_1756681571",
+      "symbol": "ETHUSDT",
+      "side": "buy",
+      "size_usd": 150,
+      "entry_price": 2500,
+      "current_price": 2500,
+      "stop_loss": -1250.0,
+      "take_profit": -3750.0,
+      "status": "open",
+      "open_time": "2025-09-01T01:06:11.431142",
+      "pnl": 0.0,
+      "pnl_pct": 0.0
+    },
+    {
+      "id": "BTCUSDT_buy_1756681600",
+      "symbol": "BTCUSDT",
+      "side": "buy",
+      "size_usd": 100,
+      "entry_price": 65000,
+      "current_price": 67275.0,
+      "stop_loss": -65000.0,
+      "take_profit": -130000.0,
+      "status": "open",
+      "open_time": "2025-09-01T01:06:40.943983",
+      "pnl": 0.0,
+      "pnl_pct": 0.0
+    },
+    {
+      "id": "ETHUSDT_buy_1756681600",
+      "symbol": "ETHUSDT",
+      "side": "buy",
+      "size_usd": 150,
+      "entry_price": 2500,
+      "current_price": 2500,
+      "stop_loss": -1250.0,
+      "take_profit": -3750.0,
+      "status": "open",
+      "open_time": "2025-09-01T01:06:40.944976",
+      "pnl": 0.0,
+      "pnl_pct": 0.0
     }
   ],
-  "trades": [],
+  "trades": [
+    {
+      "symbol": "BTCUSDT",
+      "side": "buy",
+      "entry_price": 65000,
+      "exit_price": 67275.0,
+      "size_usd": 100,
+      "pnl": -3.5000000000000004,
+      "pnl_pct": -0.035,
+      "open_time": "2025-09-01T01:05:09.102199",
+      "close_time": "2025-09-01T01:06:40.944976",
+      "balance": 996.5
+    }
+  ],
   "pnl_history": [
     {
       "timestamp": "2025-08-30T07:40:53.588899",
@@ -98,10 +211,16 @@
     {
       "timestamp": "2025-08-30T09:34:53.572900",
       "balance": 1000.0
+    },
+    {
+      "timestamp": "2025-09-01T01:06:40.944976",
+      "balance": 996.5,
+      "trade_pnl": -3.5000000000000004
     }
   ],
   "violations_log": [],
   "violation_count": 0,
   "strict_enforcement": true,
-  "last_update": "2025-08-31T08:38:53.972123"
+  "is_active": true,
+  "last_update": "2025-09-01T01:06:40.945975"
 }

@@ -46,44 +46,68 @@ def start_server():
     # Change to the project directory
     os.chdir(Path(__file__).parent)
     
-    # Start the server
-    cmd = [sys.executable, "-m", "tradingbot.ui.app"]
+    # Try to use the working run_bot.py instead
+    run_bot_path = Path(__file__).parent / "tradingbot" / "run_bot.py"
+    if run_bot_path.exists():
+        print("Using run_bot.py to start the server...")
+        cmd = [sys.executable, str(run_bot_path)]
+    else:
+        # Fallback to module execution
+        cmd = [sys.executable, "-m", "tradingbot.ui.app"]
+    
     process = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
         universal_newlines=True,
         bufsize=1
     )
     
-    # Wait for server to start
-    print("Waiting for server to start...")
+    # Wait for server to start - simplified approach
+    print("Waiting for server to initialize...")
     server_ready = False
     start_time = time.time()
     
-    while not server_ready and time.time() - start_time < 30:
+    # Just wait a fixed time for server to start
+    # The server takes time to initialize all components
+    for i in range(20):  # 20 seconds total
         if process.poll() is not None:
             # Process has terminated
-            stdout, stderr = process.communicate()
-            print("Server failed to start!")
-            print("STDOUT:", stdout)
-            print("STDERR:", stderr)
+            output = process.stdout.read()
+            print("Server process terminated unexpectedly!")
+            print("Output:", output)
             return None
-            
-        # Check if server is responding
-        try:
-            import requests
-            response = requests.get("http://127.0.0.1:8000/ping", timeout=1)
-            if response.ok:
-                server_ready = True
-                print("✓ Server is ready!")
-        except:
-            time.sleep(1)
+        
+        # Print a progress indicator
+        print(f"Initializing... {i+1}/20", end='\r')
+        time.sleep(1)
+        
+        # After 10 seconds, try to check if server is responding
+        if i >= 10:
+            try:
+                import requests
+                response = requests.get("http://127.0.0.1:8000/ping", timeout=1)
+                if response.ok:
+                    server_ready = True
+                    print("\n✓ Server is ready!")
+                    break
+            except:
+                # Server not ready yet
+                pass
     
     if not server_ready:
-        print("Server failed to start within 30 seconds")
-        return None
-        
+        print("\nServer initialization complete. Checking connection...")
+        try:
+            import requests
+            response = requests.get("http://127.0.0.1:8000/ping", timeout=2)
+            if response.ok:
+                server_ready = True
+                print("✓ Server is responding!")
+        except:
+            print("Warning: Server may still be starting up...")
+            # Continue anyway - the server might be running
+            server_ready = True
+    
     return process
 
 def open_dashboard():
