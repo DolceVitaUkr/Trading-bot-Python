@@ -1,0 +1,165 @@
+--- a/tradingbot/modules.md
++++ b/tradingbot/modules.md
+@@ -42,7 +42,7 @@
+ 
+ aggregate_status(asset: str) -> dict
+ 
+-→ {"asset", "paper": {total, available, used, unrealized_pnl}, "live": {...}}
++→ {"asset", "paper": {total, available, used, unrealized_pnl}, "live": {}}
+ 
+ Calls: paper_state.get_wallet(asset), retry_call(by.wallet) or retry_call(ib.wallet)
+ 
+@@ -56,7 +56,7 @@
+ 
+ → Normalized list of trades (paper/live)
+ 
+-Calls: history_store.read_history(...)
++Calls: history_store.read_history()
+ 
+ health() -> dict
+ 
+@@ -115,9 +115,9 @@
+ 
+ Fresh quote snapshot attached in the calling layer → context.price must be ≤2s old; store quote_snapshot_id in trade log.
+ 
+-Guardrails via _can_place_order(...) (budget, wallet, positions, concurrency).
+-
+-Clamp sizing via _pos_cap(...) → shrink context.quantity if over cap.
++Guardrails via _can_place_order() (budget, wallet, positions, concurrency).
++
++Clamp sizing via _pos_cap() → shrink context.quantity if over cap.
+ 
+ Venue checks (min qty/step, long-only on spot, leverage caps).
+ 
+@@ -146,11 +146,11 @@
+ 
+ alloc: {crypto_spot, crypto_futures, forex, options} (USD if absolute; [0..1] if percent)
+ 
+-per_trade_risk_pct: {...}
++per_trade_risk_pct: {}
+ 
+ percent_sizing_threshold_usd: number
+ 
+-percent_sizing_above_threshold: {...}
++percent_sizing_above_threshold: {}
+ 
+ profit_rollover: bool
+ 
+@@ -160,7 +160,7 @@
+ 
+ scale: {enabled, equity_curve_window_days, ladder:[{profit_usd, risk_multiplier}]}
+ 
+-leverage_caps: {...}
++leverage_caps: {}
+ 
+ Functions:
+ 
+@@ -231,9 +231,9 @@
+ 
+ wallet() -> dict{total, available, used, unrealized_pnl}
+ 
+-positions() -> dict{"spot":[...], "futures":[...]}
+-
+-(TODO) fetch_my_trades() normalization hook for live history
++positions() -> dict{"spot":[], "futures":[]}
++
++() fetch_my_trades() normalization hook for live history
+ 
+ Consumers: runtime_api, (future) history ingestion.
+ 
+@@ -247,7 +247,7 @@
+ 
+ positions() -> list[dict]
+ 
+-(TODO) executions → normalized live history
++() executions → normalized live history
+ 
+ Consumers: runtime_api, (future) history ingestion.
+ 
+@@ -271,7 +271,7 @@
+ Purpose: Orchestrates ML/RL runners with persistence & auto-resume.
+ Artifacts:
+ 
+-Models: tradingbot/models/{asset}/ml|rl/.../checkpoints/*.json
++Models: tradingbot/models/{asset}/ml|rl//checkpoints/*.json
+ 
+ Metrics: tradingbot/metrics/{asset}/train_ml.jsonl / train_rl.jsonl
+ 
+@@ -282,7 +282,7 @@
+ 
+ stop(asset, mode) -> dict
+ 
+-status(asset) -> dict{"ml":..., "rl":...}
++status(asset) -> dict{"ml":, "rl":}
+ 
+ Consumers: ui/app.py endpoints /train/{asset}/{mode}/start|stop|status.
+ 
+@@ -300,7 +300,7 @@
+ 
+ GET /positions/{asset} → runtime_api.aggregate_positions(asset)
+ 
+-GET /history/{asset}?mode=&since=&limit= → runtime_api.read_trade_history(...)
++GET /history/{asset}?mode=&since=&limit= → runtime_api.read_trade_history()
+ 
+ POST /paper/{asset}/enable|disable → paper state toggle (internal)
+ 
+@@ -397,7 +397,7 @@
+ │        ├─ trades_forex.jsonl
+ │        └─ trades_options.jsonl
+ ├─ models/
+-│  └─ {asset}/ml|rl/...
++│  └─ {asset}/ml|rl/
+ ├─ metrics/
+ │  └─ {asset}/train_ml.jsonl / train_rl.jsonl
+ ├─ ui/
+@@ -450,7 +450,7 @@
+ 
+ Trade row: trade_id, order_id, strategy_id, mode, asset, symbol, side, qty, avg_price, fees, slippage, realized_pnl, realized_pnl_pct, reward, opened_at, closed_at, duration_s, venue, account_id, quote_snapshot_id, status
+ 
+-Budget config: alloc_mode, alloc{...}, per_trade_risk_pct{...}, percent_sizing_threshold_usd, percent_sizing_above_threshold{...}, profit_rollover, enforce_wallet_available, max_concurrent, scale{...}, leverage_caps{...}
++Budget config: alloc_mode, alloc{}, per_trade_risk_pct{}, percent_sizing_threshold_usd, percent_sizing_above_threshold{}, profit_rollover, enforce_wallet_available, max_concurrent, scale{}, leverage_caps{}
+ 
+ 11) ASCII Diagram – History Tables (Asset × Mode)
+                  ┌─────────────────────────────────────┐
+@@ -497,7 +497,7 @@
+ [runtime_api.read_trade_history()]
+    │
+    v
+-[UI /history/{asset}?mode=...]
++[UI /history/{asset}?mode=]
+    │
+    v
+ [Dashboard History Tab] (8 tables)
+@@ -538,10 +538,16 @@
+ │     └─ ibkr/
+ │        ├─ trades_forex.jsonl
+ │        └─ trades_options.jsonl
+-├─ models/{asset}/ml|rl/...
++├─ models/{asset}/ml|rl/
+ ├─ metrics/{asset}/train_ml.jsonl / train_rl.jsonl
+ ├─ ui/
+ │  ├─ app.py
+ │  ├─ templates/dashboard.html
+ │  └─ static/{wire.js, nethealth.js}
+-└─ logs/
+\ No newline at end of file
++└─ logs/
++
++### Diagrams
++
++- Trade Lifecycle (diagram): [screenshots/dashboard_state.png](../screenshots/dashboard_state.png)
++- UI Overview (screenshot): [screenshots/Ideal bot Dashboard.png](../screenshots/Ideal%20bot%20Dashboard.png)
++- Folder Structure: [FOLDER_STRUCTURE.md](../FOLDER_STRUCTURE.md)
+--- a/docs/IBKR_SETUP_GUIDE.md
++++ b/docs/IBKR_SETUP_GUIDE.md
+@@ -4,8 +4,8 @@
+ This guide covers setting up TWS (Trader Workstation) for both paper and live trading with the bot.
+ 
+ ## Current Configuration
+-- **Paper Trading**: Port 7496 (current setup)
+-- **Live Trading**: Port 7497 (future setup)
++- **Paper Trading**: Port 7497 (current setup)
++- **Live Trading**: Port 7496 (future setup)
+ - **Mode**: Paper mode configured in config.json
+ 
+ ## TWS Configuration

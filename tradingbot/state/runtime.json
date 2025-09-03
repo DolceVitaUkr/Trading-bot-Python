@@ -26,5 +26,8 @@
     }
   },
   "positions": {},
-  "last_update": "2025-08-30T07:11:55.081341"
+  "last_update": "2025-08-30T07:11:55.081341",
+  "paper": {
+    "crypto_spot": true
+  }
 }

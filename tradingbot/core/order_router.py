@@ -17,6 +17,16 @@ from enum import Enum
 from .configmanager import config_manager
 from .loggerconfig import get_logger
 
+# Import budget guardrails
+try:
+    from .budget_manager import can_place_order as _can_place_order
+    from .budget_manager import position_size_cap as _pos_cap
+    from .runtime_api import paper_enabled
+except Exception:
+    _can_place_order = None
+    _pos_cap = None
+    paper_enabled = None
+
 
 class OrderStatus(Enum):
     """Order status states"""
@@ -170,6 +180,24 @@ class OrderRouter:
                     client_order_id=context.client_order_id,
                     reason=f"Budget check failed: {budget_check['reason']}"
                 )
+        
+        # 2b. Budget & guardrails check
+        try:
+            _asset_map = {"spot":"crypto_spot","futures":"crypto_futures","forex":"forex","options":"options"}
+            _ui_key = _asset_map.get(context.asset_type, context.asset_type)
+            _mode = "paper" if (paper_enabled and paper_enabled(_ui_key)) else "live"
+            _px = context.price
+            _broker = "bybit" if _ui_key.startswith("crypto_") else "ibkr"
+            if _can_place_order:
+                ok, reason = _can_place_order(
+                    asset_ui_key=_ui_key, mode=_mode, symbol=context.symbol, side=context.side,
+                    quantity=context.quantity, price=_px, asset_type=context.asset_type, broker=_broker
+                )
+                if not ok:
+                    return OrderResult(success=False, client_order_id=context.client_order_id, reason=f"guardrails: {reason}")
+        except Exception as _e:
+            self.log.error(f"Guardrail check failed: {_e}")
+            return OrderResult(success=False, client_order_id=context.client_order_id, reason=f'guardrails error: {_e}')
         
         # 3. Exposure Manager Check
         if self.exposure_manager:

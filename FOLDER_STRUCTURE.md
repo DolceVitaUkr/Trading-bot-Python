@@ -1,82 +1,146 @@
-# Project Folder Structure
+FolderStructure.md
 
-## Main Folders
+Version 1.0
 
-### `/tradingbot` - Main application code
-- `/brokers` - Exchange connectors (Bybit, IBKR)
-- `/config` - Configuration files
-- `/core` - Core trading logic and managers
-- `/learning` - RL models and training
-- `/risk` - Risk management and position sizing
-- `/rl` - Reinforcement learning components
-- `/state` - Persistent state files
-- `/ui` - Web dashboard (Flask/FastAPI)
-- `/validation` - Strategy validation
+This document describes the repository folder layout and the responsibility of each directory/file. Use this as a navigation guide. For technical details of functions and variables, see Modules.md.
 
-### `/docs` - Documentation
-- `/setup` - Setup and configuration guides
-  - `IBKR_SETUP_GUIDE.md`
-  - `CONNECTION_STATUS.md`
-  - `PAPER_LIVE_SETUP.md`
-- `/development` - Development documentation
+Root
+trading-bot-python/
+├─ tradingbot/
+├─ scripts/
+├─ state/
+├─ models/
+├─ metrics/
+├─ ui/
+├─ logs/
+└─ artifacts/
 
-### `/tests` - Test files
-- `test_all_connections.py` - Connection diagnostics
-- `test_ui_and_ibkr.py` - UI testing
-- Other test scripts
+tradingbot/
 
-### `/scripts` - Utility scripts
-- Playwright scripts
-- Helper utilities
-- Batch files
+Main source code for the bot.
 
-### `/screenshots` - UI screenshots
-- Test screenshots
-- Dashboard captures
+core/
 
-### `/artifacts` - Generated files
-- HTML outputs
-- Temporary files
+runtime_api.py → Aggregates broker & paper state for UI.
 
-### `/results` - Trading results (created at runtime)
-- Strategy backtests
-- Paper trading results
+order_router.py → Central order placement with guardrails and idempotency.
 
-## Main Entry Points
+budget_manager.py → Budget logic, risk % sizing, rollover, and equity ladder.
 
-### `start_bot.py`
-Main launcher with two modes:
-- `python start_bot.py` - Start web dashboard
-- `python start_bot.py validate ...` - Run validation pipeline
+history_store.py → Reads/writes trade history JSONL (8 tables).
 
-### `main.py`
-Alternative entry point
+paper_state.py → Paper trading wallet and positions.
 
-### `start_dashboard.py`  
-Direct dashboard launcher
+retry.py → Retry/backoff utility.
 
-## Configuration
+loggerconfig.py → Logging configuration (JSONL + console).
 
-### `/tradingbot/config/config.json`
-Main configuration file with:
-- API keys
-- Bot settings
-- Safety parameters
-- KPI targets
+Responsibility: Market-neutral core logic. Never depends on UI, only consumed by API/adapters.
 
-## Quick Commands
+brokers/
 
-Start the bot:
-```bash
-python start_bot.py
-```
+bybit_adapter.py → Bybit integration via ccxt. Wallet, positions, trades.
 
-Test connections:
-```bash
-python tests/test_all_connections.py
-```
+ibkr_adapter.py → IBKR integration via ib_insync. Wallet, portfolio, executions.
 
-Run UI tests:
-```bash
-python tests/test_ui_and_ibkr.py
-```
+Responsibility: Abstraction of broker APIs. Must only expose normalized data.
+
+strategies/
+
+manager.py → Strategy registry & lifecycle (start/stop).
+
+strategy_*.py → Individual strategy implementations (e.g., SMA cross, RSI).
+
+Responsibility: Define signals; never execute orders directly. Emit (side, conf) only.
+
+training/
+
+train_manager.py → Orchestrates ML/RL runners, persistence.
+
+ml_trainer.py (planned) → Supervised indicator learner (XGBoost/LightGBM).
+
+rl_trainer.py (planned) → PPO agent (Stable-Baselines3).
+
+validation_manager.py (planned) → Promotion/degrade logic for strategies.
+
+Responsibility: Model training & validation pipeline.
+
+scripts/
+
+cleanup_logs.py → Archives logs to artifacts/logs/YYYY-MM-DD/.
+
+(future) backtest_validator.py → Run validation on offline tick data.
+
+Responsibility: Operational utilities.
+
+state/
+
+budgets.json → Asset budgets, risk %, sizing thresholds, rollover, leverage caps.
+
+runtime.json → Live/paper enable flags.
+
+paper/ → JSONL trade logs for paper mode (per asset).
+
+live/
+
+bybit/ → JSONL trade logs for Bybit live.
+
+ibkr/ → JSONL trade logs for IBKR live.
+
+Responsibility: Ephemeral bot state (positions, trades, budgets).
+Never commit these to Git.
+
+models/
+
+{asset}/ml/ → ML checkpoints.
+
+{asset}/rl/ → RL checkpoints.
+
+Responsibility: Persisted models per asset.
+
+metrics/
+
+{asset}/train_ml.jsonl → ML training metrics.
+
+{asset}/train_rl.jsonl → RL training metrics.
+
+Responsibility: Training/evaluation logs for model monitoring.
+
+ui/
+
+app.py → FastAPI app exposing REST endpoints.
+
+templates/ → Dashboard HTML templates.
+
+static/
+
+wire.js → Fetch wrapper and UI event handlers.
+
+nethealth.js → Broker/adapter health polling.
+
+Responsibility: User interface & API. Talks only to runtime_api, strategy_manager, train_manager.
+
+logs/
+
+Rotating structured logs (JSONL + console).
+
+Controlled by loggerconfig.py.
+
+Responsibility: Operational logs. Archived daily by scripts/cleanup_logs.py.
+
+artifacts/
+
+logs/YYYY-MM-DD/ → Archived logs.
+
+(future) screenshots, reports, validation outputs.
+
+Responsibility: Historical archives. Safe to purge without affecting state.
+
+⚠️ Notes
+
+state/ and logs/ should be .gitignored (ephemeral).
+
+Only models/ and metrics/ may be versioned selectively if you want reproducibility.
+
+Everything else is source or UI.
+

@@ -1,102 +1,55 @@
-import logging
-import sys
-import structlog
-from structlog.types import Processor
+"""
+Central logging config: Rotating JSON logs (10MB x 7) + console.
+"""
+from __future__ import annotations
+import logging, json, os, pathlib
+from logging.handlers import RotatingFileHandler
+from datetime import datetime
 
-def setup_logging(log_level: str = "INFO"):
-    """
-    Sets up structured logging using structlog.
+LOG_DIR = pathlib.Path("tradingbot/logs")
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+LOG_PATH = LOG_DIR / "app.log"
 
-    Logs to the console will be human-readable and colored.
-    Logs to a file will be in JSON format (JSONL).
-    """
-    shared_processors: list[Processor] = [
-        structlog.contextvars.merge_contextvars,
-        structlog.stdlib.add_logger_name,
-        structlog.stdlib.add_log_level,
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.StackInfoRenderer(),
-        structlog.processors.format_exc_info,
-    ]
+class JsonLineFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        data = {
+            "ts": datetime.utcnow().isoformat() + "Z",
+            "level": record.levelname,
+            "logger": record.name,
+            "msg": record.getMessage(),
+            "module": record.module,
+            "func": record.funcName,
+            "line": record.lineno,
+        }
+        if record.exc_info:
+            data["exc_info"] = self.formatException(record.exc_info)
+        return json.dumps(data, ensure_ascii=False)
 
-    structlog.configure(
-        processors=shared_processors + [
-            # This is the final processor that formats the log record.
-            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
-        ],
-        logger_factory=structlog.stdlib.LoggerFactory(),
-        wrapper_class=structlog.stdlib.BoundLogger,
-        cache_logger_on_first_use=True,
-    )
+def setup_logging(level: str | int = None) -> None:
+    # Make idempotent
+    root = logging.getLogger()
+    if getattr(root, "_tradingbot_logging_configured", False):
+        return
+    root._tradingbot_logging_configured = True
 
-    # Configure the formatter for file logging (JSON)
-    json_formatter = structlog.stdlib.ProcessorFormatter(
-        # The "event" field is the main message.
-        processor=structlog.processors.JSONRenderer(),
-        foreign_pre_chain=shared_processors,
-    )
+    # Level
+    lvl = level if isinstance(level, int) else getattr(logging, str(level or os.getenv("LOG_LEVEL","INFO")).upper(), logging.INFO)
+    root.setLevel(lvl)
 
-    # Ensure logs directory exists
-    try:
-        import os
-        os.makedirs('logs', exist_ok=True)
-    except OSError:
-        pass
+    # File handler (JSON lines)
+    fh = RotatingFileHandler(LOG_PATH, maxBytes=10*1024*1024, backupCount=7, encoding="utf-8")
+    fh.setLevel(lvl)
+    fh.setFormatter(JsonLineFormatter())
 
-    # Use a .jsonl extension to indicate JSON Lines format
-    file_handler = logging.FileHandler("logs/structured_logs.jsonl", mode="a")
-    file_handler.setFormatter(json_formatter)
+    # Console handler (human-readable)
+    ch = logging.StreamHandler()
+    ch.setLevel(lvl)
+    ch.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s %(name)s: %(message)s", "%Y-%m-%d %H:%M:%S"))
 
-    # Configure the formatter for console logging (human-readable)
-    console_formatter = structlog.stdlib.ProcessorFormatter(
-        processor=structlog.dev.ConsoleRenderer(colors=True),
-        foreign_pre_chain=shared_processors,
-    )
+    # Attach
+    root.addHandler(fh)
+    root.addHandler(ch)
 
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setFormatter(console_formatter)
-
-    # Get the root logger and add the handlers
-    root_logger = logging.getLogger()
-    # Clear existing handlers to avoid duplicates
-    if root_logger.hasHandlers():
-        root_logger.handlers.clear()
-
-    root_logger.addHandler(file_handler)
-    root_logger.addHandler(console_handler)
-    root_logger.setLevel(log_level.upper())
-
-    # Mute other noisy loggers to keep the output clean
-    logging.getLogger("asyncio").setLevel(logging.WARNING)
-    logging.getLogger("websockets").setLevel(logging.WARNING)
-
-    log = structlog.get_logger("main_config")
-    log.info("Logging configured", log_level=log_level, file_path="logs/structured_logs.jsonl")
-
-def get_logger(name: str) -> structlog.stdlib.BoundLogger:
-    """
-    Returns a structlog logger instance.
-    """
-    return structlog.get_logger(name)
-
-# Example of how to use the logger with context:
-#
-# from tradingbot.core.loggerconfig import get_logger
-#
-# # Get a logger for the current module
-# log = get_logger(__name__)
-#
-# # Bind context that will be included in all subsequent logs from this logger instance.
-# # This is perfect for setting the product context at the start of a pipeline.
-# product_log = log.bind(product="FOREX_SPOT", symbol="EURUSD")
-#
-# product_log.info("fetching_data", duration="1M", timeframe="1h")
-# # This log record will contain:
-# # {"product": "FOREX_SPOT", "symbol": "EURUSD", "event": "fetching_data",
-# #  "duration": "1M", "timeframe": "1h", "timestamp": "...", ...}
-#
-# # You can also add context for a single call, which is great for metrics.
-# product_log.info("request_finished", latency_ms=120, req_count=1, pacing_backoffs=0)
-# # This log record will contain:
-# # {"product": "FOREX_SPOT", "symbol": "EURUSD", "event": "request_finished",
-# #  "latency_ms": 120, "req_count": 1, "pacing_backoffs": 0, "timestamp": "...", ...}
+def get_logger(name: str | None = None) -> logging.Logger:
+    setup_logging()
+    return logging.getLogger(name)

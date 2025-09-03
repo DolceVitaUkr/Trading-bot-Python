@@ -9,7 +9,13 @@
       "Bash(git add:*)",
       "Bash(cmd /c:*)",
       "Bash(powershell:*)",
-      "Bash(git apply:*)"
+      "Bash(git apply:*)",
+      "Bash(git checkout:*)",
+      "Bash(grep:*)",
+      "Bash(taskkill:*)",
+      "Bash(sed:*)",
+      "Bash(chmod:*)",
+      "Bash(test:*)"
     ],
     "deny": [],
     "ask": [],

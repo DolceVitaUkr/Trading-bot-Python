@@ -1,515 +1,364 @@
-🚀 World-Class Self-Learning Multi-Asset Trading Bot (Final Spec)
-🔎 TL;DR (bullet recap)
+Self-Learning Trading Bot (Bybit + IBKR)
 
-Per-strategy exploration ≥100 trades (never stops exploring globally)
+A modular, multi-asset trading system with paper + live modes, wallet-aware budgets, ML & RL training, and strict verification so trades cannot be invented.
 
-Each candidate strategy must complete ≥100 live-sim (paper) trades per strategy instance before validation.
+Assets: crypto_spot, crypto_futures (Bybit), forex, options (IBKR)
 
-Global exploration never stops: the system continuously spawns/rotates new candidates; no global “100 trade” ceiling.
+Modes: paper and live (kept separate in state, logs, UI)
 
-Fair scheduling: exploration controller rotates trade opportunities across candidates so one strategy can’t hog them.
+UI: manual start/stop for training and live trading (live requires double-confirmation), performance & history per asset/mode
 
-Paper bankroll policy (unbounded exploration)
+Quick Start
 
-Paper sessions start at $1,000 and reward points = 0.
+Brokers
 
-If paper equity hits ≤$10, auto top-up +$1,000 and continue; SL/TP/risk still enforced.
+IBKR TWS/Gateway: 127.0.0.1:7497
 
-This enables 10,000+ trades over time while respecting risk & limits.
+Bybit mainnet (testnet=False). Put keys in .env.
 
-Strategy Registry, lifecycle & flags
+Budgets
 
-Registry tracks every strategy with: id, asset, params hash, counters, metrics, state, flags, reasons.
+Edit tradingbot/state/budgets.json (see examples below).
 
-States: draft → exploring → validating → approved_live → suspended/hold → deprecated/rejected.
+Budgets are per asset, and the bot cannot exceed either the asset’s budget or the broker’s available wallet cash.
 
-Flags: manual_hold, manual_kill, risk_alert, data_issue, rate_limit, broker_desync.
+Run
 
-You can flip flags any time (UI/Telegram/code) to pause/stop/hold a specific strategy.
+python run_trading_bot.py
 
-Asset-specific engines (distinct logic & limits)
 
-Crypto Spot | Crypto Futures | Forex | Options each has unique sizing, SL/TP, leverage/fees, sessions, validation gates.
+Open the dashboard (e.g., http://localhost:8000).
+Use the Paper / Live sliders per asset. Live shows a confirmation modal.
 
-Universe coverage (crypto)
-
-Track 20–40 symbols, ranked by 24h volume/turnover; refresh list on a schedule; spike detector to catch 20–70% movers.
-
-Always-online mainnet data
-
-Paper = current live feed only (no back-dated fills).
-
-SL/TP server-side (Bybit TP/SL; IBKR brackets) so fills survive restarts/disconnects.
-
-Lifecycle
-
-Train & explore ≥100 trades (per candidate) → Validate → Approve → Live, while continuous exploration runs in parallel.
-
-Bybit unified wallet budget splits
-
-Software-enforced sub-wallets (e.g., Spot $900, Futures $100).
-
-Futures never exceeds its allocation; P&L stays within its bucket (compounds internally).
-
-Reconcile all P&L/fees to broker truth.
-
-RL per asset; ML explores simple→complex
-
-RL: PPO/SAC/DQN per-asset, indicators in observation; explore/exploit scheduler.
-
-ML: rule-based → ensembles → GBM/DL; massive param search; meta-labeling.
-
-Risk & limits
-
-SL/TP mandatory. Sizing = equity-at-risk / SL-distance.
-
-Per-asset caps, daily loss caps, leverage caps (futures/options), correlation caps.
-
-UI (FastAPI)
-
-Two horizontal graphs (Paper & Live), each with 4 lines (one per asset) + totals.
-
-Per asset & mode: Totals, Available, Used, Reward, Open & History tables, live prices (rate-limit safe).
-
-Side buttons: Total / Paper / Live per asset; open validation report; toggle flags.
-
-1) Per-Strategy Exploration ≥100 Trades (and continuing exploration)
-
-What this means (no ambiguity):
-
-Unit of exploration = one strategy instance (unique strategy_id identified by code + params hash).
-
-Requirement: each candidate must accumulate at least 100 closed paper trades (with SL/TP) before it’s eligible for validation.
-
-Rolling, not blocking: This does not pause exploration after 100 trades.
-
-When a candidate reaches 100, it moves to validation, and the exploration controller immediately keeps feeding other candidates.
-
-The controller always keeps N candidates active per asset (configurable), replenishing from the generator when any candidate advances or is retired.
-
-Fairness & scheduling:
-
-The controller uses round-robin + priority queues to allocate trade opportunities across candidates so that:
-
-No single candidate monopolizes signals.
-
-Candidates with fewer trades get a slight priority boost to reach 100 in reasonable time.
-
-Candidates that violate risk or hit temporary flags are skipped until cleared.
-
-Config (excerpt config/exploration.json):
-
+Configuration (budgets.json)
 {
-  "per_asset": {
-    "spot":   { "active_candidates": 6, "min_trades_to_validate": 100, "priority_boost_under_trades": 40 },
-    "futures":{ "active_candidates": 6, "min_trades_to_validate": 100, "priority_boost_under_trades": 40 },
-    "forex":  { "active_candidates": 4, "min_trades_to_validate": 100, "priority_boost_under_trades": 40 },
-    "options":{ "active_candidates": 4, "min_trades_to_validate": 100, "priority_boost_under_trades": 40 }
+  "alloc_mode": "absolute",                 // "absolute" or "percent" of live wallet
+  "alloc": {                                // per-asset budget allocation (USD if absolute, fraction 0-1 if percent)
+    "crypto_spot": 1000.0,
+    "crypto_futures": 1500.0,
+    "forex": 5000.0,
+    "options": 3000.0
   },
-  "opportunity_allocation": {
-    "rotation": "round_robin_with_boost",
-    "max_trades_per_hour_per_candidate": 12,
-    "cooldown_seconds_after_trade": 30
-  }
-}
 
-2) Paper Bankroll Policy (unbounded exploration with strict risk)
-
-Behavior (exact):
-
-On paper session start: set paper_equity = 1000.00 and reward_points = 0.
-
-During operation: if paper_equity <= 10.00 → auto top-up by +$1000 and continue.
-
-Top-ups don’t reset counters/flags/strategy states; they only replenish equity to allow further exploration.
-
-All SL/TP/risk logic applies identically before and after top-ups; there’s no bypass.
-
-Each top-up is logged as a new “paper_epoch” with sequence number for analytics.
-
-Config (excerpt config/session.json):
-
-{
-  "paper": {
-    "start_equity_usd": 1000,
-    "auto_topup_threshold_usd": 10,
-    "auto_topup_amount_usd": 1000,
-    "log_epoch": true
-  }
-}
-
-3) Strategy Registry, Lifecycle & Flags (manual intervention ready)
-
-Registry fields (stored in state/strategy_registry.db / JSON / SQLite):
-
-strategy_id (UUID), asset, version, params_hash
-
-state: one of
-
-draft (generated, not trading yet)
-
-exploring (paper live-sim accumulating trades)
-
-validating (validation suite running)
-
-approved_live (eligible & ready; may be currently live)
-
-suspended (auto/ manual pause; not trading)
-
-hold (manual hold; remains listed, no trading)
-
-rejected (failed validation or policy)
-
-deprecated (older superseded strategy)
-
-flags (set of):
-
-manual_hold — human pause
-
-manual_kill — human immediate stop/flat
-
-risk_alert — risk manager triggered (dd cap, per-trade breach)
-
-data_issue — feed gaps/outliers
-
-rate_limit — broker/API pacing hit
-
-broker_desync — P&L/position mismatch with broker
-
-counters: paper_trades_closed, paper_trades_open, live_trades_closed, epochs_used
-
-metrics_last_24h: PF, Sharpe, MaxDD, Win%, CVaR(5), Avg Trade, etc.
-
-reasons: free-text history of decisions (why held/rejected/promoted)
-
-timestamps: created, first_trade, last_trade, last_validation
-
-Transitions (deterministic):
-
-draft → exploring (when scheduled)
-
-exploring → validating (once paper_trades_closed ≥ min_trades_to_validate)
-
-validating → approved_live (if gates pass) or → rejected (else)
-
-approved_live → suspended/hold (manual or kill) → optionally back to approved_live
-
-Any → deprecated (when superseded by a newer strategy).
-
-Flag effects:
-
-manual_hold: strategy remains visible but receives no new trade allocations.
-
-manual_kill: immediately close paper trades, cancel pending paper orders; mark as suspended.
-
-risk_alert: exploration controller skips until risk manager clears; log reason.
-
-Clearing a flag re-enables scheduling (except rejected/deprecated).
-
-APIs/UI:
-
-POST /strategy/{id}/flag/{flag}; DELETE /strategy/{id}/flag/{flag}
-
-POST /strategy/{id}/state/{state} (restricted to allowed transitions)
-
-Filters in UI: show only exploring, validating, approved_live, etc.
-
-4) Asset-Specific Engines (distinct logic)
-4.1 Crypto Spot (Bybit, 20–40 symbols)
-
-Universe: rank by 24h turnover; refresh every 10–30 min; keep a core list + rotating tail.
-
-Signals: RSI/EMA/SMA crossovers, volatility breakouts (ATR/Bollinger width), MFI/volume confirmation, Fib confluence.
-
-Sizing:
-
-qty = (spot_alloc * risk_fraction * signal_weight) / (sl_distance * price)
-
-
-risk_fraction: 0.25–0.75% of spot_alloc (drawdown-tiered).
-
-signal_weight: weak 0.5 / base 1.0 / strong 1.5.
-
-Exits: TP% or ATR×; optional trailing; time-stop bars.
-
-Risk: no leverage; max_concurrent_symbols; correlation cap across correlated L1s/L2s.
-
-Validation: online paper ≥100 trades → offline WFA + stress (then gates).
-
-4.2 Crypto Futures (Bybit)
-
-Budget: futures_alloc (e.g., $100) from unified wallet; cannot exceed alloc.
-
-Leverage: capped per symbol; prefer low (1–5×) initially.
-
-Triggers: use MarkPrice for SL/TP; funding & basis filters.
-
-Sizing: same formula but risk_fraction tighter (0.15–0.5% of futures_alloc).
-
-Risk: cap concurrent positions; daily realized loss cap (e.g. 2–4% of futures_alloc).
-
-Validation: same 100-trade paper rule, plus stress on latency/slippage.
-
-4.3 Forex (IBKR)
-
-Pairs: majors + selected liquid crosses; session-aware (24/5).
-
-Orders: bracket orders with TP/SL at broker; spread/rollover aware.
-
-Sizing: convert pip SL to notional; risk_fraction 0.1–0.4% of forex_alloc.
-
-Risk: blackout windows around illiquid opens; correlation limits among USD pairs.
-
-Validation: online paper (sim feed over live quotes) ≥100 trades, then WFA.
-
-4.4 Options (IBKR, long-premium first)
-
-Selection: delta 0.35–0.55, DTE 7–30, IV term structure sanity.
-
-Exits: TP +30–60%, SL −40–50% of premium, time-stop near DTE/7.
-
-Risk: max premium/trade, max net theta/day; stagger entries over days.
-
-Validation: event-aware slices (macro prints) + stress on IV crush/gap.
-
-5) Universe & Spikes (Crypto 20–40)
-
-Selection: Bybit tickers (spot/linear) sorted by turnover; require min days listed, min turnover, and quality spread.
-
-Spike detector: rolling % change and z-score on 5m/15m; queue candidates; allocate exploration slots to avoid missing 20–70% moves.
-
-Rate-safe data: use WebSockets for prices; REST for metadata/universe refresh.
-
-6) Learning: ML & RL
-ML (Strategy Generator → Candidate Factory)
-
-Space: from simple (RSI/EMA/SMA/ATR/BB/Fib) to complex (stacked ensembles, gradient boosting, light NN).
-
-Labeling: triple-barrier with SL/TP/time; meta-labeling for filter.
-
-Search: grid/random/Bayesian + DEAP (genetic) over: RSI window/levels, EMA fast/slow, ATR mult, TP ladders, time-stops, entry filters, session filters.
-
-Shortlisting: top-K by online paper metrics (PF, Sharpe, MaxDD, win% over last N trades).
-
-RL (Per-asset Policies)
-
-Observations: price returns, RSI/MFI/EMA/ATR/BB width, spread, depth proxies, regime flags.
-
-Actions: {hold/buy/sell/flat, size bucket, SL/TP preset bucket, (futures) leverage bucket}.
-
-Rewards: +k × risk-adjusted P&L; penalties for MaxDD/large adverse excursion; bonus on TP hits; small exploration bonus with hard budget guard.
-
-Explore/exploit: enforced 2:1 conservative:exploratory trade mix per candidate (configurable).
-
-Persistence: replay buffers & checkpoints per asset; OPE used in validation.
-
-7) Validation (Online-preferred) & Gates
-
-Phase-1 (online): Each candidate must close ≥100 paper trades on live feed with SL/TP.
-
-Phase-2 (offline): Event-driven backtest; walk-forward with purge+embargo; stress: MC reorder, ±param shocks, slippage/latency shocks; OPE for RL.
-
-Promotion gate (defaults; per-asset overrideable):
-
-PF ≥ 1.5, Sharpe ≥ 2.0, MaxDD ≤ 15%, CVaR(5%) within bound.
-
-Broker-truth reconciliation difference ≤ tolerance (fees/slippage sanity).
-
-No open risk alerts/flags.
-
-8) Risk, Sizing, Exposure
-
-Sizing (all assets):
-
-position_size = (equity_alloc * risk_fraction * signal_weight) / (sl_distance * price)
-
-
-risk_fraction tiered by drawdown/equity; futures/options use lower bands.
-
-signal_weight: weak 0.5 / base 1.0 / strong 1.5 (from model confidence/ensemble vote).
-
-Mandatory SL/TP: server-side where possible (Bybit trading-stop; IBKR brackets).
-
-Caps: per-strategy, per-asset, per-portfolio; correlation; max concurrent; daily realized loss cap; leverage caps (futures/options).
-
-Drawdown throttling: auto reduce risk_fraction as DD grows; restore slowly on recovery.
-
-9) Bybit Unified Wallet Splits (software-enforced)
-
-Allocations: e.g., { spot: 900, futures: 100, forex: 0, options: 0 } USD.
-
-Enforcement: engines read only their equity_alloc; reject/resize orders that exceed alloc or caps.
-
-PnL domains: PnL for futures stays in futures alloc; spot PnL stays in spot alloc; unified wallet is the broker source of truth.
-
-Reconciliation: periodic and on events; if discrepancy > tolerance, raise broker_desync flag, pause new entries for that engine until resolved.
-
-Dynamic reallocation: UI/Telegram increments of $100; immediate effect.
-
-10) UI (FastAPI)
-
-Top row: two horizontal charts (Paper, Live). Each chart: 4 lines (Spot/Futures/Forex/Options) + mode total in header.
-
-Per asset & mode panel:
-
-Balances: Total / Available / Used; Reward Points.
-
-Open Positions: Time Open, Side, Amount, Entry, Live Price, P&L $, P&L %.
-
-History: Time Open/Close, Side, Amount, Entry/Exit, P&L $, P&L %, New Balance After Trade.
-
-Sortable, collapsible (accordion), pagination; prices update via WS/polled throttling.
-
-Side buttons: Total / Paper / Live per asset; Open Validation Report; Set Flag (hold/kill) per strategy; Toggle Live; Reallocate +$100.
-
-11) Broker Limits & Reliability
-
-IBKR: throttle to ≤50 req/sec; queue historical requests; reconnect/re-subscribe on nightly resets; all exits via brackets.
-
-Bybit: prefer WebSocket for ticks; REST for order ops; SL/TP via trading-stop; universe via tickers/instruments.
-
-Order idempotency: client_order_id & dedup to avoid double placements on retries.
-
-12) Session Rules (Paper)
-
-Start: $1,000, 0 reward points.
-
-Auto top-up +$1,000 when equity ≤ $10 (log new paper_epoch).
-
-Resume open paper trades on restart; do not re-enter on duplicate signals.
-
-In-progress strategies (e.g., 20/100) continue across restarts.
-
-13) What Qualifies as a “Real” Strategy
-
-Must specify: universe/timeframes; explicit entry rules; explicit exit rules (SL/TP/time-stop/trailing); position sizing; risk caps; parameter ranges (for ML search); validation plan & metrics.
-
-Not allowed: trivial fixed-price triggers without SL/TP/sizing.
-
-Must be deterministic given inputs & params (RL policy determinism at inference is acceptable with fixed seeds/epsilon).
-
-14) Module Names (final)
-tradingbot/
-  main.py
-  core/
-    app_runtime.py
-    config_manager.py
-    data_manager.py
-    symbol_universe.py
-    budget_manager.py
-    risk_manager.py
-    exposure_manager.py
-    order_router.py
-    sl_tp_manager.py
-    pnl_reconciler.py
-    session_manager.py
-    diff_engine.py
-    audit_logger.py
-    exploration_manager.py        # NEW: candidate rotation, fairness, quotas
-    strategy_registry.py          # NEW: lifecycle, states, flags, reasons
-    strategy_scheduler.py         # NEW: per-asset scheduling of entries
-    bankroll_manager.py           # NEW: paper top-ups, epoch logging
-  brokers/
-    bybit_client.py
-    ibkr_client.py
-    broker_common.py
-  learning/
-    features/
-      indicator_pipeline.py
-      feature_store.py
-    ml/
-      strategy_generator.py
-      train_ml_model.py
-      predict_ml_model.py
-      hyperopt_ml.py
-    rl/
-      env_common.py
-      env_spot.py
-      env_futures.py
-      env_forex.py
-      env_options.py
-      train_rl_agent.py
-      policy_manager.py
-      ope_evaluator.py
-  validation/
-    online_validator.py
-    backtester.py
-    walkforward.py
-    stress_tests.py
-    promotion_gate.py
-    report_builder.py
-  ui/
-    api_server.py
-    dashboard.py
-    components.py
-  notifications/
-    telegram_bot.py
-  config/
-    assets.json
-    risk.json
-    ml_search.json
-    rl_config.json
-    exploration.json              # NEW
-    session.json                  # NEW
-  tests/
-    ...
-
-15) Example Config Snippets
-
-config/assets.json
-
-{
-  "allocations_usd": { "spot": 900, "futures": 100, "forex": 0, "options": 0 },
-  "crypto_universe": { "target_count": 30, "refresh_minutes": 15, "category": "spot" }
-}
-
-
-config/risk.json
-
-{
-  "spot":   { "risk_fraction_min": 0.0025, "risk_fraction_max": 0.0075, "daily_loss_cap_pct": 0.03, "max_concurrent": 6 },
-  "futures":{ "risk_fraction_min": 0.0015, "risk_fraction_max": 0.0050, "daily_loss_cap_pct": 0.02, "leverage_cap": 5, "use_mark_for_sl_tp": true, "max_concurrent": 3 },
-  "forex":  { "risk_fraction_min": 0.0010, "risk_fraction_max": 0.0040, "daily_loss_cap_pct": 0.02, "max_concurrent": 4 },
-  "options":{ "max_premium_per_trade_usd": 50, "theta_cap_usd_per_day": 20, "daily_loss_cap_pct": 0.02, "max_concurrent": 3 }
-}
-
-
-config/exploration.json
-
-{
-  "per_asset": {
-    "spot":    { "active_candidates": 6, "min_trades_to_validate": 100, "priority_boost_under_trades": 40 },
-    "futures": { "active_candidates": 6, "min_trades_to_validate": 100, "priority_boost_under_trades": 40 },
-    "forex":   { "active_candidates": 4, "min_trades_to_validate": 100, "priority_boost_under_trades": 40 },
-    "options": { "active_candidates": 4, "min_trades_to_validate": 100, "priority_boost_under_trades": 40 }
+  "per_trade_risk_pct": {                   // base risk % (below % sizing threshold)
+    "crypto_spot": 0.02,                    // 2% of asset budget
+    "crypto_futures": 0.01,                 // 1%
+    "forex": 0.005,                         // 0.5%
+    "options": 0.01                         // 1% (premium-based)
   },
-  "rotation": "round_robin_with_boost",
-  "max_trades_per_hour_per_candidate": 12,
-  "cooldown_seconds_after_trade": 30
-}
 
+  "percent_sizing_threshold_usd": 1000,     // NEW: above this, switch to percentage sizing
+  "percent_sizing_above_threshold": {       // fraction of asset equity/budget per trade once >$1k
+    "crypto_spot": 0.0075,                  // 0.75% (compounding)
+    "crypto_futures": 0.005,                // 0.50%
+    "forex": 0.0035,                        // 0.35%
+    "options": 0.005                        // 0.50% (premium)
+  },
 
-config/session.json
+  "profit_rollover": true,                  // realized PnL adds to the SAME asset budget on close
+  "enforce_wallet_available": true,         // block orders if broker 'available' < notional
+  "max_concurrent": 5,                      // per asset/mode
+  "cooldown_seconds": 900,                  // optional cool-down after risk events
 
-{
-  "paper": {
-    "start_equity_usd": 1000,
-    "auto_topup_threshold_usd": 10,
-    "auto_topup_amount_usd": 1000,
-    "log_epoch": true
+  "scale": {                                // equity-curve based risk multiplier (compounding)
+    "enabled": true,
+    "equity_curve_window_days": 7,
+    "ladder": [
+      { "profit_usd":  200, "risk_multiplier": 1.20 },
+      { "profit_usd":  500, "risk_multiplier": 1.50 },
+      { "profit_usd": 1000, "risk_multiplier": 2.00 }
+    ]
+  },
+
+  "leverage_caps": {                        // soft caps; router also respects venue limits
+    "crypto_spot": 1,
+    "crypto_futures": 3,
+    "forex": 10,
+    "options": 1                             // measured by premium notional
   }
 }
 
-16) Deterministic P&L and Broker Truth
 
-Reconciliation loop (per fill/interval): pull fills/positions from Bybit/IBKR; recompute P&L & fees; if divergence > tolerance → raise broker_desync flag; halt new entries for that asset until reconciled.
+Budgets never “cross-bleed.” Profit from Forex increases Forex budget (if profit_rollover=true). Options budget is unaffected unless you later choose to add a “shared pool.”
 
-No synthetic fills: paper trades only at current timestamps with real tick/quote data; no back-dated execution.
+Position Sizing (with numbers)
 
-17) Continuous Improvement (never idle)
+We compute a per-order notional cap. Let:
 
-Exploration Manager always keeps target active candidates per asset.
+A = asset (e.g., forex)
 
-On validate/promote/reject, it immediately backfills the slot with a new candidate from strategy_generator (ML) or a mutated RL/ML variant.
+B_A = asset’s current budget (USD; includes rollover if enabled)
 
-No global stop after some count; exploration is perpetual.
+r_A = per_trade_risk_pct[A]
+
+m_A = risk multiplier from equity ladder (clamped 0.5–5.0)
+
+P = current price from quote snapshot (≤2s old)
+
+T = percent_sizing_threshold_usd (default 1000)
+
+q_A = percent_sizing_above_threshold[A] (fraction of B_A)
+
+Base cap (below threshold)
+
+BaseCapUSD = B_A × r_A × m_A
+if BaseCapUSD <= T:
+    NotionalCap = BaseCapUSD
+
+
+% sizing (above threshold)
+
+PercentCapUSD = max(T, B_A × q_A × m_A)
+if BaseCapUSD > T:
+    NotionalCap = PercentCapUSD
+
+
+Quantity cap
+
+QtyCap = NotionalCap / P
+(round to venue min/step; respect leverage caps)
+
+
+Wallet hard stop
+If broker available < NotionalCap, clamp to available or reject (per venue rules and your enforce_wallet_available).
+
+Example (Forex)
+
+Budget B_A = $7,000, r_A=0.5%, q_A=0.35%, profit ladder → m_A=1.5
+
+BaseCapUSD = 7000×0.005×1.5 = $52.5 → below $1,000, so use BaseCapUSD early in growth
+
+Later, as budget grows: B_A = $50,000
+
+BaseCapUSD = 50,000×0.005×1.5 = $375 (still < 1000)
+
+But you want compounding: once a trade would exceed $1,000, switch:
+
+PercentCapUSD = max(1000, 50,000×0.0035×1.5) = max(1000, 262.5) = 1000
+
+As budget keeps growing, PercentCapUSD scales proportionally (e.g., at $150k → 150,000×0.0035×1.5= $787.5 ⇒ cap = $1000 still; adjust q_A upwards if you want faster compounding).
+
+Tune q_A by asset to control compounding speed. Keep m_A conservative until live metrics prove stability.
+
+Risk Management & Guardrails
+
+Max concurrent positions: max_concurrent per asset/mode.
+
+Leverage caps: as per leverage_caps (router also respects venue rules).
+
+Cool-down: optional; bot pauses fresh entries for cooldown_seconds after a risk event (e.g., daily loss cap breach—add this rule if you want).
+
+Drawdown-aware RL reward: penalize actions that increase drawdown; inertia penalty for rapid flips.
+
+Venue constraints: no short on spot; min qty/tick; leverage & margin rules.
+
+Sessions & Regimes (when strategies are allowed to trade)
+
+We characterize sessions (UTC):
+
+Asian: 23:00–07:00
+
+EU: 07:00–15:00
+
+US: 13:00–21:00
+(Overlaps are expected; rules evaluate in priority order or “any that match.”)
+
+We classify regimes:
+
+Trending up/down: ADX ≥ 20 and 50-EMA slope magnitude above threshold (e.g., |slope| ≥ 0.02% per bar)
+
+Ranging: ADX < 18 and |slope| small; Bollinger band width below percentile threshold
+
+High-vol: Realized Vol or ATR in top 20% of rolling window
+
+Per-strategy allowlist (saved in strategies.json by Validation Manager):
+
+{
+  "strategy_id": "sma_cross_01",
+  "allowed_assets": ["forex", "crypto_spot"],
+  "allowed_sessions": ["ASIA", "EU"],          // disallow "US" if backtests show degradation
+  "allowed_regimes": ["TREND_UP", "TREND_DOWN"],
+  "disallowed_regimes": ["RANGE", "HIGH_VOL"],
+  "notes": "Works best on Asian/EU trend; avoid US high-vol chop."
+}
+
+
+At runtime, the router asks: session OK? regime OK? asset OK?
+If not, do not trade (or route to paper).
+
+Training
+ML (indicator-supervised)
+
+Models: XGBoost/LightGBM (probabilities), Logistic baseline
+
+Features: multi-TF EMA/RSI/ATR/ADX/MACD/BB/OBV, volume deltas, spread/imbalance, regime flags
+
+Labels: sign(next return) or return quantiles
+
+Validation: walk-forward (train 4w → test 1w rolling)
+
+Routing: only enable in sessions & regimes where it passed validation
+
+Promotion gates (paper → candidate)
+
+≥ 100 closed paper trades
+
+Sharpe ≥ 1.0, Max DD ≤ 8%, Win-rate ≥ 52%
+
+Meets gates in the allowed sessions/regimes specifically
+
+RL (PPO default; add 2nd model later)
+
+State: recent OHLCV + indicators + exposure & unrealized PnL + budget usage + session/regime flags + venue limits
+
+Actions: {flat, long, short} × {0, 0.5×, 1.0× of suggested size}
+
+Reward:
+ΔPnL − α·DD − β·fees − γ·budget_violation − δ·flip_cost
+Suggested starting: α=2.0, β=1.0, γ=5.0, δ=0.2 (tune per asset)
+
+Action masking: disallow budget/venue-violating actions at the environment level
+
+Sessions/regimes: policy only acts when allowed (else environment returns “no-op”)
+
+Live evaluation & refinement
+
+Online metrics on rolling windows; if Sharpe < 0 or DD > 2× spec over N trades, automatically:
+
+halve risk multiplier m_A (or switch to paper),
+
+flag re-train task with the latest data slice,
+
+keep trading only in the sessions/regimes where it still passes gates.
+
+Verification & Validation Manager
+
+Quote snapshots: every order captures a snapshot ID (bid/ask/last, ts ≤ 2s).
+→ Paper fills must use this snapshot; live fills come from broker.
+→ Bot cannot invent trades/time/price.
+
+Backtests are session/regime-aware: a strategy is only approved for the contexts where it passed gates.
+
+Promotion gates (live)
+
+First month: Sharpe ≥ 0.8, Max DD ≤ 12%, Win-rate ≥ 50%
+
+Must hold within approved sessions/regimes
+
+If violated: degrade to paper, reduce m_A, or pause asset
+
+Trading Flow
+
+Paper
+
+Strategy signal (ML prob > threshold or RL action) → session/regime check
+
+Sizing: compute NotionalCap; switch to % sizing above $1,000
+
+Quote snapshot (≤2s), attach snapshot ID
+
+Guardrails: budget, wallet available, positions, leverage, cool-down
+
+Paper fill with snapshot price; log to state/paper/trades_{asset}.jsonl
+
+On close: update history, metrics; if profit_rollover=true, add realized PnL to same asset budget
+
+Live
+1–4 as above → broker order with idempotent client_order_id
+5. If broker unreachable: no backfill; retry only if signal still holds on reconnect
+6. Live fills ingested to state/live/{broker}/trades_{asset}.jsonl
+7. Close → update budgets if profit_rollover=true
+
+UI
+
+Wallet tab: Budget (B_A), Wallet available, Usable now = min(remaining budget, wallet available)
+
+History tab: 8 tables (asset × mode), sortable/filterable (symbol/strategy/date); totals row (PnL, fees, win-rate, expectancy)
+
+Strategies tab: read-only cards with params, trades_used, Sharpe, win-rate, avg trade, approval/review status, allowed sessions/regimes
+
+Training tab: start/stop ML & RL
+
+Live slider: modal confirmation; visible “LIVE ENABLED” banner per asset
+
+Charts: equity curve per asset/mode; budget overlay; trade markers
+
+Sizing hint: show suggested position size near order controls
+
+Defaults (you can tune)
+Asset	Base Risk (r_A)	% Above $1k (q_A)	Max Leverage	Max Positions	Notes
+crypto_spot	2.00%	0.75%	1×	5	No shorting; tick/step per symbol
+crypto_futures	1.00%	0.50%	3×	5	Start low leverage; expand only after live success
+forex (IBKR)	0.50%	0.35%	10×	5	Respect IBKR margin & lot sizes
+options (IBKR)	1.00%	0.50%	1× (premium)	3–5	Count premium notional for sizing
+
+Equity ladder multipliers (7-day PnL): +$200 → ×1.2, +$500 → ×1.5, +$1000 → ×2.0 (clamped 0.5–5.0)
+
+Promotion gates (paper → candidate): ≥100 trades, Sharpe ≥ 1.0, Max DD ≤ 8%, Win-rate ≥ 52% (within approved sessions/regimes)
+Live gates (first month): Sharpe ≥ 0.8, Max DD ≤ 12%, Win-rate ≥ 50%
+
+Files & Directories
+
+tradingbot/state/budgets.json — budgets, risk %, % sizing threshold, ladder, caps
+
+tradingbot/state/paper/ — paper positions & trades
+
+tradingbot/state/live/{broker}/ — live trades per broker
+
+tradingbot/models/{asset}/ml|rl/ — checkpoints
+
+tradingbot/metrics/{asset}/ — training metrics (JSONL)
+
+tradingbot/logs/ — rotating JSON logs
+
+tradingbot/ui/ — dashboard, JS, templates
+
+Roadmap (next changes to code)
+
+History ingestion (live) with quote snapshots → UI 8 tables fully populated
+
+Idempotency + revalidation wired everywhere in order flow
+
+UI: live confirm modal, sizing hint, session/regime badges on strategy cards
+
+Training v1: ML XGBoost baseline + PPO with action masking, session/regime gating
+
+(Optional) Policy Registry for a second RL model in shadow/canary (e.g., SAC)
+
+## Quick Start
+
+### Prerequisites
+- Python 3.11+
+- (Optional) Node.js 18+ if you rebuild the UI
+- IBKR TWS or Gateway installed (Paper mode on port 7497 recommended for training)
+- Bybit account (testnet or live)
+
+### Setup
+```bash
+python -m venv .venv && source .venv/bin/activate  # or .\.venv\Scripts\activate on Windows
+pip install -r requirements.txt
+# (Optional) If UI requires a build: npm ci
+cp .env.example .env  # fill in your keys
+```
+
+### Run
+```bash
+# Start the UI
+python -m tradingbot.ui.app
+
+# Paper trading loop (example)
+python -m tradingbot.runtime.paper_loop --asset crypto_spot
+
+# Training (example)
+python -m tradingbot.training.ml_trainer --asset crypto_spot
+```
+
+### Tests
+```bash
+pytest -q
+```
+
+### Troubleshooting
+- **IBKR**: Paper mode uses port **7497**. If you can't run two sockets, keep training on 7497 and switch to live later.
+- **Bybit**: Use testnet mode if `BYBIT_USE_TESTNET=1`.
+- **Kill Switch**: If triggered, the system goes to close-only and prevents new orders.

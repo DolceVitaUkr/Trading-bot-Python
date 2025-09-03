@@ -45,6 +45,24 @@ except ImportError:
     trading_engine = None
     print("Trading engine not available")
 
+try:
+    from tradingbot.core import runtime_api
+except ImportError:
+    runtime_api = None
+    print("Runtime API not available")
+
+try:
+    from tradingbot.strategies import manager as strategies_manager
+except ImportError:
+    strategies_manager = None
+    print("Strategies manager not available")
+
+try:
+    from tradingbot.training import train_manager
+except ImportError:
+    train_manager = None
+    print("Training manager not available")
+
 from .routes.validation import router as validation_router
 from .routes.diff import router as diff_router
 
@@ -158,7 +176,14 @@ def create_app() -> FastAPI:
 
     @app.get("/status")
     def status():
-        return runtime.get_state()
+        state = runtime.get_state()
+        # Add health check info
+        try:
+            health_info = runtime_api.health()
+            state.update(health_info)
+        except Exception:
+            pass
+        return state
 
     
     @app.post("/live/{asset}/enable")
@@ -188,7 +213,8 @@ def create_app() -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"asset": asset.upper().strip(), "live": True, "confirmed": confirm == "LIVE"}
-@app.post("/live/{asset}/disable")
+    
+    @app.post("/live/{asset}/disable")
     def disable(asset: str):
         # Input validation
         if not asset or not asset.strip():
@@ -353,7 +379,8 @@ def create_app() -> FastAPI:
             return {"kill": True, "ts": datetime.utcnow().isoformat() + "Z"}
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"Failed to activate emergency stop: {exc}")
-@app.get("/pairs/top")
+    
+    @app.get("/pairs/top")
     async def get_top_pairs():
         """Get top trading pairs from Bybit with real-time analysis."""
         try:
@@ -969,6 +996,90 @@ def create_app() -> FastAPI:
                 }
             }
 
+    @app.get("/asset/{asset}/history")
+    def get_asset_trade_history(asset: str, mode: str = None, limit: int = 100, since: str = None):
+        """Get trade history for a specific asset."""
+        valid_assets = ['crypto', 'futures', 'forex', 'forex_options', 'crypto_spot', 'crypto_futures']
+        if asset not in valid_assets:
+            # Try mapping common names
+            asset_map = {
+                'spot': 'crypto_spot',
+                'crypto': 'crypto_spot',
+                'futures': 'crypto_futures'
+            }
+            asset = asset_map.get(asset, asset)
+            
+        try:
+            history = runtime_api.read_trade_history(asset, mode=mode, limit=limit, since=since)
+            return {
+                "asset": asset,
+                "mode": mode,
+                "count": len(history),
+                "trades": history
+            }
+        except Exception as exc:
+            return {
+                "asset": asset,
+                "mode": mode,
+                "count": 0,
+                "trades": [],
+                "error": str(exc)
+            }
+
+    @app.get("/asset/{asset}/sizing")
+    def get_position_sizing(asset: str, price: float, min_qty: float = None, step: float = None):
+        """Get position sizing recommendation for an asset at given price."""
+        valid_assets = ['crypto', 'futures', 'forex', 'forex_options', 'crypto_spot', 'crypto_futures', 'options']
+        
+        # Try mapping common names
+        asset_map = {
+            'spot': 'crypto_spot',
+            'crypto': 'crypto_spot',
+            'futures': 'crypto_futures'
+        }
+        asset = asset_map.get(asset, asset)
+        
+        try:
+            # Import budget manager functions
+            from tradingbot.core.budget_manager import position_size_cap, suggest_position_size, get_alloc_v2, _risk_multiplier
+            
+            # Get position size cap
+            cap_notional, cap_qty = position_size_cap(asset, price)
+            
+            # Get suggested size considering min_qty and step
+            suggested_qty = suggest_position_size(asset, price, min_qty, step)
+            
+            # Get current allocation and risk multiplier
+            allocation = get_alloc_v2(asset)
+            risk_mult = _risk_multiplier(asset)
+            
+            return {
+                "asset": asset,
+                "price": price,
+                "allocation_usd": allocation,
+                "risk_multiplier": risk_mult,
+                "position_cap": {
+                    "notional_usd": cap_notional,
+                    "quantity": cap_qty
+                },
+                "suggested": {
+                    "quantity": suggested_qty,
+                    "notional_usd": suggested_qty * price if price > 0 else 0
+                },
+                "parameters": {
+                    "min_qty": min_qty,
+                    "step": step
+                }
+            }
+        except Exception as exc:
+            return {
+                "asset": asset,
+                "price": price,
+                "error": str(exc),
+                "position_cap": {"notional_usd": 0, "quantity": 0},
+                "suggested": {"quantity": 0, "notional_usd": 0}
+            }
+
     @app.get("/asset/{asset}/strategies")
     def get_asset_strategies_summary(asset: str):
         """Get strategy development status for a specific asset."""
@@ -1530,6 +1641,27 @@ def create_app() -> FastAPI:
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"Failed to get analytics overview: {exc}")
     
+    @app.get("/analytics/{asset}/{mode}/equity-curve")
+    async def get_equity_curve(asset: str, mode: str, window: str = "7d"):
+        """Get equity curve data for charting."""
+        # Normalize asset name to match expected format
+        asset_map = {
+            'crypto_spot': 'crypto',
+            'crypto_futures': 'futures',
+            'forex': 'forex',
+            'options': 'forex_options'
+        }
+        asset = asset_map.get(asset, asset)
+        
+        # Import analytics manager
+        try:
+            from tradingbot.core.analytics_manager import read_equity_series
+            series_data = read_equity_series(asset, mode, window)
+            return series_data
+        except ImportError:
+            # Fallback if analytics_manager not available
+            return {"series": []}
+    
     @app.get("/rewards/{asset}/recent")
     def get_recent_rewards(asset: str):
         """Get recent reward notifications for an asset."""
@@ -1579,28 +1711,37 @@ def create_app() -> FastAPI:
     @app.get("/strategies/{asset}")
     def get_asset_strategies(asset: str):
         """Get strategies for a specific asset."""
-        valid_assets = ['crypto', 'futures', 'forex', 'forex_options']
-        if asset not in valid_assets:
-            raise HTTPException(status_code=400, detail=f"Invalid asset. Must be one of: {valid_assets}")
+        # Map old asset names to new format
+        asset_map = {
+            'crypto': 'crypto_spot',
+            'futures': 'crypto_futures',
+            'forex': 'forex',
+            'forex_options': 'options'
+        }
+        asset = asset_map.get(asset, asset)
         
+        if strategies_manager:
+            return strategies_manager.list(asset)
+        
+        # Fallback to old strategy_manager if available
         if not strategy_manager:
-            return {
-                "asset_type": asset,
-                "strategies": {},
-                "summary": {
-                    "total": 0,
-                    "developing": 0,
-                    "pending_validation": 0,
-                    "validated": 0,
-                    "live": 0,
-                    "rejected": 0
-                }
-            }
+            return []
         
         try:
-            return strategy_manager.get_strategies_by_asset(asset)
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"Failed to get strategies for {asset}: {exc}")
+            result = strategy_manager.get_strategies_by_asset(asset)
+            # Convert to new format
+            strategies = []
+            for sid, data in (result.get("strategies", {}) or {}).items():
+                strategies.append({
+                    "id": sid,
+                    "name": data.get("name", sid),
+                    "status": data.get("status", "idle"),
+                    "params": data.get("params", {}),
+                    "performance": data.get("performance", {})
+                })
+            return strategies
+        except Exception:
+            return []
     
     @app.post("/strategies/{strategy_id}/validate")
     async def validate_strategy(strategy_id: str):
@@ -1638,6 +1779,26 @@ def create_app() -> FastAPI:
                 raise HTTPException(status_code=400, detail="Strategy not eligible for live approval")
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"Failed to approve strategy {strategy_id}: {exc}")
+    
+    @app.post("/strategy/{asset}/{sid}/start")
+    def start_strategy(asset: str, sid: str):
+        """Start a strategy."""
+        if not strategies_manager:
+            raise HTTPException(status_code=501, detail="Strategy manager unavailable")
+        ok = strategies_manager.start(asset, sid)
+        if not ok:
+            raise HTTPException(status_code=400, detail="Start failed")
+        return {"ok": True}
+    
+    @app.post("/strategy/{asset}/{sid}/stop")
+    def stop_strategy(asset: str, sid: str):
+        """Stop a strategy."""
+        if not strategies_manager:
+            raise HTTPException(status_code=501, detail="Strategy manager unavailable")
+        ok = strategies_manager.stop(asset, sid)
+        if not ok:
+            raise HTTPException(status_code=400, detail="Stop failed")
+        return {"ok": True}
 
     @app.post("/asset/{asset}/clear-history")
     def clear_paper_trading_history(asset: str):
@@ -2090,6 +2251,28 @@ def create_app() -> FastAPI:
             }
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"Failed to stop {asset} {mode} trading: {exc}")
+
+    # Training endpoints
+    @app.post("/train/{asset}/{mode}/start")
+    async def __train_start(asset: str, mode: str):
+        if train_manager is None:
+            raise HTTPException(501, "training manager unavailable")
+        res = train_manager.start(asset, mode)
+        if not res.get("ok"):
+            raise HTTPException(400, res.get("reason","failed"))
+        return res
+
+    @app.post("/train/{asset}/{mode}/stop")
+    async def __train_stop(asset: str, mode: str):
+        if train_manager is None:
+            raise HTTPException(501, "training manager unavailable")
+        return train_manager.stop(asset, mode)
+
+    @app.get("/train/{asset}/status")
+    async def __train_status(asset: str):
+        if train_manager is None:
+            return {"asset": asset, "ml": {"running": False}, "rl": {"running": False}}
+        return train_manager.status(asset)
 
     return app
 

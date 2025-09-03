@@ -15,12 +15,12 @@
       "avg_win": 0.0,
       "avg_loss": 0.0,
       "development_days": 0,
-      "created_at": "2025-09-01T10:37:24.414502",
-      "last_updated": "2025-09-01T10:37:24.414502"
+      "created_at": "2025-09-01T22:53:14.771910",
+      "last_updated": "2025-09-01T22:53:14.771910"
     },
     "validation_results": null,
     "validation_reasons": null,
-    "paper_trading_start": "2025-09-01T10:37:24.414502",
+    "paper_trading_start": "2025-09-01T22:53:14.771910",
     "validation_date": null,
     "live_deployment_date": null
   },
@@ -40,12 +40,12 @@
       "avg_win": 0.0,
       "avg_loss": 0.0,
       "development_days": 0,
-      "created_at": "2025-09-01T10:37:24.416533",
-      "last_updated": "2025-09-01T10:37:24.416533"
+      "created_at": "2025-09-01T22:53:14.772953",
+      "last_updated": "2025-09-01T22:53:14.772953"
     },
     "validation_results": null,
     "validation_reasons": null,
-    "paper_trading_start": "2025-09-01T10:37:24.416533",
+    "paper_trading_start": "2025-09-01T22:53:14.772953",
     "validation_date": null,
     "live_deployment_date": null
   },
@@ -65,12 +65,12 @@
       "avg_win": 0.0,
       "avg_loss": 0.0,
       "development_days": 0,
-      "created_at": "2025-09-01T10:37:24.409632",
-      "last_updated": "2025-09-01T10:37:24.409632"
+      "created_at": "2025-09-01T22:53:14.766852",
+      "last_updated": "2025-09-01T22:53:14.766852"
     },
     "validation_results": null,
     "validation_reasons": null,
-    "paper_trading_start": "2025-09-01T10:37:24.409632",
+    "paper_trading_start": "2025-09-01T22:53:14.766852",
     "validation_date": null,
     "live_deployment_date": null
   },
@@ -90,12 +90,12 @@
       "avg_win": 0.0,
       "avg_loss": 0.0,
       "development_days": 0,
-      "created_at": "2025-09-01T10:37:24.417537",
-      "last_updated": "2025-09-01T10:37:24.417537"
+      "created_at": "2025-09-01T22:53:14.774851",
+      "last_updated": "2025-09-01T22:53:14.774851"
     },
     "validation_results": null,
     "validation_reasons": null,
-    "paper_trading_start": "2025-09-01T10:37:24.417537",
+    "paper_trading_start": "2025-09-01T22:53:14.774851",
     "validation_date": null,
     "live_deployment_date": null
   },
@@ -123,5 +123,12 @@
     "paper_trading_start": "2025-08-30T08:26:18.756970",
     "validation_date": null,
     "live_deployment_date": null
+  },
+  "strategy-1": {
+    "strategy_id": "strategy-1",
+    "asset_type": "spot",
+    "status": "running",
+    "metrics": {},
+    "last_started": "2025-09-01T21:45:08.902140Z"
   }
 }

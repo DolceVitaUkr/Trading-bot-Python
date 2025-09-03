@@ -4,3 +4,21 @@ __pycache__/
 *.pyc
 .vemv/
 .pytest_cache/
+# venv & caches
+.venv/
+.venv-*/
+*.pyc
+__pycache__/
+.cache/
+
+# logs & artifacts
+tradingbot/logs/
+artifacts/
+screenshots/
+Bot.zip
+bot.zip
+
+# local settings
+*.local.json
+*.env.local
+.env.*.local
