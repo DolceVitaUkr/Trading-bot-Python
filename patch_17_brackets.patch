@@ -1,0 +1,49 @@
+*** Begin Patch
+*** Add File: tradingbot/core/brackets.py
++from typing import Dict, Any, Optional
++
++def build_bracket(tp_price: Optional[float], sl_price: Optional[float], reduce_only: bool = True, tif: str = "GTC") -> Dict[str, Any]:
++    return {
++        "tp": tp_price,
++        "sl": sl_price,
++        "reduce_only": reduce_only,
++        "tif": tif
++    }
++
++def for_bybit(oc_extra: Dict[str, Any]) -> Dict[str, Any]:
++    if oc_extra is None: return {}
++    tp = oc_extra.get("tp") or oc_extra.get("take_profit")
++    sl = oc_extra.get("sl") or oc_extra.get("stop_loss")
++    if tp is None and sl is None:
++        return {}
++    return {"bracket": build_bracket(tp, sl, reduce_only=True)}
++
++def for_ibkr(oc_extra: Dict[str, Any]) -> Dict[str, Any]:
++    tp = oc_extra.get("tp") or oc_extra.get("take_profit")
++    sl = oc_extra.get("sl") or oc_extra.get("stop_loss")
++    if tp is None and sl is None:
++        return {}
++    return {"bracket": build_bracket(tp, sl, reduce_only=True)}
++
+*** End Patch
+*** Begin Patch
+*** Update File: tradingbot/core/live_adapters.py
+@@
+ from .loggerconfig import get_logger
+ from .rate_limits import get_bucket
++from .brackets import for_bybit, for_ibkr
+@@
+ async def bybit_submit_wrapper(adapter, oc) -> Dict[str, Any]:
+     await get_bucket("bybit","trade").acquire(1)
+-    return await adapter.submit_order(oc.symbol, oc.side, oc.qty, oc.price, **oc.extra)
++    extra = dict(oc.extra or {})
++    extra.update(for_bybit(extra))
++    return await adapter.submit_order(oc.symbol, oc.side, oc.qty, oc.price, **extra)
+@@
+ async def ibkr_submit_wrapper(adapter, oc) -> Dict[str, Any]:
+     await get_bucket("ibkr","trade").acquire(1)
+-    return await adapter.place_order(oc.extra.get('contract'), oc.side.upper(), oc.qty, oc.price, **oc.extra)
++    extra = dict(oc.extra or {})
++    extra.update(for_ibkr(extra))
++    return await adapter.place_order(oc.extra.get('contract'), oc.side.upper(), oc.qty, oc.price, **extra)
+*** End Patch

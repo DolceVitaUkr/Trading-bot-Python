@@ -1,0 +1,7 @@
+{
+  "key": "BYBIT-PERP",
+  "windows_utc": [
+    {"start": "00:00", "end": "23:59"}
+  ],
+  "holidays_utc": []
+}

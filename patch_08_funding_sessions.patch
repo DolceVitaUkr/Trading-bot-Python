@@ -1,0 +1,56 @@
+*** Begin Patch
+*** Add File: tradingbot/core/funding_accrual.py
++import time
++from typing import Dict, Any, List
++from pathlib import Path
++from .loggerconfig import get_logger
++from .order_events import emit_event
++
++log = get_logger(__name__)
++
++class FundingAccrual:
++    def __init__(self, base_dir: Path):
++        self.base_dir = base_dir
++    def accrue(self, asset: str, positions: List[Dict[str, Any]], funding_rate: float):
++        ts = time.strftime("%Y-%m-%dT%H:%M:%S")
++        for pos in positions:
++            notional = float(pos.get('qty', 0)) * float(pos.get('mark_price', pos.get('avg_price', 0)))
++            fee = notional * funding_rate
++            emit_event(self.base_dir, 'paper', asset, {
++                "event": "FUNDING_ACCRUAL", "contract_id": pos.get('contract_id'),
++                "rate": funding_rate, "amount": fee
++            })
++
+*** End Patch
+*** Begin Patch
+*** Add File: tradingbot/core/scheduler.py
++import asyncio, time
++from pathlib import Path
++from typing import Callable, Awaitable
++from .loggerconfig import get_logger
++log = get_logger(__name__)
++
++class Scheduler:
++    def __init__(self):
++        self._tasks = []
++    def every(self, seconds: int, coro_fn: Callable[[], Awaitable[None]]):
++        async def _runner():
++            while True:
++                try:
++                    await coro_fn()
++                except Exception as e:
++                    log.error(f"Scheduled task failed: {e}")
++                await asyncio.sleep(seconds)
++        self._tasks.append(asyncio.create_task(_runner()))
++    async def start(self):
++        await asyncio.gather(*self._tasks)
++
+*** End Patch
+*** Begin Patch
+*** Update File: tradingbot/core/trading_engine.py
+@@
++from .market_calendars import is_session_open
++def _session_guard(calendar_key: str) -> bool:
++    return is_session_open(calendar_key)
++
+*** End Patch

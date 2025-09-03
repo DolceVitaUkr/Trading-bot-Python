@@ -1,0 +1,16 @@
+{
+  "scalp": {
+    "timeframes": ["1m", "3m", "5m"],
+    "paper_slippage_bps": 10,
+    "cooldown_seconds": 120,
+    "risk": { "per_trade_pct": 0.01, "tp_rr": 1.0, "sl_rr": 1.0 },
+    "max_concurrent": 5
+  },
+  "swing": {
+    "timeframes": ["30m", "1h", "4h"],
+    "paper_slippage_bps": 6,
+    "cooldown_seconds": 1800,
+    "risk": { "per_trade_pct": 0.005, "tp_rr": 2.0, "sl_rr": 1.0 },
+    "max_concurrent": 3
+  }
+}

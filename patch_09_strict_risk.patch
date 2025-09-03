@@ -1,0 +1,39 @@
+*** Begin Patch
+*** Update File: tradingbot/core/risk_manager.py
+@@
++def enforce_mandatory_brackets(order: dict) -> (bool, str):
++    """Reject orders without TP/SL when STRICT_BRACKETS is enabled."""
++    strict = bool(order.get('STRICT_BRACKETS', True))
++    if not strict:
++        return True, ""
++    tp = order.get('take_profit') or order.get('tp')
++    sl = order.get('stop_loss') or order.get('sl')
++    if tp is None or sl is None:
++        return False, "TP/SL required"
++    return True, ""
++
++def check_position_limits(state: dict, max_concurrent: int) -> (bool, str):
++    open_count = int(state.get('open_positions', 0))
++    if open_count >= max_concurrent:
++        return False, "Max concurrent positions reached"
++    return True, ""
++
++def check_drawdown_limits(metrics: dict, max_drawdown_pct: float, daily_loss_cap_pct: float) -> (bool, str):
++    if float(metrics.get('max_drawdown_pct', 0)) > max_drawdown_pct:
++        return False, "Max drawdown exceeded"
++    if float(metrics.get('daily_loss_pct', 0)) > daily_loss_cap_pct:
++        return False, "Daily loss cap exceeded"
++    return True, ""
++
+*** End Patch
+*** Begin Patch
+*** Update File: .env.example
+@@
++
++# Strict brackets and risk caps
++STRICT_BRACKETS=1
++MAX_PORTFOLIO_DRAWDOWN_PCT=15
++MAX_CONCURRENT_POS=10
++DAILY_LOSS_CAP_PCT=0.75
++
+*** End Patch

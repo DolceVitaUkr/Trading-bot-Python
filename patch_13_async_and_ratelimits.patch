@@ -1,0 +1,114 @@
+*** Begin Patch
+*** Add File: tradingbot/core/settings.py
++import os
++from typing import Optional, Any
++
++def get_env(name: str, default: Optional[str] = None) -> str:
++    return os.environ.get(name, default) if os.environ.get(name) is not None else (default or "")
++
++def get_env_int(name: str, default: int) -> int:
++    try:
++        return int(get_env(name, str(default)))
++    except Exception:
++        return default
++
++def get_env_float(name: str, default: float) -> float:
++    try:
++        return float(get_env(name, str(default)))
++    except Exception:
++        return default
++
+*** End Patch
+*** Begin Patch
+*** Add File: tradingbot/core/rate_limits.py
++import asyncio, time
++from dataclasses import dataclass
++from typing import Dict, Tuple
++from .settings import get_env_float, get_env_int
++
++@dataclass
++class TokenBucket:
++    rate_per_sec: float
++    capacity: int
++    tokens: float = 0.0
++    last_ts: float = 0.0
++    def __post_init__(self):
++        self.tokens = float(self.capacity)
++        self.last_ts = time.monotonic()
++    async def acquire(self, n: int = 1):
++        while True:
++            now = time.monotonic()
++            self.tokens = min(self.capacity, self.tokens + (now - self.last_ts) * self.rate_per_sec)
++            self.last_ts = now
++            if self.tokens >= n:
++                self.tokens -= n
++                return
++            await asyncio.sleep( max(0.0, (n - self.tokens) / max(self.rate_per_sec, 1e-9)) )
++
++class RateLimitManager:
++    def __init__(self):
++        headroom = get_env_float("RATE_LIMIT_PCT", 0.9)
++        # Defaults (can be overridden by env)
++        bybit_read_rps  = get_env_int("BYBIT_READ_RPS", 8)
++        bybit_trade_rps = get_env_int("BYBIT_TRADE_RPS", 2)
++        ibkr_read_rps   = get_env_int("IBKR_READ_RPS", 3)
++        ibkr_trade_rps  = get_env_int("IBKR_TRADE_RPS", 1)
++        self.buckets: Dict[Tuple[str,str], TokenBucket] = {
++            ("bybit","read"):  TokenBucket(bybit_read_rps*headroom, max(1,int(bybit_read_rps*headroom))),
++            ("bybit","trade"): TokenBucket(bybit_trade_rps*headroom, max(1,int(bybit_trade_rps*headroom))),
++            ("ibkr","read"):   TokenBucket(ibkr_read_rps*headroom, max(1,int(ibkr_read_rps*headroom))),
++            ("ibkr","trade"):  TokenBucket(ibkr_trade_rps*headroom, max(1,int(ibkr_trade_rps*headroom))),
++        }
++    def bucket(self, venue: str, kind: str) -> TokenBucket:
++        return self.buckets[(venue, kind)]
++
++# Global manager (import and use)
++_rlm = RateLimitManager()
++def get_bucket(venue: str, kind: str) -> TokenBucket:
++    return _rlm.bucket(venue, kind)
++
+*** End Patch
+*** Begin Patch
+*** Update File: tradingbot/core/paper_execution.py
+@@
+-import random, time
++import random, asyncio
+@@
+-            delay = random.randint(self.min_latency_ms, self.max_latency_ms) / 1000.0
+-            time.sleep(delay)
++            delay = random.randint(self.min_latency_ms, self.max_latency_ms) / 1000.0
++            await asyncio.sleep(delay)
+*** End Patch
+*** Begin Patch
+*** Update File: tradingbot/core/live_adapters.py
+@@
+-from .loggerconfig import get_logger
++from .loggerconfig import get_logger
++from .rate_limits import get_bucket
+@@
+-async def bybit_submit_wrapper(adapter, oc) -> Dict[str, Any]:
++async def bybit_submit_wrapper(adapter, oc) -> Dict[str, Any]:
++    await get_bucket("bybit","trade").acquire(1)
+     return await adapter.submit_order(oc.symbol, oc.side, oc.qty, oc.price, **oc.extra)
+@@
+-async def ibkr_submit_wrapper(adapter, oc) -> Dict[str, Any]:
++async def ibkr_submit_wrapper(adapter, oc) -> Dict[str, Any]:
++    await get_bucket("ibkr","trade").acquire(1)
+     return await adapter.place_order(oc.extra.get('contract'), oc.side.upper(), oc.qty, oc.price, **oc.extra)
+*** End Patch
+*** Begin Patch
+*** Update File: .env.example
+@@
++# Rate limits (headroom applied via RATE_LIMIT_PCT)
++RATE_LIMIT_PCT=0.9
++BYBIT_READ_RPS=8
++BYBIT_TRADE_RPS=2
++IBKR_READ_RPS=3
++IBKR_TRADE_RPS=1
++
++# IBKR connection defaults (live TWS/Gateway; paper still routes to simulator)
++IBKR_HOST=127.0.0.1
++IBKR_PORT=7496
++IBKR_CLIENT_ID=2
++BASE_CCY=USD
+*** End Patch

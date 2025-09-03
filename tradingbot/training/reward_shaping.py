@@ -1,0 +1,2 @@
+def compute_reward(pnl: float, drawdown: float, fees: float, exposure: float,                   alpha: float = 2.0, beta: float = 1.0, gamma: float = 5.0, delta: float = 0.2) -> float:
+    return pnl - alpha * drawdown - beta * fees - gamma * max(0.0, exposure - 1.0) - delta * abs(pnl) * exposure

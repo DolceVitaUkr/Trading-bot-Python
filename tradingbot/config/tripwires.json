@@ -1,0 +1,7 @@
+{
+  "daily_loss_cap_pct": 0.75,
+  "max_drawdown_cap_pct": 15.0,
+  "max_consecutive_losses": 5,
+  "max_reject_rate_pct": 5.0,
+  "max_slippage_multiplier": 2.0
+}

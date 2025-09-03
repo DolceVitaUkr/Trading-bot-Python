@@ -433,5 +433,31 @@ class RiskManager:
                      f"Daily Loss=${metrics.daily_loss:.2f}")
 
 
+def enforce_mandatory_brackets(order: dict) -> (bool, str):
+    """Reject orders without TP/SL when STRICT_BRACKETS is enabled."""
+    strict = bool(order.get('STRICT_BRACKETS', True))
+    if not strict:
+        return True, ""
+    tp = order.get('take_profit') or order.get('tp')
+    sl = order.get('stop_loss') or order.get('sl')
+    if tp is None or sl is None:
+        return False, "TP/SL required"
+    return True, ""
+
+def check_position_limits(state: dict, max_concurrent: int) -> (bool, str):
+    open_count = int(state.get('open_positions', 0))
+    if open_count >= max_concurrent:
+        return False, "Max concurrent positions reached"
+    return True, ""
+
+def check_drawdown_limits(metrics: dict, max_drawdown_pct: float, daily_loss_cap_pct: float) -> (bool, str):
+    if float(metrics.get('max_drawdown_pct', 0)) > max_drawdown_pct:
+        return False, "Max drawdown exceeded"
+    if float(metrics.get('daily_loss_pct', 0)) > daily_loss_cap_pct:
+        return False, "Daily loss cap exceeded"
+    return True, ""
+
+# Optional: tighter risk haircuts when DTE < 3 (see futures_lifecycle).
+
 # Module initialization
 risk_manager = RiskManager()

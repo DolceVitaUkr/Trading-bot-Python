@@ -1,4 +1,29 @@
 {
+  "strict_paper_strategy_crypto": {
+    "strategy_id": "strict_paper_strategy_crypto",
+    "asset_type": "crypto",
+    "status": "developing",
+    "metrics": {
+      "total_trades": 1,
+      "winning_trades": 0,
+      "losing_trades": 0,
+      "win_rate": 0.0,
+      "total_pnl": 0.0,
+      "max_drawdown": 0.0,
+      "sharpe_ratio": 0.0,
+      "profit_factor": 0.0,
+      "avg_win": 0.0,
+      "avg_loss": 0.0,
+      "development_days": 0,
+      "created_at": "2025-09-03T02:13:44.688779",
+      "last_updated": "2025-09-03T02:13:44.688779"
+    },
+    "validation_results": null,
+    "validation_reasons": null,
+    "paper_trading_start": "2025-09-03T02:13:44.688779",
+    "validation_date": null,
+    "live_deployment_date": null
+  },
   "strict_paper_strategy_futures": {
     "strategy_id": "strict_paper_strategy_futures",
     "asset_type": "futures",
@@ -15,12 +40,12 @@
       "avg_win": 0.0,
       "avg_loss": 0.0,
       "development_days": 0,
-      "created_at": "2025-09-01T22:53:14.771910",
-      "last_updated": "2025-09-01T22:53:14.771910"
+      "created_at": "2025-09-03T02:13:44.694679",
+      "last_updated": "2025-09-03T02:13:44.694679"
     },
     "validation_results": null,
     "validation_reasons": null,
-    "paper_trading_start": "2025-09-01T22:53:14.771910",
+    "paper_trading_start": "2025-09-03T02:13:44.694679",
     "validation_date": null,
     "live_deployment_date": null
   },
@@ -40,37 +65,12 @@
       "avg_win": 0.0,
       "avg_loss": 0.0,
       "development_days": 0,
-      "created_at": "2025-09-01T22:53:14.772953",
-      "last_updated": "2025-09-01T22:53:14.772953"
+      "created_at": "2025-09-03T02:13:44.697157",
+      "last_updated": "2025-09-03T02:13:44.697157"
     },
     "validation_results": null,
     "validation_reasons": null,
-    "paper_trading_start": "2025-09-01T22:53:14.772953",
-    "validation_date": null,
-    "live_deployment_date": null
-  },
-  "strict_paper_strategy_crypto": {
-    "strategy_id": "strict_paper_strategy_crypto",
-    "asset_type": "crypto",
-    "status": "developing",
-    "metrics": {
-      "total_trades": 1,
-      "winning_trades": 0,
-      "losing_trades": 0,
-      "win_rate": 0.0,
-      "total_pnl": 0.0,
-      "max_drawdown": 0.0,
-      "sharpe_ratio": 0.0,
-      "profit_factor": 0.0,
-      "avg_win": 0.0,
-      "avg_loss": 0.0,
-      "development_days": 0,
-      "created_at": "2025-09-01T22:53:14.766852",
-      "last_updated": "2025-09-01T22:53:14.766852"
-    },
-    "validation_results": null,
-    "validation_reasons": null,
-    "paper_trading_start": "2025-09-01T22:53:14.766852",
+    "paper_trading_start": "2025-09-03T02:13:44.697157",
     "validation_date": null,
     "live_deployment_date": null
   },
@@ -90,45 +90,13 @@
       "avg_win": 0.0,
       "avg_loss": 0.0,
       "development_days": 0,
-      "created_at": "2025-09-01T22:53:14.774851",
-      "last_updated": "2025-09-01T22:53:14.774851"
+      "created_at": "2025-09-03T02:13:44.699608",
+      "last_updated": "2025-09-03T02:13:44.699608"
     },
     "validation_results": null,
     "validation_reasons": null,
-    "paper_trading_start": "2025-09-01T22:53:14.774851",
+    "paper_trading_start": "2025-09-03T02:13:44.699608",
     "validation_date": null,
     "live_deployment_date": null
-  },
-  "strict_paper_strategy_crypto_futures": {
-    "strategy_id": "strict_paper_strategy_crypto_futures",
-    "asset_type": "crypto_futures",
-    "status": "developing",
-    "metrics": {
-      "total_trades": 0,
-      "winning_trades": 0,
-      "losing_trades": 0,
-      "win_rate": 0.0,
-      "total_pnl": 0.0,
-      "max_drawdown": 0.0,
-      "sharpe_ratio": 0.0,
-      "profit_factor": 0.0,
-      "avg_win": 0.0,
-      "avg_loss": 0.0,
-      "development_days": 0,
-      "created_at": "2025-08-30T08:26:18.756970",
-      "last_updated": "2025-08-30T08:26:18.756970"
-    },
-    "validation_results": null,
-    "validation_reasons": null,
-    "paper_trading_start": "2025-08-30T08:26:18.756970",
-    "validation_date": null,
-    "live_deployment_date": null
-  },
-  "strategy-1": {
-    "strategy_id": "strategy-1",
-    "asset_type": "spot",
-    "status": "running",
-    "metrics": {},
-    "last_started": "2025-09-01T21:45:08.902140Z"
   }
 }

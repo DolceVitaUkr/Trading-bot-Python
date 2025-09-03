@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Body
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse
@@ -2273,6 +2273,22 @@ def create_app() -> FastAPI:
         if train_manager is None:
             return {"asset": asset, "ml": {"running": False}, "rl": {"running": False}}
         return train_manager.status(asset)
+
+    # Add runtime flags imports
+    from pathlib import Path
+    from tradingbot.core.runtime_flags import get_flags, set_kill_switch, set_close_only
+
+    @app.get("/admin/runtime_status")
+    def runtime_status():
+        return get_flags()
+
+    @app.post("/admin/kill_switch")
+    def runtime_kill_switch(on: bool = Body(..., embed=True)):
+        return set_kill_switch(on)
+
+    @app.post("/admin/close_only")
+    def runtime_close_only(on: bool = Body(..., embed=True)):
+        return set_close_only(on)
 
     return app
 

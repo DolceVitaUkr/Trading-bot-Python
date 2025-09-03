@@ -1,0 +1,93 @@
+*** Begin Patch
+*** Add File: tradingbot/core/fx_converter.py
++from typing import Optional
++import os
++
++BASE_CCY = os.environ.get("BASE_CCY", "USD").upper()
++
++def get_rate(pair: str) -> Optional[float]:
++    """Stub for FX rate lookup. Replace with IBKR quotes.
+    Returns None if unknown.
+    """
++    return None
++
++def convert_value(amount: float, ccy: str, base: str = BASE_CCY) -> float:
++    ccy = (ccy or base).upper()
++    base = (base or BASE_CCY).upper()
++    if ccy == base:
++        return float(amount)
++    pair = f"{ccy}.{base}"  # IBKR-style, e.g., EUR.USD
++    rate = get_rate(pair)
++    if rate is None or rate <= 0:
++        return float(amount)  # fallback: no conversion
++    return float(amount) * rate
++
+*** End Patch
+*** Begin Patch
+*** Add File: tradingbot/core/paper_portfolio.py
++from typing import Dict, Any
++from .loggerconfig import get_logger
++log = get_logger(__name__)
++
++def apply_option_expiry_effects(position: Dict[str, Any], underlying_last: float) -> Dict[str, Any]:
++    """Return delta changes to apply to portfolio on option expiry (paper).
+
++    Caller is responsible for mutating paper state using this delta.
+    """
++    right = str(position.get('right','C')).upper()
++    qty = float(position.get('qty',0))
++    strike = float(position.get('strike',0))
++    side = str(position.get('side','BUY')).upper()
++    mult = float(position.get('multiplier', position.get('extra',{}).get('multiplier', 100)))
++    intrinsic = max(0.0, underlying_last - strike) if right=='C' else max(0.0, strike - underlying_last)
++    underlying_qty_delta = 0.0
++    cash_delta = 0.0
++    if intrinsic > 0:
++        if side == 'BUY':
++            underlying_qty_delta = qty if right=='C' else -qty
++            cash_delta = -intrinsic * abs(qty) * mult
++        else:  # SOLD option assigned
++            underlying_qty_delta = -qty if right=='C' else qty
++            cash_delta = intrinsic * abs(qty) * mult
++    return {
++        "underlying_qty_delta": underlying_qty_delta,
++        "cash_delta": cash_delta,
++        "intrinsic": intrinsic
++    }
++
+*** End Patch
+*** Begin Patch
+*** Update File: tradingbot/core/options_lifecycle.py
+@@
+ from .loggerconfig import get_logger
+ from .order_events import emit_event
++from .paper_portfolio import apply_option_expiry_effects
++from .fx_converter import convert_value
+@@
+     def handle_expiry(self, asset: str, position: Dict[str, Any], underlying_last: float, itm_threshold: float = 0.01):
+@@
+-        if intrinsic_pct >= itm_threshold and intrinsic > 0:
++        if intrinsic_pct >= itm_threshold and intrinsic > 0:
+             # ITM: exercise/assignment simulation
+             if side == 'BUY':
+                 emit_event(self.base_dir, 'paper', asset, {
+                     "event": "EXERCISE", "contract_id": cid, "strike": strike, "right": right,
+                     "qty": qty, "underlying_qty_delta": qty if right=='C' else -qty
+                 })
+             else:
+                 emit_event(self.base_dir, 'paper', asset, {
+                     "event": "ASSIGNMENT", "contract_id": cid, "strike": strike, "right": right,
+                     "qty": qty, "underlying_qty_delta": -qty if right=='C' else qty
+                 })
++            # Portfolio delta (paper)
++            delta = apply_option_expiry_effects(position, underlying_last)
++            emit_event(self.base_dir, 'paper', asset, {
++                "event": "PORTFOLIO_ADJUSTMENT", "contract_id": cid, **delta
++            })
+*** End Patch
+*** Begin Patch
+*** Update File: tradingbot/core/budget_manager.py
+@@
++# NOTE: For IBKR multi-currency valuation, see tradingbot/core/fx_converter.py to roll PnL/budgets into BASE_CCY.
++
+*** End Patch

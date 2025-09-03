@@ -1,0 +1,41 @@
+--- a/tradingbot/core/exchange_conformance.py
++++ b/tradingbot/core/exchange_conformance.py
+@@ -0,0 +1,38 @@
++from dataclasses import replace
++from typing import Dict, Any
++from .loggerconfig import get_logger
++log = get_logger(__name__)
++
++def _snap(value: float, step: float) -> float:
++    if step is None or step == 0: return value
++    return round((value / step)) * step
++
++def clamp_order_if_needed(oc):
++    """
++    Best-effort clamp for qty/price against known increments.
++    Looks for tick/step in oc.extra or contract metadata.
++    """
++    extra = oc.extra or {}
++    tick = extra.get('tick_size') or extra.get('tickSize')
++    step = extra.get('step_size') or extra.get('stepSize')
++    min_notional = extra.get('min_notional') or extra.get('minNotional')
++    price = oc.price
++    qty = oc.qty
++    changed = False
++    if price is not None and tick:
++        new_price = _snap(price, float(tick))
++        if new_price != price:
++            price = new_price; changed = True
++    if step:
++        new_qty = _snap(qty, float(step))
++        if new_qty != qty:
++            qty = new_qty; changed = True
++    if min_notional and price is not None:
++        if qty * price < float(min_notional):
++            # Bump qty up to minimum
++            required = float(min_notional) / max(price, 1e-12)
++            qty = required; changed = True
++    if changed:
++        log.info(f"CLAMP {oc.symbol}: qty {oc.qty}->{qty}, price {oc.price}->{price}")
++        oc = replace(oc, qty=qty, price=price)
++    return oc

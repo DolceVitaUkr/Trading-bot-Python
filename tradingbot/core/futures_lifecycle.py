@@ -1,0 +1,57 @@
+import datetime as dt
+from typing import Optional, Dict, Any
+from .loggerconfig import get_logger
+from .market_calendars import is_session_open
+from .order_events import emit_event
+from pathlib import Path
+log = get_logger(__name__)
+
+class FuturesLifecycle:
+    def __init__(self, env, catalog, base_dir: Path):
+        self.env = env
+        self.catalog = catalog
+        self.base_dir = base_dir
+
+    def _days_to_expiry(self, contract_id: str) -> Optional[int]:
+        meta = self.catalog.find(contract_id)
+        if not meta or not meta.get('expiry'):
+            return None
+        expiry = dt.datetime.fromisoformat(meta['expiry'].replace('Z','+00:00'))
+        now = dt.datetime.utcnow().replace(tzinfo=dt.timezone.utc)
+        return (expiry - now).days
+
+    def allow_open(self, contract_id: str, min_dte: int) -> (bool, str):
+        dte = self._days_to_expiry(contract_id)
+        if dte is None:
+            return True, ""
+        if dte < min_dte:
+            return False, f"DTE {dte} < min {min_dte}"
+        return True, ""
+
+    async def maybe_roll(self, asset: str, position: Dict[str, Any], roll_dte: int, twap_sec: int):
+        cid = position.get('contract_id')
+        dte = self._days_to_expiry(cid)
+        if dte is None or dte > roll_dte:
+            return
+        emit_event(self.base_dir, 'paper', asset, {
+            "event": "ROLL_SUGGESTION", "contract_id": cid, "qty": position.get('qty'), "twap_sec": twap_sec
+        })
+
+    def settle_if_expired(self, asset: str, position: Dict[str, Any], settlement_price: float):
+        cid = position.get('contract_id')
+        dte = self._days_to_expiry(cid)
+        if dte is not None and dte <= 0:
+            pnl = 0.0
+            try:
+                entry = float(position.get('avg_price', 0))
+                qty = float(position.get('qty', 0))
+                mult = float(position.get('multiplier', position.get('extra',{}).get('multiplier', 1)))
+                if position.get('side','').lower()=='buy':
+                    pnl = (settlement_price - entry) * qty * mult
+                else:
+                    pnl = (entry - settlement_price) * qty * mult
+            except Exception:
+                pass
+            emit_event(self.base_dir, 'paper', asset, {
+                "event": "SETTLEMENT", "contract_id": cid, "settlement_price": settlement_price, "pnl": pnl
+            })

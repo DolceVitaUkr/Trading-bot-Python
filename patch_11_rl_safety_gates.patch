@@ -1,0 +1,69 @@
+*** Begin Patch
+*** Add File: tradingbot/training/action_masking.py
++from typing import Dict, Any, List
++
++ACTIONS = ["FLAT", "LONG_0.5", "LONG_1.0", "SHORT_0.5", "SHORT_1.0"]
++
++def mask_actions(state: Dict[str, Any]) -> List[bool]:
++    mask = [True] * len(ACTIONS)
++    session_ok = bool(state.get("session_ok", True))
++    allow_short = bool(state.get("allow_short", True))
++    if not session_ok:
++        for i in range(len(mask)):
++            mask[i] = (ACTIONS[i] == "FLAT")
++    if not allow_short:
++        for i, a in enumerate(ACTIONS):
++            if a.startswith("SHORT"):
++                mask[i] = False
++    return mask
++
+*** End Patch
+*** Begin Patch
+*** Add File: tradingbot/training/reward_shaping.py
++def compute_reward(pnl: float, drawdown: float, fees: float, exposure: float,+                   alpha: float = 2.0, beta: float = 1.0, gamma: float = 5.0, delta: float = 0.2) -> float:
++    return pnl - alpha * drawdown - beta * fees - gamma * max(0.0, exposure - 1.0) - delta * abs(pnl) * exposure
++
+*** End Patch
+*** Begin Patch
+*** Add File: tradingbot/training/shadow_canary.py
++import time
++from typing import Dict, Any
++
++class ShadowCanary:
++    def __init__(self, canary_size_pct: float = 0.1):
++        self.canary_size_pct = canary_size_pct
++        self.active = False
++    def start(self):
++        self.active = True
++    def stop(self):
++        self.active = False
++    def status(self) -> Dict[str, Any]:
++        return {"active": self.active, "size_pct": self.canary_size_pct, "ts": time.time()}
++
+*** End Patch
+*** Begin Patch
+*** Add File: tradingbot/config/promotion_gates.json
++{
++  "paper": { "min_trades": 1000, "sharpe_min": 1.3, "mdd_max": 0.12, "profit_factor_min": 1.2 },
++  "shadow": { "volatility_buckets": 3, "slippage_stress_max_degradation": 0.15 },
++  "canary": { "trades": 200, "position_cap_pct": 0.5, "daily_loss_cap_pct": 0.75 }
++}
++
+*** End Patch
+*** Begin Patch
+*** Add File: tradingbot/config/tripwires.json
++{
++  "daily_loss_cap_pct": 0.75,
++  "max_drawdown_cap_pct": 15.0,
++  "max_consecutive_losses": 5,
++  "max_reject_rate_pct": 5.0,
++  "max_slippage_multiplier": 2.0
++}
++
+*** End Patch
+*** Begin Patch
+*** Update File: tradingbot/core/strategy_development_manager.py
+@@
++# Promotion gates and tripwires are configured in JSON under tradingbot/config/.
++
+*** End Patch

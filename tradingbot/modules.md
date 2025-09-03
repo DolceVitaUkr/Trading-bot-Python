@@ -1,547 +1,352 @@
-Modules.md
+# Modules.md (augmented, full)
 
+```md
+# Modules
 Version 1.0
 
-This document maps the bot’s modules, key functions, important variables, and exact connections so that every data producer has a consumer and every consumer lists its source. It also includes a high-level flow chart and a folder structure diagram.
+This document maps the bot’s modules, key functions, important variables, and exact connections so that every data producer has a consumer and every consumer lists its source. It also includes a high-level flow and a folder structure diagram.
 
-0) Global Conventions
+---
 
-Assets (UI keys): crypto_spot, crypto_futures, forex, options
+## 0) Global Conventions
 
-Modes: paper, live
+- **Assets (UI keys)**: crypto_spot, crypto_futures, forex, options
+- **Modes**: paper, live
+- **Quote snapshot**: captured at submit; each trade row includes `quote_snapshot_id`
+- **Idempotency**: `client_order_id = hash(strategy_id, symbol, ts)`
+- **Budget terms**: `B_A` (asset budget), `r_A` (per_trade_risk_pct), `m_A` (risk multiplier), `q_A` (% sizing above threshold)
 
-Quote snapshot: captured at submit; each trade row includes quote_snapshot_id
+---
 
-Idempotency: client_order_id = hash(strategy_id, symbol, ts)
+## 1) Core
 
-Budget terms: B_A (asset budget), r_A (per_trade_risk_pct), m_A (risk multiplier), q_A (% sizing above threshold)
+### 1.1 tradingbot/core/runtime_api.py
+**Purpose**: Aggregates wallets/positions/history for UI & services. Health & retry wrappers.
 
-1) Core
-1.1 tradingbot/core/runtime_api.py
+**Imports**  
+`paper_state`, `BybitAdapter` (lazy), `IBKRAdapter` (lazy), `retry_call`, `history_store`
 
-Purpose: Aggregates wallets/positions/history for UI & services. Health & retry wrappers.
-Imports:
+**Singletons (lazy)**  
+`_BYBIT`, `_IBKR`
 
-from . import paper_state (internal paper wallet/positions)
+**Functions**  
+- `aggregate_status(asset) -> dict` → `{"asset","paper":{...},"live":{...}}`  
+- `aggregate_positions(asset) -> dict` → `{"paper":[...], "live":[...]}`  
+- `read_trade_history(asset, mode?, limit, since?) -> list[dict]`  
+- `health() -> {"bybit":{ok,...}, "ibkr":{ok,...}}`  
+- `live_enabled(asset) -> bool` (from `state/runtime.json`)
 
-from tradingbot.brokers.bybit_adapter import BybitAdapter (lazy)
+**Consumers**: `ui/app.py`, `order_router.py`, UI JS.
 
-from tradingbot.brokers.ibkr_adapter import IBKRAdapter (lazy)
+---
 
-from tradingbot.core.retry import retry_call
+### 1.2 tradingbot/core/order_router.py
+**Purpose**: Central order flow (validations, guardrails, idempotency, submit, retry).
 
-from tradingbot.core import history_store
+**Important types**  
+`OrderContext {asset_type, symbol, side, quantity, price?, client_order_id, strategy_id, mode}`  
+`OrderResult {success, reason?, broker_order_id?}`
 
-Key module-level singletons (lazy):
+**Core**  
+- Attach **fresh quote snapshot** (≤2s) and `quote_snapshot_id`.  
+- **Budget guardrails** via `budget_manager.can_place_order(...)`.  
+- **Position size cap** via `budget_manager.position_size_cap(...)`.  
+- **Venue checks** (min qty/step, long-only on spot, leverage caps).  
+- **Idempotency**: reject duplicates by `client_order_id`.  
+- **Routing** (see 1.8/1.9 below).  
+- **Retry queue** for broker failures: **revalidate** signal on reconnect; never backfill.
 
-_BYBIT: Optional[BybitAdapter] via _bybit()
+---
 
-_IBKR: Optional[IBKRAdapter] via _ibkr()
+### 1.3 tradingbot/core/budget_manager.py
+**Purpose**: Budget enforcement & position sizing.
 
-Functions (inputs → outputs → calls):
+**State/Files**: `state/budgets.json`, `state/risk_state.json`  
+**Imports**: `runtime_api.aggregate_status`, `runtime_api.aggregate_positions`, optionally `history_store` for realized PnL ladder.
 
-aggregate_status(asset: str) -> dict
+**Key config (`budgets.json`)**  
+`alloc_mode`, `alloc{...}`, `per_trade_risk_pct{...}`, `percent_sizing_threshold_usd`, `percent_sizing_above_threshold{...}`, `profit_rollover`, `enforce_wallet_available`, `max_concurrent`, `scale{...}`, `leverage_caps{...}`
 
-→ {"asset", "paper": {total, available, used, unrealized_pnl}, "live": {...}}
+**Functions**  
+- `get_alloc(asset_ui_key) -> float`  
+- `count_open_positions(asset_ui_key, mode) -> int`  
+- `set_cooldown(...) / in_cooldown(...) -> bool`  
+- `position_size_cap(asset_ui_key, price) -> (cap_notional, cap_qty)`  
+- `suggest_position_size(...) -> float`  
+- `can_place_order(...) -> (ok, reason)`
 
-Calls: paper_state.get_wallet(asset), retry_call(by.wallet) or retry_call(ib.wallet)
+**Consumers**: `order_router.py`, UI sizing hints.
 
-aggregate_positions(asset: str) -> dict
+---
 
-→ {"paper": [..], "live": [..]}
+### 1.4 tradingbot/core/history_store.py
+**Purpose**: Normalized trade history across paper/live and assets.
 
-Calls: paper_state.list_positions(asset), retry_call(by.positions) or retry_call(ib.positions)
+**Files**  
+- Paper: `state/paper/trades_{asset}.jsonl`  
+- Live: `state/live/bybit/trades_{asset}.jsonl`, `state/live/ibkr/trades_{asset}.jsonl`
 
-read_trade_history(asset: str, mode: Optional[str], limit: int, since: Optional[str]) -> list[dict]
+**Schema (per row)**  
+`trade_id, order_id, strategy_id, mode, asset, symbol, side, qty, avg_price, fees, slippage, realized_pnl, realized_pnl_pct, reward, opened_at, closed_at, duration_s, venue, account_id, quote_snapshot_id, status`
 
-→ Normalized list of trades (paper/live)
+**Functions**  
+`read_history(asset, mode?, since?, limit) -> list[dict]`
 
-Calls: history_store.read_history(...)
+**Consumers**: `runtime_api.read_trade_history`, UI history.
 
-health() -> dict
+---
 
-→ { "bybit": {ok, error?}, "ibkr": {ok, error?} }
+### 1.5 tradingbot/core/retry.py
+`retry_call(func, *args, retries=3, backoff=0.5, max_backoff=4.0, exceptions=(Exception,), jitter=True, **kwargs)`  
+**Consumers**: runtime_api, adapters, health checks.
 
-Calls: retry_call(by.wallet), retry_call(ib.wallet)
+---
 
-live_enabled(asset: str) -> bool
+### 1.6 tradingbot/core/loggerconfig.py
+`setup_logging(level: str|int = None) -> None`  
+**Consumers**: ui/app.py at import time.
 
-→ Checks tradingbot/state/runtime.json for live flag
+---
 
-Consumers: ui/app.py, core/order_router.py, UI JS (via HTTP).
+### 1.7 **NEW** tradingbot/core/exchange_conformance.py
+**Purpose**: **Final clamp** before any submit/sim: tick size, step size, min notional, contract multiplier.  
+**Functions**:  
+- `clamp_order_if_needed(order_ctx) -> order_ctx'` (logs `CLAMP` before/after)
 
-1.2 tradingbot/core/order_router.py
+**Consumers**: routers (paper & live).
 
-Purpose: Central order flow (validations, guardrails, idempotency, submit, retry).
-Imports:
+---
 
-from .budget_manager import can_place_order as _can_place_order
+### 1.8 **NEW** tradingbot/core/routing.py
+**Purpose**: Paper/Live split with uniform `OrderContext`.
 
-try: from .budget_manager import position_size_cap as _pos_cap
+- `PaperRouter(simulate_order)` → clamps → **local simulator** only (no broker orders)  
+- `LiveRouter({venue: submitter})` → clamps → forwards to `bybit_submit_wrapper` or `ibkr_submit_wrapper`
 
-from tradingbot.core.runtime_api import aggregate_status, aggregate_positions (indirect via budget)
+**Note**: Maintains **rate-limit headroom** using token buckets (~90%), with separate **read** vs **trade** budgets.
 
-Important types / fields (typical):
+---
 
-OrderContext:
+### 1.9 **NEW** tradingbot/core/paper_execution.py
+**Purpose**: Conservative paper fills: slippage bps, taker-only, partials, latency; fail if non-conforming after clamp.  
+**Consumers**: `paper_trader.py`.
 
-asset_type: Literal["spot","futures","forex","options"]
+---
 
-symbol: str
+### 1.10 **NEW** tradingbot/core/persistence.py
+**Purpose**: Persistence helpers: **atomic writes**, **snapshots**, and a simple **Write-Ahead Log**.  
+**Consumers**: runtime & strategy state writers.
 
-side: Literal["BUY","SELL"]
+---
 
-quantity: float
+### 1.11 **NEW** tradingbot/core/reconciler.py
+**Purpose**: Startup + periodic **reconciliation** of local state to broker truth (live only).  
+**Consumers**: engine bootstrap / scheduler.
 
-price: Optional[float] (from quote snapshot)
+---
 
-client_order_id: str
+### 1.12 **NEW** tradingbot/core/contract_catalog.py
+**Purpose**: Single source of truth for **futures/options/perps** (expiry, tick, step, multiplier, settlement, exercise style, funding schedule, session calendar).  
+**Artifacts**: `state/contracts.json` (startup + daily refresh).  
+**Consumers**: lifecycle gates, clamp (for multipliers), UI.
 
-strategy_id: str
+---
 
-mode: Literal["paper","live"]
+### 1.13 **NEW** tradingbot/core/market_calendars.py
+**Purpose**: Session/holiday windows (e.g., CME, IBKR option sessions, perpetual venues).  
+**Consumers**: pre-submit guards; scheduler.
 
-OrderResult:
+---
 
-success: bool
+### 1.14 **NEW** tradingbot/core/futures_lifecycle.py
+**Purpose**: DTE **open gate**, **auto-roll** (TWAP), and **paper settlement**.  
+**Events**: `ROLL`, `SETTLEMENT`.
 
-reason?: str
+---
 
-broker_order_id?: str
+### 1.15 **NEW** tradingbot/core/options_lifecycle.py
+**Purpose**: **Open gate** near expiry, **close/roll** before cutoff, **paper expiry** (ITM exercise / assignment; OTM expire).  
+**Events**: `EXERCISE`, `ASSIGNMENT`, `EXPIRY`.
 
-Core function:
+---
 
-place_order(context: OrderContext) -> OrderResult
+### 1.16 **NEW** tradingbot/core/funding_accrual.py
+**Purpose**: Perps **funding** accrual (schedule); posts pay/receive to PnL (paper mirrors live).  
+**Consumers**: scheduler.
 
-Fresh quote snapshot attached in the calling layer → context.price must be ≤2s old; store quote_snapshot_id in trade log.
+---
 
-Guardrails via _can_place_order(...) (budget, wallet, positions, concurrency).
+### 1.17 **NEW** tradingbot/core/scheduler.py
+**Purpose**: Tick jobs (contract refresh, funding accrual, reconciler).
 
-Clamp sizing via _pos_cap(...) → shrink context.quantity if over cap.
+---
 
-Venue checks (min qty/step, long-only on spot, leverage caps).
+### 1.18 **UPDATED** tradingbot/core/risk_manager.py
+**Purpose**: **Mandatory TP/SL brackets**; per-asset caps (loss/order, drawdown, concurrency); trailing stop & TP ladder utilities.
 
-Idempotency check (reject duplicates by client_order_id).
+---
 
-Submit to paper engine or broker adapter.
+## 2) Broker Adapters
 
-Retry queue (if broker failure): revalidate strategy on reconnect; only submit if conditions still hold; never backfill.
+### 2.1 tradingbot/brokers/bybit_adapter.py
+**Purpose**: Live Bybit via ccxt.  
+**Ctor**: `BybitAdapter(api_key=None, api_secret=None)`  
+**Functions**: `wallet()`, `positions()`, (planned) `fetch_my_trades()` normalization hook.  
+**Consumers**: runtime_api, (future) live history ingestion.
 
-Producers: Broker adapters / paper engine.
-Consumers: History writer, UI (through history API).
+### 2.2 tradingbot/brokers/ibkr_adapter.py
+**Purpose**: Live IBKR via ib_insync.  
+**Ctor**: `IBKRAdapter(host="127.0.0.1", port=7497, client_id=2)`  
+**Functions**: `wallet()`, `positions()`, (planned) executions → normalized live history.  
+**Consumers**: runtime_api, (future) live history ingestion.
 
-1.3 tradingbot/core/budget_manager.py
+> **Paper parity for IBKR**: paper orders **never** hit IBKR; paper uses IBKR quotes (read-only) and the **local simulator** via `PaperRouter`.
 
-Purpose: Budget enforcement & position sizing.
-State/Files: tradingbot/state/budgets.json, tradingbot/state/risk_state.json
-Imports:
+---
 
-from tradingbot.core.runtime_api import aggregate_status, aggregate_positions
+## 3) Strategy & Training
 
-try: from tradingbot.core import history_store (for realized PnL ladder)
+### 3.1 tradingbot/strategies/manager.py
+**Purpose**: Registry & toggles.  
+**File**: `state/strategies/strategies.json`  
+**Functions**: `list()`, `start()`, `stop()`  
+**Consumers**: `ui/app.py` endpoints.
 
-Key configuration fields (budgets.json):
+### 3.2 tradingbot/training/train_manager.py
+**Purpose**: Orchestrates ML/RL runners, persistence & auto-resume.  
+**Artifacts**:  
+**Models**: `models/{asset}/ml|rl/.../checkpoints/*.json`  
+**Metrics**: `metrics/{asset}/train_ml.jsonl`, `metrics/{asset}/train_rl.jsonl`  
+**Classes**: `_BaseRunner`
 
-alloc_mode: "absolute" | "percent"
+### 3.3 **NEW** training/action_masking.py  
+Blocks illegal actions (size/leverage/session/regime).  
 
-alloc: {crypto_spot, crypto_futures, forex, options} (USD if absolute; [0..1] if percent)
+### 3.4 **NEW** training/reward_shaping.py  
+PnL minus penalties (drawdown, SL hits, fees, exposure).  
 
-per_trade_risk_pct: {...}
+### 3.5 **NEW** training/shadow_canary.py  
+Shadow vs baseline; **canary** live micro-size with **tripwires**; promotion/degrade integration.
 
-percent_sizing_threshold_usd: number
+---
 
-percent_sizing_above_threshold: {...}
+## 4) UI & API
 
-profit_rollover: bool
+`ui/app.py` exposes REST endpoints used by the dashboard.
 
-enforce_wallet_available: bool
+- **History**: `GET /history/{asset}?mode=paper|live` → 8 tables (asset×mode)  
+- **Positions/Asset**: backing runtime API  
+- **Strategy controls**: list/start/stop  
+- **Health**: adapters up/down
 
-max_concurrent: int
+ASCII diagrams show flow from History Store (paper/live JSONL) to endpoints and tables.
 
-scale: {enabled, equity_curve_window_days, ladder:[{profit_usd, risk_multiplier}]}
+---
 
-leverage_caps: {...}
+## 5) End-to-End Sequences (concise)
 
-Functions:
+### 5.1 Paper Order
+Strategy → build `OrderContext` (+snapshot) → Router: **guardrails → clamp → paper simulate** → write `state/paper/trades_{asset}.jsonl` → close & budget rollover (optional) → UI pulls `/history`, `/positions`, `/asset`.
 
-get_alloc(asset_ui_key: str) -> float (USD; percent mode derives from live wallet)
+### 5.2 Live Order
+Same start → send to adapter (Bybit/IBKR) → on failure enqueue **retry with revalidation only** → on fill write `state/live/{broker}/trades_{asset}.jsonl` → close & rollover (optional) → UI updates.
 
-count_open_positions(asset_ui_key: str, mode: str) -> int
+---
 
-set_cooldown(asset_ui_key: str, seconds: int) / in_cooldown(asset_ui_key: str) -> bool
+## 6) Explicit Connection Map (who calls whom)
 
-position_size_cap(asset_ui_key: str, price: float) -> tuple[cap_notional, cap_qty]
-
-Computes BaseCap (B_A * r_A * m_A) and switches to % sizing above $1,000:
-
-PercentCapUSD = max(1000, B_A * q_A * m_A)
-
-suggest_position_size(asset_ui_key: str, price: float, min_qty: float|None, step: float|None) -> float
-
-can_place_order(asset_ui_key, mode, symbol, side, quantity, price, asset_type, broker) -> (ok: bool, reason: str)
-
-Checks cooldown, budget, concurrency, wallet available (if enabled)
-
-Consumers: core/order_router.py, UI sizing hint.
-
-1.4 tradingbot/core/history_store.py
-
-Purpose: Normalized trade history across paper/live and assets.
-Files:
-
-Paper: tradingbot/state/paper/trades_{asset}.jsonl
-
-Live: tradingbot/state/live/bybit/trades_{asset}.jsonl, tradingbot/state/live/ibkr/trades_{asset}.jsonl
-
-Schema (per row):
-
-trade_id, order_id, strategy_id, mode, asset, symbol, side,
-qty, avg_price, fees, slippage,
-realized_pnl, realized_pnl_pct,
-reward, opened_at, closed_at, duration_s,
-venue, account_id, quote_snapshot_id, status
-
-
-Functions:
-
-_read_jsonl(path) -> list[dict]
-
-_norm_row(row, mode_hint) -> dict
-
-read_history(asset: str, mode: Optional[str], since: Optional[str], limit: int) -> list[dict]
-
-Consumers: runtime_api.read_trade_history, UI history.
-
-1.5 tradingbot/core/retry.py
-
-retry_call(func, *args, retries=3, backoff=0.5, max_backoff=4.0, exceptions=(Exception,), jitter=True, **kwargs)
-Consumers: runtime_api, adapters, health checks.
-
-1.6 tradingbot/core/loggerconfig.py
-
-setup_logging(level: str|int = None) -> None
-Consumers: ui/app.py at import time.
-
-2) Broker Adapters
-2.1 tradingbot/brokers/bybit_adapter.py
-
-Purpose: Live Bybit via ccxt.
-Constructor: BybitAdapter(api_key=None, api_secret=None) → ccxt.bybit with sandbox=False
-Functions:
-
-wallet() -> dict{total, available, used, unrealized_pnl}
-
-positions() -> dict{"spot":[...], "futures":[...]}
-
-(TODO) fetch_my_trades() normalization hook for live history
-
-Consumers: runtime_api, (future) history ingestion.
-
-2.2 tradingbot/brokers/ibkr_adapter.py
-
-Purpose: Live IBKR via ib_insync.
-Constructor: IBKRAdapter(host="127.0.0.1", port=7497, client_id=2)
-Functions:
-
-wallet() -> dict{total, available, used, unrealized_pnl} (via accountSummary)
-
-positions() -> list[dict]
-
-(TODO) executions → normalized live history
-
-Consumers: runtime_api, (future) history ingestion.
-
-3) Strategy & Training
-3.1 tradingbot/strategies/manager.py
-
-Purpose: Registry & toggles.
-File: tradingbot/state/strategies/strategies.json
-Functions:
-
-list(asset: str) -> list[dict] (filters by asset; includes params, performance)
-
-start(asset: str, sid: str) -> bool
-
-stop(asset: str, sid: str) -> bool
-
-Consumers: ui/app.py endpoints /strategies/{asset}, /strategy/{asset}/{sid}/start|stop.
-
-3.2 tradingbot/training/train_manager.py
-
-Purpose: Orchestrates ML/RL runners with persistence & auto-resume.
-Artifacts:
-
-Models: tradingbot/models/{asset}/ml|rl/.../checkpoints/*.json
-
-Metrics: tradingbot/metrics/{asset}/train_ml.jsonl / train_rl.jsonl
-
-Classes: _BaseRunner, _MLRunner, _RLRunner
-Functions:
-
-start(asset: str, mode: str["ml"|"rl"]) -> dict (blocks if live_enabled(asset) is true)
-
-stop(asset, mode) -> dict
-
-status(asset) -> dict{"ml":..., "rl":...}
-
-Consumers: ui/app.py endpoints /train/{asset}/{mode}/start|stop|status.
-
-4) UI / API
-4.1 tradingbot/ui/app.py (FastAPI)
-
-Purpose: HTTP interface for the dashboard.
-Imports: runtime_api, strategy_manager, train_manager, setup_logging
-
-REST endpoints (→ calls):
-
-GET /status → runtime_api.health()
-
-GET /asset/{asset} → runtime_api.aggregate_status(asset)
-
-GET /positions/{asset} → runtime_api.aggregate_positions(asset)
-
-GET /history/{asset}?mode=&since=&limit= → runtime_api.read_trade_history(...)
-
-POST /paper/{asset}/enable|disable → paper state toggle (internal)
-
-POST /live/{asset}/enable|disable → sets live flag (double-confirm UI)
-
-GET /strategies/{asset} → strategy_manager.list(asset)
-
-POST /strategy/{asset}/{sid}/start|stop → strategy_manager.start/stop
-
-POST /train/{asset}/{mode}/start|stop → train_manager.start/stop
-
-GET /train/{asset}/status → train_manager.status(asset)
-
-Consumers: Frontend JS (wire.js / nethealth.js), browser.
-
-4.2 tradingbot/ui/static/wire.js & nethealth.js
-
-wire.js: fetch wrappers jget/jpost, UI actions → endpoints above
-
-nethealth.js: status polling → banner if Bybit/IBKR unhealthy
-Consumers: HTML templates (dashboard).
-
-5) Logging, Scripts
-5.1 tradingbot/logs/
-
-Rotating JSON logs via loggerconfig.setup_logging().
-
-5.2 scripts/cleanup_logs.py
-
-Archives logs to artifacts/logs/YYYY-MM-DD/ (keep N days).
-
-6) Data Flow (ASCII Flow Chart)
-[Strategy (ML/RL)]
-   |  (signal: side + conf)                     [UI toggle Paper/Live]
-   v
-[OrderContext build] -- fetch quote (<=2s) --> [Quote Snapshot Store]
-   |        (attach quote_snapshot_id)
-   v
-[order_router.place_order(context)]
-   |---> [budget_manager.can_place_order] -----> checks: budget, wallet available, positions, cooldown
-   |---> [budget_manager.position_size_cap] ---> clamp size (BaseCap or %Cap above $1k)
-   |---> venue constraints & leverage caps
-   |---> idempotency check (client_order_id)
-   |
-   +--> if context.mode == "paper":
-   |        simulate fill @ snapshot -> [state/paper/trades_{asset}.jsonl]
-   |        update paper positions
-   |
-   +--> if context.mode == "live":
-            broker adapter (Bybit/IBKR)
-            |--> success: [state/live/{broker}/trades_{asset}.jsonl]
-            |--> failure: enqueue retry (only if signal revalidates on reconnect)
-
-   (both)
-   |--> if trade closed: update realized PnL; if profit_rollover: increase SAME asset budget
-   v
-[runtime_api.aggregate_*]  -->  [UI /history, /positions, /asset]
-                                 charts (equity & budget), 8 tables (asset×mode)
-
-7) Folder Structure (ASCII Tree)
-tradingbot/
-├─ core/
-│  ├─ runtime_api.py
-│  ├─ order_router.py
-│  ├─ budget_manager.py
-│  ├─ history_store.py
-│  ├─ paper_state.py
-│  ├─ retry.py
-│  └─ loggerconfig.py
-├─ brokers/
-│  ├─ bybit_adapter.py
-│  └─ ibkr_adapter.py
-├─ strategies/
-│  ├─ manager.py
-│  └─ (strategy_*.py)
-├─ training/
-│  ├─ train_manager.py
-│  ├─ ml_trainer.py            (planned)
-│  ├─ rl_trainer.py            (planned)
-│  └─ validation_manager.py    (planned)
-├─ state/
-│  ├─ budgets.json
-│  ├─ runtime.json
-│  ├─ paper/
-│  │  ├─ trades_crypto_spot.jsonl
-│  │  ├─ trades_crypto_futures.jsonl
-│  │  ├─ trades_forex.jsonl
-│  │  └─ trades_options.jsonl
-│  └─ live/
-│     ├─ bybit/
-│     │  ├─ trades_crypto_spot.jsonl
-│     │  └─ trades_crypto_futures.jsonl
-│     └─ ibkr/
-│        ├─ trades_forex.jsonl
-│        └─ trades_options.jsonl
-├─ models/
-│  └─ {asset}/ml|rl/...
-├─ metrics/
-│  └─ {asset}/train_ml.jsonl / train_rl.jsonl
-├─ ui/
-│  ├─ app.py
-│  ├─ templates/
-│  │  └─ dashboard*.html
-│  └─ static/
-│     ├─ wire.js
-│     └─ nethealth.js
-└─ logs/
-
-8) End-to-End Sequences (concise)
-8.1 Paper Order
-
-Strategy emits signal → build OrderContext (+snapshot)
-
-Router: guardrails → clamp → paper simulate → write state/paper/trades_{asset}.jsonl
-
-Close → update realized PnL → optional budget rollover
-
-UI pulls /history/{asset}, /positions/{asset}, /asset/{asset}
-
-8.2 Live Order
-
-1–2 same → send to adapter (Bybit/IBKR)
-3. If fail: enqueue retry (only if signal revalidates later)
-4. On fill: write state/live/{broker}/trades_{asset}.jsonl
-5. Close → realized PnL → optional budget rollover
-6. UI updates same endpoints
-
-9) Explicit Connection Map (who calls whom)
-
-UI → ui/app.py → runtime_api.*, strategy_manager.*, train_manager.*
-
-Router → budget_manager.* (pre-checks & sizing) → broker/paper → history_store (writes)
-
-runtime_api → adapters (BybitAdapter, IBKRAdapter) + paper_state + history_store
-
-budget_manager → runtime_api.aggregate_status, runtime_api.aggregate_positions (+ history_store for PnL ladder)
-
-train_manager → live_enabled() guard (from runtime_api)
-
+UI → `ui/app.py` → `runtime_api.*`, `strategy_manager.*`, `train_manager.*`  
+Router → `budget_manager.*` (pre-checks & sizing) → **broker/paper** → `history_store` (writes)  
+runtime_api → adapters (BybitAdapter, IBKRAdapter) + paper_state + history_store  
+budget_manager → runtime_api (status/positions) (+ history_store for PnL ladder)  
+train_manager → `live_enabled()` guard  
 adapters ↔ external brokers (Bybit/IBKR)
 
-No module is orphaned; every dependency has a reverse consumer path via UI endpoints & router utilization.
+No module is orphaned; every dependency has a reverse consumer via UI endpoints & router utilization.
 
-10) Key Variables & JSON fields (quick reference)
+---
 
-OrderContext: asset_type, symbol, side, quantity, price, client_order_id, strategy_id, mode
+## 7) Folder Structure (ASCII)
 
-Trade row: trade_id, order_id, strategy_id, mode, asset, symbol, side, qty, avg_price, fees, slippage, realized_pnl, realized_pnl_pct, reward, opened_at, closed_at, duration_s, venue, account_id, quote_snapshot_id, status
-
-Budget config: alloc_mode, alloc{...}, per_trade_risk_pct{...}, percent_sizing_threshold_usd, percent_sizing_above_threshold{...}, profit_rollover, enforce_wallet_available, max_concurrent, scale{...}, leverage_caps{...}
-
-11) ASCII Diagram – History Tables (Asset × Mode)
-                 ┌─────────────────────────────────────┐
-                 │          History Store              │
-                 │  (tradingbot/core/history_store.py) │
-                 └─────────────────────────────────────┘
-                                │
-          ┌─────────────────────┼──────────────────────────┐
-          │                     │                          │
-   ┌───────────────┐     ┌───────────────┐          ┌───────────────┐
-   │ state/paper/  │     │ state/live/   │          │ API Endpoints │
-   │  (Paper JSONL)│     │  (Live JSONL) │          │   (ui/app.py) │
-   └───────────────┘     └───────────────┘          └───────────────┘
-          │                     │                          │
-   ┌──────┴───────┐     ┌───────┴─────────┐       ┌────────┴─────────┐
-   │ Trades by    │     │ Trades by       │       │ GET /history/{asset}  │
-   │ Asset        │     │ Broker & Asset  │       │   ?mode=paper|live    │
-   └──────┬───────┘     └────────┬────────┘       └────────┬─────────┘
-          │                      │                          │
-   ┌──────┴───────────────┐ ┌────┴────────────────┐ ┌────────┴───────────┐
-   │ crypto_spot_paper    │ │ crypto_spot_live    │ │   UI History Tab   │
-   ├──────────────────────┤ ├─────────────────────┤ ├────────────────────┤
-   │ crypto_futures_paper │ │ crypto_futures_live │ │ 8 tables: asset×mode│
-   ├──────────────────────┤ ├─────────────────────┤ ├────────────────────┤
-   │ forex_paper          │ │ forex_live          │ │ sortable/filterable │
-   ├──────────────────────┤ ├─────────────────────┤ ├────────────────────┤
-   │ options_paper        │ │ options_live        │ │ totals row (PnL,etc)│
-   └──────────────────────┘ └─────────────────────┘ └────────────────────┘
-
-12) End-to-End Flow (Condensed View)
-[Strategy ML/RL]
-   │ signal (side+conf)
-   v
-[Order Router]
-   │ calls budget_manager.can_place_order()
-   │ calls budget_manager.position_size_cap()
-   v
-[Broker Adapter] or [Paper Engine]
-   │ returns execution or error
-   v
-[History Store] writes JSONL
-   │
-   v
-[runtime_api.read_trade_history()]
-   │
-   v
-[UI /history/{asset}?mode=...]
-   │
-   v
-[Dashboard History Tab] (8 tables)
-
-13) Folder Structure (ASCII)
 tradingbot/
 ├─ core/
-│  ├─ runtime_api.py
-│  ├─ order_router.py
-│  ├─ budget_manager.py
-│  ├─ history_store.py
-│  ├─ paper_state.py
-│  ├─ retry.py
-│  └─ loggerconfig.py
+│ ├─ runtime_api.py
+│ ├─ order_router.py
+│ ├─ budget_manager.py
+│ ├─ history_store.py
+│ ├─ paper_state.py
+│ ├─ retry.py
+│ ├─ loggerconfig.py
+│ ├─ exchange_conformance.py # NEW
+│ ├─ routing.py # NEW
+│ ├─ paper_execution.py # NEW
+│ ├─ persistence.py # NEW
+│ ├─ reconciler.py # NEW
+│ ├─ contract_catalog.py # NEW
+│ ├─ market_calendars.py # NEW
+│ ├─ futures_lifecycle.py # NEW
+│ ├─ options_lifecycle.py # NEW
+│ ├─ funding_accrual.py # NEW
+│ └─ scheduler.py # NEW
 ├─ brokers/
-│  ├─ bybit_adapter.py
-│  └─ ibkr_adapter.py
+│ ├─ bybit_adapter.py
+│ └─ ibkr_adapter.py
 ├─ strategies/
-│  ├─ manager.py
-│  └─ strategy_*.py
+│ ├─ manager.py
+│ └─ strategy_.py
 ├─ training/
-│  ├─ train_manager.py
-│  ├─ ml_trainer.py (planned)
-│  ├─ rl_trainer.py (planned)
-│  └─ validation_manager.py (planned)
+│ ├─ train_manager.py
+│ ├─ ml_trainer.py (planned)
+│ ├─ rl_trainer.py (planned)
+│ ├─ action_masking.py # NEW
+│ ├─ reward_shaping.py # NEW
+│ └─ shadow_canary.py # NEW
 ├─ state/
-│  ├─ budgets.json
-│  ├─ runtime.json
-│  ├─ paper/
-│  │  ├─ trades_crypto_spot.jsonl
-│  │  ├─ trades_crypto_futures.jsonl
-│  │  ├─ trades_forex.jsonl
-│  │  └─ trades_options.jsonl
-│  └─ live/
-│     ├─ bybit/
-│     │  ├─ trades_crypto_spot.jsonl
-│     │  └─ trades_crypto_futures.jsonl
-│     └─ ibkr/
-│        ├─ trades_forex.jsonl
-│        └─ trades_options.jsonl
-├─ models/{asset}/ml|rl/...
-├─ metrics/{asset}/train_ml.jsonl / train_rl.jsonl
+│ ├─ budgets.json
+│ ├─ runtime.json
+│ ├─ contracts.json # NEW
+│ ├─ paper/
+│ │ ├─ trades_crypto_spot.jsonl
+│ │ ├─ trades_crypto_futures.jsonl
+│ │ ├─ trades_forex.jsonl
+│ │ └─ trades_options.jsonl
+│ └─ live/
+│ ├─ bybit/
+│ │ ├─ trades_crypto_spot.jsonl
+│ │ └─ trades_crypto_futures.jsonl
+│ └─ ibkr/
+│ ├─ trades_forex.jsonl
+│ └─ trades_options.jsonl
+├─ models/
+│ └─ {asset}/ml|rl/.
+├─ metrics/
+│ └─ {asset}/train_ml.jsonl / train_rl.jsonl
 ├─ ui/
-│  ├─ app.py
-│  ├─ templates/dashboard.html
-│  └─ static/{wire.js, nethealth.js}
+│ ├─ app.py
+│ ├─ templates/
+│ │ └─ dashboard.html
+│ └─ static/
+│ ├─ wire.js
+│ └─ nethealth.js
 └─ logs/
+
+markdown
+Copy code
+
+---
+
+## 8) Key Variables & JSON fields (quick reference)
+
+- **OrderContext**: `asset_type, symbol, side, quantity, price, client_order_id, strategy_id, mode`  
+- **Trade row**: `trade_id, order_id, strategy_id, mode, asset, symbol, side, qty, avg_price, fees, slippage, realized_pnl, realized_pnl_pct, reward, opened_at, closed_at, duration_s, venue, account_id, quote_snapshot_id, status`  
+- **Budget config**: `alloc_mode`, `alloc{...}`, `per_trade_risk_pct{...}`, `percent_sizing_threshold_usd`, `percent_sizing_above_threshold{...}`, `profit_rollover`, `enforce_wallet_available`, `max_concurrent`, `scale{...}`, `leverage_caps{...}`
+
+---
+
+## 9) Notes
+
+- `state/` and `logs/` are **.gitignored**.  
+- Only `models/` and `metrics/` may be versioned selectively if you want reproducibility.  
+- Everything else is source or UI.
+
+Anchors to your original Modules content preserved above: Core map (runtime_api, router, budget, history), End-to-End flow & connection map, folder structure & quick-ref variabl

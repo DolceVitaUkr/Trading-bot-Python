@@ -14,8 +14,16 @@ from .loggerconfig import get_logger
 from .runtime_controller import RuntimeController
 from .activity_logger import log_activity
 from ..strategies import IndicatorStrategy, create_strategy_variants
+from .futures_lifecycle import FuturesLifecycle
+from .options_lifecycle import OptionsLifecycle
+from .market_calendars import is_session_open
+from .profile_manager import ProfileManager
+from pathlib import Path as _Path
 from ..brokers.exchangebybit import ExchangeBybit
 from ..brokers.connectibkrapi import IBKRConnectionManager
+from .routing import PaperRouter, LiveRouter, OrderContext
+from .paper_sim_wrapper import simulate_with_paper_trader
+from .live_adapters import bybit_submit_wrapper, ibkr_submit_wrapper
 
 
 class TradingEngine:
@@ -330,6 +338,34 @@ class TradingEngine:
             
         return status
 
+
+def _build_routers(paper_trader, bybit_adapter=None, ibkr_adapter=None):
+    paper = PaperRouter(lambda oc: simulate_with_paper_trader(paper_trader, oc))
+    submitters = {}
+    if bybit_adapter is not None:
+        submitters['bybit'] = lambda oc: bybit_submit_wrapper(bybit_adapter, oc)
+    if ibkr_adapter is not None:
+        submitters['ibkr'] = lambda oc: ibkr_submit_wrapper(ibkr_adapter, oc)
+    live = LiveRouter(submitters)
+    return paper, live
+
+def _futures_precheck(catalog, contract_id: str, min_dte: int) -> (bool, str):
+    fl = FuturesLifecycle(env=None, catalog=catalog, base_dir=_Path('.'))
+    ok, reason = fl.allow_open(contract_id, min_dte)
+    return ok, reason
+
+def _options_precheck(catalog, contract_id: str, min_dte: int) -> (bool, str):
+    ol = OptionsLifecycle(catalog=catalog, base_dir=_Path('.'))
+    ok, reason = ol.allow_open(contract_id, min_dte)
+    return ok, reason
+
+def _session_guard(calendar_key: str) -> bool:
+    return is_session_open(calendar_key)
+
+def _load_profiles(path: str = "tradingbot/config/profiles.json"):
+    pm = ProfileManager(_Path(path))
+    pm.load()
+    return pm
 
 # Global trading engine instance
 trading_engine = TradingEngine()

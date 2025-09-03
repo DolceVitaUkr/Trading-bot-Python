@@ -1595,4 +1595,9 @@ def _save_equity_curve(results: Dict[str, Any], asset: str, strategy: str) -> st
     return str(filepath)
 
 
+from .paper_execution import PaperExecutionModel
+_exec_model = PaperExecutionModel()
+async def submit_order(symbol: str, side: str, qty: float, price: float | None, **extra):
+    return await _exec_model.execute(symbol, side, qty, price, **extra)
+
 __all__ = ["PaperTrader", "get_paper_trader", "StrictMarketDataViolation", "StopLossViolation", "Run_Paper_Trades"]

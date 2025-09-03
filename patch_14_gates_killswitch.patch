@@ -1,0 +1,121 @@
+*** Begin Patch
+*** Add File: tradingbot/core/gates.py
++import json
++from pathlib import Path
++from typing import Dict, Any
++
++_G = None
++_T = None
++
++def _load_json(p: Path) -> Dict[str, Any]:
++    if not p.exists():
++        return {}
++    return json.loads(p.read_text(encoding="utf-8"))
++
++def load_configs(base: Path = Path("tradingbot/config")):
++    global _G, _T
++    _G = _load_json(base / "promotion_gates.json")
++    _T = _load_json(base / "tripwires.json")
++
++def can_go_live(strategy_metrics: Dict[str, Any]) -> bool:
++    if _G is None: load_configs()
++    if not _G:
++        return False
++    # Minimal check: require APPROVED flag or thresholds met
++    state = strategy_metrics.get("state")
++    if state in ("APPROVED", "LIVE_TESTING", "VALIDATED"):
++        return True
++    # thresholds example
++    p = _G.get("paper", {})
++    if strategy_metrics.get("trades", 0) >= p.get("min_trades", 1000) and strategy_metrics.get("sharpe", 0) >= p.get("sharpe_min", 1.3):
++        return True
++    return False
++
++def tripwire_violation(asset_metrics: Dict[str, Any]) -> str | None:
++    if _T is None: load_configs()
++    if not _T:
++        return None
++    if asset_metrics.get("daily_loss_pct", 0) > _T.get("daily_loss_cap_pct", 0.75):
++        return "DAILY_LOSS_CAP"
++    if asset_metrics.get("max_drawdown_pct", 0) > _T.get("max_drawdown_cap_pct", 15.0):
++        return "MAX_DRAWDOWN_CAP"
++    if asset_metrics.get("reject_rate_pct", 0) > _T.get("max_reject_rate_pct", 5.0):
++        return "REJECT_RATE_CAP"
++    return None
++
+*** End Patch
+*** Begin Patch
+*** Add File: tradingbot/core/runtime_flags.py
++import json
++from pathlib import Path
++from typing import Dict, Any
++
++RUNTIME_PATH = Path("tradingbot/state/runtime.json")
++
++def _read_runtime() -> Dict[str, Any]:
++    if not RUNTIME_PATH.exists():
++        return {"kill_switch": False, "close_only": False, "live_overrides": {}}
++    return json.loads(RUNTIME_PATH.read_text(encoding="utf-8"))
++
++def _write_runtime(data: Dict[str, Any]) -> None:
++    RUNTIME_PATH.parent.mkdir(parents=True, exist_ok=True)
++    RUNTIME_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
++
++def get_flags() -> Dict[str, Any]:
++    return _read_runtime()
++
++def set_kill_switch(on: bool) -> Dict[str, Any]:
++    data = _read_runtime()
++    data["kill_switch"] = bool(on)
++    _write_runtime(data)
++    return data
++
++def set_close_only(on: bool) -> Dict[str, Any]:
++    data = _read_runtime()
++    data["close_only"] = bool(on)
++    _write_runtime(data)
++    return data
++
+*** End Patch
+*** Begin Patch
+*** Update File: tradingbot/core/routing.py
+@@
+-from .loggerconfig import get_logger
+-from .exchange_conformance import clamp_order_if_needed
++from .loggerconfig import get_logger
++from .exchange_conformance import clamp_order_if_needed
++from .runtime_flags import get_flags
++from .gates import can_go_live
+@@
+ class LiveRouter:
+@@
+-    async def submit(self, venue: str, oc: OrderContext) -> Any:
++    async def submit(self, venue: str, oc: OrderContext) -> Any:
++        flags = get_flags()
++        if flags.get("kill_switch") or flags.get("close_only"):
++            raise RuntimeError("Live routing disabled (kill_switch/close_only)")
+         if venue not in self.submitters:
+             raise ValueError(f"No live submitter configured for venue: {venue}")
+         oc = clamp_order_if_needed(oc)
+         return await self.submitters[venue](oc)
+*** End Patch
+*** Begin Patch
+*** Update File: tradingbot/ui/app.py
+@@
++from fastapi import Body
++from pathlib import Path
++from tradingbot.core.runtime_flags import get_flags, set_kill_switch, set_close_only
++
++@app.get("/admin/runtime_status")
++def runtime_status():
++    return get_flags()
++
++@app.post("/admin/kill_switch")
++def runtime_kill_switch(on: bool = Body(..., embed=True)):
++    return set_kill_switch(on)
++
++@app.post("/admin/close_only")
++def runtime_close_only(on: bool = Body(..., embed=True)):
++    return set_close_only(on)
++
+*** End Patch

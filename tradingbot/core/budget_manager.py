@@ -234,3 +234,5 @@ def suggest_position_size(asset_ui_key: str, price: float, min_qty: float | None
             import math; q = math.floor(q / step) * step
     except Exception: pass
     return max(0.0, float(f"{q:.8f}"))
+
+# NOTE: For IBKR multi-currency valuation, see tradingbot/core/fx_converter.py to roll PnL/budgets into BASE_CCY.

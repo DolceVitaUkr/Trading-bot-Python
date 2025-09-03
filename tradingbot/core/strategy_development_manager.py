@@ -92,7 +92,16 @@ class StrategyDevelopmentManager:
                     data = json.load(f)
                     for strategy_id, strategy_data in data.items():
                         # Convert status string back to enum
-                        strategy_data['status'] = StrategyStatus(strategy_data['status'])
+                        # Normalize legacy statuses before casting
+                        legacy_map = {
+                            "running": "developing",
+                            "active": "developing",
+                            "enabled": "developing",
+                            "online": "developing"
+                        }
+                        raw_status = strategy_data.get('status', 'developing')
+                        raw_status = legacy_map.get(raw_status, raw_status)
+                        strategy_data['status'] = StrategyStatus(raw_status)
                         # Reconstruct dataclasses
                         metrics_data = strategy_data['metrics']
                         metrics = StrategyMetrics(**metrics_data)
@@ -411,3 +420,5 @@ class StrategyDevelopmentManager:
         for strategy_id, strategy in pending_strategies:
             self.log.info(f"Running validation for strategy {strategy_id}")
             await self.validate_strategy(strategy_id)
+
+# Promotion gates and tripwires are configured in JSON under tradingbot/config/.
