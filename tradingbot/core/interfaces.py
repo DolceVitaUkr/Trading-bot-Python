@@ -14,8 +14,8 @@ OHLCV: TypeAlias = pd.DataFrame
 class Asset(Enum):
     """Supported asset classes"""
     CRYPTO = "crypto"
-    FOREX = "forex" 
     FUTURES = "futures"
+    FOREX = "forex"
     OPTIONS = "options"
 
 class OrderSide(Enum):
@@ -44,24 +44,12 @@ class SessionState:
     session_metadata: Dict[str, Any]
 
 class MarketData(Protocol):
-    """Interface for market data providers."""
-
-    def candles(self, symbol: str, timeframe: str, limit: int) -> OHLCV:
-        """
-        Fetches historical OHLCV data.
-        """
+    """Adapter-facing market data interface. Timestamps UTC."""
+    async def candles(self, symbol: str, timeframe: str, limit: int):
         ...
-
-    def ticker(self, symbol: str) -> Dict[str, float]:
-        """
-        Fetches the latest ticker price.
-        """
+    async def ticker(self, symbol: str):
         ...
-
-    def volume_24h(self, symbol: str) -> float:
-        """
-        Fetches the 24-hour trading volume.
-        """
+    async def volume_24h(self, symbol: str):
         ...
 
 class Execution(Protocol):
@@ -97,18 +85,12 @@ class NewsFeed(Protocol):
         """
         ...
 
-    def macro_blockers(self, symbols: List[str]) -> Dict[str, bool]:
-        """
-        Checks for any macro-economic events that should block trading.
-        """
+class MacroBlockers(Protocol):
+    async def macro_blockers(self, symbols):
         ...
 
 class ValidationRunner(Protocol):
     """Interface for running strategy validation."""
 
-    async def approved(self, strategy_id: str, market: str) -> Tuple[bool, Dict[str, Any]]:
-        """
-        Checks if a strategy is approved for live trading based on its performance.
-        Returns a tuple of (is_approved, metadata).
-        """
+    async def approved(self, strategy_id, market):
         ...

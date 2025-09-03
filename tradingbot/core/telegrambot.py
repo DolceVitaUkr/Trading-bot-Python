@@ -1,15 +1,6 @@
-"""Telegram bot utilities for sending notifications.
-
-Example:
-    >>> from tradingbot.core.telegrambot import TelegramNotifier
-    >>> notifier = TelegramNotifier(token="TOKEN", chat_id="CHAT_ID")
-    >>> import asyncio
-    >>> asyncio.run(
-    ...     notifier.send_message_async("*Hello*", parse_mode="Markdown")
-    ... )
-
-This sends a bold "Hello" using Telegram's Markdown formatting.
-"""
+from __future__ import annotations
+from typing import Any, Dict, Optional
+import httpx
 
 import json
 import logging
@@ -25,64 +16,34 @@ from telegram.ext import (
 )
 
 from tradingbot.core.configmanager import config_manager
-from typing import Optional, Dict, Any
 
 logger = logging.getLogger(__name__)
 
 
 class TelegramNotifier:
-    """
-    Minimalist Telegram bot for sending notifications.
-    - Supports synchronous and asynchronous sending.
-    - Can be used directly or within a NotificationManager.
-    """
-
-    def __init__(
-        self,
-        token: str = config_manager.get_config().get('telegram', {}).get('token'),
-        chat_id: str = config_manager.get_config().get('telegram', {}).get('chat_id'),
-        disable_async: bool = False
-    ):
-        """
-        Initializes the TelegramNotifier.
-
-        Args:
-            token: The Telegram bot token.
-            chat_id: The Telegram chat ID to send notifications to.
-            disable_async: Whether to disable asynchronous sending.
-        """
+    def __init__(self, token: str, chat_id: str, timeout: float = 5.0):
         self.token = token
         self.chat_id = chat_id
-        if not self.token or not self.chat_id:
-            logger.warning(
-                "[Telegram] bot token or chat ID not set; "
-                "notifications will be disabled.")
-            self.bot = None
-            return
-
-        self.bot = Bot(token=self.token)
-        self.use_async = not disable_async
-
-    async def send_message_async(
-        self, text: str, parse_mode: Optional[str] = None
-    ):
-        """Sends a message asynchronously.
-
-        Args:
-            text: The text of the message to send.
-            parse_mode: Telegram parse mode (e.g., ``"Markdown"``, ``"HTML"``)
-                for text formatting.
-        """
-        if not self.bot:
-            return
-        try:
-            if isinstance(text, dict):
-                text = json.dumps(text, indent=2)
-            await self.bot.send_message(
-                chat_id=self.chat_id, text=str(text), parse_mode=parse_mode
-            )
-        except Exception as e:
-            logger.error(f"[Telegram] Failed to send async message: {e}")
+        self.timeout = timeout
+    async def send_message_async(self, text: str, parse_mode: Optional[str] = "Markdown") -> Dict[str, Any]:
+        url = f"https://api.telegram.org/bot{self.token}/sendMessage"
+        payload = {"chat_id": self.chat_id, "text": text, "disable_web_page_preview": True}
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            if parse_mode: payload["parse_mode"] = parse_mode
+            r = await client.post(url, json=payload)
+            try:
+                j = r.json()
+            except Exception:
+                j = {"ok": False, "description": r.text}
+            if j.get("ok"):
+                return {"sent": True, "response": j}
+            payload.pop("parse_mode", None)
+            r2 = await client.post(url, json=payload)
+            try:
+                j2 = r2.json()
+                return {"sent": j2.get("ok", False), "response": j2, "error": None if j2.get("ok") else j.get("description")}
+            except Exception:
+                return {"sent": False, "error": r2.text}
 
 
 class TelegramBot(TelegramNotifier):

@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import Dict, Any, List, Optional
 import os
 import math
+from ..core.rate_limits import get_bucket
+from ..core.fx_converter import convert_value
 
 try:
     import ccxt
@@ -87,3 +89,78 @@ class BybitAdapter:
             "spot": self.positions_spot(),
             "futures": self.positions_contract()
         }
+
+    async def submit_order(self, symbol: str, side: str, qty: float, price: Optional[float], **extra) -> Dict[str, Any]:
+        """Submit order to Bybit. Wrap existing internal submit; normalize fields."""
+        await get_bucket("bybit","trade").acquire(1)
+        # Existing internal call (example): self._client.create_order(...)
+        resp = await self._submit_internal(symbol, side, qty, price, **extra)  # must exist in your code
+        tp = extra.get("tp") or extra.get("take_profit")
+        sl = extra.get("sl") or extra.get("stop_loss")
+        px = resp.get("avg_price") or resp.get("price") or price or 0.0
+        notional = (float(px) * float(qty)) if px else 0.0
+        return {
+            "order_id": resp.get("order_id") or resp.get("id"),
+            "symbol": symbol,
+            "side": side.upper(),
+            "type": (extra.get("type") or "LIMIT").upper(),
+            "time_in_force": (extra.get("time_in_force") or "GTC").upper(),
+            "status": resp.get("status","NEW").upper(),
+            "price": float(resp.get("price", price or 0.0)),
+            "avg_price": float(resp.get("avg_price", px or 0.0)),
+            "qty": float(qty),
+            "filled_qty": float(resp.get("filled_qty", 0.0)),
+            "tp_price": float(tp) if tp is not None else None,
+            "sl_price": float(sl) if sl is not None else None,
+            "notional_usd": float(notional),
+            "base_ccy": extra.get("base_ccy"),
+            "quote_ccy": extra.get("quote_ccy","USDT"),
+            "ts": resp.get("ts") or resp.get("transactTime"),
+            "exchange_ts": resp.get("exchange_ts"),
+            "client_order_id": extra.get("client_order_id"),
+            "parent_order_id": resp.get("parent_order_id"),
+            "bracket_id": resp.get("bracket_id"),
+        }
+
+    async def open_orders(self) -> List[Dict[str, Any]]:
+        await get_bucket("bybit","read").acquire(1)
+        data = await self._fetch_open_orders()
+        out = []
+        for o in data:
+            out.append({
+                "order_id": o.get("orderId") or o.get("order_id"),
+                "symbol": o.get("symbol"),
+                "side": o.get("side","").upper(),
+                "type": o.get("type","").upper(),
+                "time_in_force": o.get("timeInForce","GTC").upper(),
+                "status": o.get("status","NEW").upper(),
+                "price": float(o.get("price", 0.0)),
+                "avg_price": float(o.get("avgPrice", 0.0)),
+                "qty": float(o.get("qty", o.get("origQty", 0.0))),
+                "filled_qty": float(o.get("executedQty", 0.0)),
+                "tp_price": float(o.get("takeProfit", 0.0)) or None,
+                "sl_price": float(o.get("stopLoss", 0.0)) or None,
+                "notional_usd": float(o.get("price", 0.0)) * float(o.get("origQty", 0.0)) if o.get("price") else None,
+                "ts": o.get("time") or o.get("ts")
+            })
+        return out
+
+    async def positions(self) -> List[Dict[str, Any]]:
+        await get_bucket("bybit","read").acquire(1)
+        pos = await self._fetch_positions()
+        out = []
+        for p in pos:
+            px = float(p.get("avgPrice", p.get("entryPrice", 0.0)) or 0.0)
+            qty = float(p.get("qty", p.get("size", 0.0)) or 0.0)
+            notional = px * abs(qty) if px else None
+            out.append({
+                "symbol": p.get("symbol"),
+                "side": "LONG" if qty >= 0 else "SHORT",
+                "qty": qty,
+                "avg_price": px,
+                "unrealized_pnl": float(p.get("unrealizedPnl", 0.0)),
+                "leverage": float(p.get("leverage", 0.0) or 0.0),
+                "notional_usd": notional,
+                "ts": p.get("updateTime") or p.get("ts")
+            })
+        return out

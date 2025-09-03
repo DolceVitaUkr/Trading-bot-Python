@@ -422,3 +422,8 @@ class StrategyDevelopmentManager:
             await self.validate_strategy(strategy_id)
 
 # Promotion gates and tripwires are configured in JSON under tradingbot/config/.
+
+from typing import Dict, Any
+_METRICS_CACHE: Dict[str, Dict[str, Any]] = {}
+def get_strategy_metrics(strategy_id: str) -> Dict[str, Any]:
+    return _METRICS_CACHE.get(strategy_id, {"state": "DEVELOPING"})

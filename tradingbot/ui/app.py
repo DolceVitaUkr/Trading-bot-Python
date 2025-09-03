@@ -9,6 +9,8 @@ from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse
 import os
 from datetime import datetime
+from tradingbot.core.loggerconfig import get_logger
+log = get_logger(__name__)
 
 from tradingbot.core.runtime_controller import RuntimeController
 from tradingbot.core.validation_manager import ValidationManager

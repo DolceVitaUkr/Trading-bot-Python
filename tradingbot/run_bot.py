@@ -18,14 +18,24 @@ if str(project_root) not in sys.path:
 import uvicorn
 
 from tradingbot.ui.app import app
+from tradingbot.core.routing import PaperRouter, LiveRouter, OrderContext
+from tradingbot.core.scheduler import Scheduler, register_reconciler, register_catalog_refresh
 
 
 def run_server():
     """Run the FastAPI server in a separate thread."""
     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
 
+async def main():
+    # existing initialization...
+    ...
+    # Schedule reconciler & catalog refresh
+    sched = Scheduler()
+    await register_reconciler(sched, bybit_adapter=bybit_adapter, ibkr_adapter=ibkr_adapter, interval_sec=60)
+    await register_catalog_refresh(sched, catalog, bybit_adapter=bybit_adapter, ibkr_adapter=ibkr_adapter, symbols=None)
+    await sched.start()
 
-def main() -> None:
+def main_sync() -> None:
     """Start the FastAPI server in background and continue with bot operations."""
     # Start FastAPI server in a background thread
     server_thread = threading.Thread(target=run_server, daemon=True)

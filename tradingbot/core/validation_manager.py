@@ -54,40 +54,24 @@ def _to_array(data: Sequence[float]) -> np.ndarray:
     return arr
 
 
-def sharpe_ratio(returns: Sequence[float], freq: int = 252) -> float:
-    """Compute the annualised Sharpe ratio.
-
-    Args:
-        returns: Sequence of period returns.
-        freq: Number of periods per year.
-    """
-
-    r = _to_array(returns)
-    if r.size < 2 or np.allclose(r.std(ddof=1), 0):
-        return 0.0
-    return float(np.sqrt(freq) * r.mean() / r.std(ddof=1))
 
 
-def sortino_ratio(returns: Sequence[float], freq: int = 252) -> float:
-    """Compute the Sortino ratio."""
+def max_drawdown(equity: pd.Series) -> float:
+    peaks = equity.cummax()
+    dd = (equity - peaks) / peaks.replace(0, np.nan)
+    return float(dd.min())
 
-    r = _to_array(returns)
+def sharpe_ratio(returns: pd.Series, freq: int = 252) -> float:
+    r = returns.dropna()
+    if r.std() == 0: return 0.0
+    return (r.mean() * freq) / (r.std() * np.sqrt(freq))
+
+def sortino_ratio(returns: pd.Series, freq: int = 252) -> float:
+    r = returns.dropna()
     downside = r[r < 0]
-    if downside.size == 0 or np.allclose(downside.std(ddof=1), 0):
-        return 0.0
-    return float(np.sqrt(freq) * r.mean() / downside.std(ddof=1))
-
-
-def max_drawdown(equity: Sequence[float]) -> float:
-    """Return the maximum drawdown of an equity curve as a fraction.
-
-    ``equity`` is expected to be the cumulative PnL or equity values.
-    """
-
-    e = _to_array(equity)
-    peaks = np.maximum.accumulate(e)
-    drawdowns = (e - peaks) / peaks
-    return float(drawdowns.min())
+    denom = downside.std()
+    if denom is None or denom == 0: return 0.0
+    return (r.mean() * freq) / (denom * np.sqrt(freq))
 
 
 def calmar_ratio(returns: Sequence[float], freq: int = 252) -> float:
@@ -352,6 +336,21 @@ def slippage_scenarios(trades: Sequence[ExecutedTrade], multipliers: Sequence[fl
 # Validation manager
 # ---------------------------------------------------------------------------
 
+
+class FileValidationRunner:
+    def __init__(self, metrics_path: Path = Path("tradingbot/state/validation_metrics.json")):
+        self.path = metrics_path
+    async def approved(self, strategy_id: str, market: str):
+        if not self.path.exists():
+            return False, {"state": "DEVELOPING", "reason": "metrics_file_missing"}
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+        except Exception:
+            return False, {"state": "DEVELOPING", "reason": "metrics_file_corrupt"}
+        rec = data.get(strategy_id) or data.get(f"{strategy_id}:{market}") or data
+        state = rec.get("state", "DEVELOPING")
+        ok = state in ("APPROVED", "LIVE_TESTING", "VALIDATED")
+        return ok, rec
 
 LOG_DIR = Path("logs/validation")
 
