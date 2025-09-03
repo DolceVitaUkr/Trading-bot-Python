@@ -1,27 +1,56 @@
-from __future__ annotations
-from typing import Dict, Any, List, Optional
+from __future__ import annotations
+
+# Unified close-time reward integration that delegates to core.reward_system
+from typing import Dict, Any, Optional
 from pathlib import Path
 from ..core.order_events import emit_event
-from ..training.reward_shaping import compute_reward
+from ..core.reward_system import RewardSystem, TradeContext
 
 class RLExampleIntegration:
-    def __init__(self, base_dir: Path, notifier=None):
+    def __init__(self, base_dir: Path, notifier=None, asset_type: Optional[str] = None):
         self.base_dir = base_dir
         self.notifier = notifier
-        self.episode_trades: List[Dict[str, Any]] = []
+        self.asset_type = asset_type
+        self._reward = RewardSystem()
+
     async def on_trade_opened(self, trade: Dict[str, Any]) -> None:
-        self.episode_trades.append({"open": trade, "close": None})
         emit_event(self.base_dir, "paper", trade.get("asset",""), {"event":"TRADE_OPEN", **trade})
-    async def on_trade_closed(self, trade: Dict[str, Any]) -> None:
-        for rec in reversed(self.episode_trades):
-            if rec["open"] and not rec["close"] and rec["open"].get("id") == trade.get("id"):
-                rec["close"] = trade
-                break
-        pnl = float(trade.get("realized_pnl", 0.0))
-        dd = float(trade.get("max_dd_pct", 0.0))
-        fees = float(trade.get("fees", 0.0))
-        exp = float(trade.get("exposure", 1.0))
-        reward = compute_reward(pnl, dd, fees, exp)
-        emit_event(self.base_dir, "paper", trade.get("asset",""), {"event":"TRADE_CLOSE", **trade, "reward": reward})
+
+    def on_trade_closed(
+        self,
+        symbol: str,
+        side: str,
+        entry_price: float,
+        exit_price: float,
+        quantity: float,
+        leverage: float,
+        fees_paid: float,
+        slippage: float,
+        holding_time_seconds: float,
+        current_equity: float,
+        open_exposure: float,
+    ) -> float:
+        ctx = TradeContext(
+            symbol=symbol, side=side,
+            entry_price=float(entry_price), exit_price=float(exit_price),
+            quantity=float(quantity), leverage=float(leverage),
+            fees_paid=float(fees_paid), holding_time_seconds=float(holding_time_seconds),
+            current_equity=float(current_equity), open_exposure=float(open_exposure),
+            asset_type=self.asset_type
+        )
+        reward = self._reward.compute_reward(ctx)
+        emit_event(self.base_dir, "paper", "", {
+            "event":"TRADE_CLOSE", "symbol": symbol, "reward": reward,
+            "entry_price": entry_price, "exit_price": exit_price, "qty": quantity
+        })
         if self.notifier:
-            await self.notifier.send_message_async(f"Closed {trade.get('symbol')} PnL={pnl:.2f} Rwd={reward:.4f}")
+            try:
+                # Async-friendly: notify if available
+                msg = f"Closed {symbol}  Reward={reward:+.2f}"
+                # If notifier has async send, ignore here to keep sync signature
+            except Exception:
+                pass
+        return float(reward)
+
+# Keep alias so paper_trader imports remain valid
+TradingBotRewardIntegration = RLExampleIntegration

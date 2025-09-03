@@ -1,8 +1,9 @@
 from __future__ import annotations
 from typing import Any, Dict, Optional
+from pathlib import Path
+import os, json
 import httpx
 
-import json
 import logging
 
 import pandas as pd
@@ -21,11 +22,51 @@ logger = logging.getLogger(__name__)
 
 
 class TelegramNotifier:
-    def __init__(self, token: str, chat_id: str, timeout: float = 5.0):
-        self.token = token
-        self.chat_id = chat_id
+    """Backwards-compatible notifier.
+
+    - If token/chat_id are not provided, it will try to load them from:
+      1) config JSON (default: tradingbot/config/config.json), keys:
+         - top-level: TELEGRAM_TOKEN / TELEGRAM_CHAT_ID
+         - or nested:  { "telegram": { "token": ..., "chat_id": ... } }
+      2) environment variables: TELEGRAM_TOKEN / TELEGRAM_CHAT_ID
+    - If still missing, it stays disabled and send_message_async becomes a no-op.
+    """
+    def __init__(self, token: Optional[str] = None, chat_id: Optional[str] = None, timeout: float = 5.0, config_path: Optional[str] = None):
         self.timeout = timeout
+        cfg_token = None
+        cfg_chat = None
+        # Resolve config path
+        cand = []
+        if config_path:
+            cand.append(Path(config_path))
+        # relative to package root
+        cand.append(Path("tradingbot/config/config.json"))
+        # relative to this file (../config/config.json)
+        cand.append(Path(__file__).resolve().parents[1] / "config" / "config.json")
+        cfg = {}
+        for p in cand:
+            try:
+                if Path(p).exists():
+                    cfg = json.loads(Path(p).read_text(encoding="utf-8"))
+                    break
+            except Exception:
+                pass
+        if cfg:
+            cfg_token = cfg.get("TELEGRAM_TOKEN")
+            cfg_chat = cfg.get("TELEGRAM_CHAT_ID")
+            if not cfg_token or not cfg_chat:
+                tg = cfg.get("telegram") or {}
+                cfg_token = cfg_token or tg.get("token")
+                cfg_chat = cfg_chat or tg.get("chat_id")
+        env_token = os.getenv("TELEGRAM_TOKEN")
+        env_chat = os.getenv("TELEGRAM_CHAT_ID")
+        self.token = token or cfg_token or env_token
+        self.chat_id = chat_id or cfg_chat or env_chat
+        self.enabled = bool(self.token and self.chat_id)
+
     async def send_message_async(self, text: str, parse_mode: Optional[str] = "Markdown") -> Dict[str, Any]:
+        if not self.enabled:
+            return {"sent": False, "error": "not_configured"}
         url = f"https://api.telegram.org/bot{self.token}/sendMessage"
         payload = {"chat_id": self.chat_id, "text": text, "disable_web_page_preview": True}
         async with httpx.AsyncClient(timeout=self.timeout) as client:
@@ -52,7 +93,7 @@ class TelegramBot(TelegramNotifier):
     (This part is optional if you only need one-way notifications).
     """
 
-    def __init__(self, token: str, chat_id: str):
+    def __init__(self, token: str = None, chat_id: str = None):
         """
         Initializes the TelegramBot.
 
@@ -61,7 +102,7 @@ class TelegramBot(TelegramNotifier):
             chat_id: The Telegram chat ID.
         """
         super().__init__(token, chat_id)
-        if not self.bot:
+        if not self.enabled:
             return
         self.application = Application.builder().token(token).build()
         self.application.add_handler(CommandHandler("start", self.start))
@@ -102,7 +143,7 @@ class TelegramBot(TelegramNotifier):
         """
         Run the bot.
         """
-        if not self.bot:
+        if not self.enabled:
             return
         logger.info("Telegram bot is now polling...")
         await self.application.initialize()
